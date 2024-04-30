@@ -1,3 +1,0 @@
--- TODO: create slave main that will comunicate with the main computer to
--- craft cleenroom specific items.
--- needs to be executed at startup
