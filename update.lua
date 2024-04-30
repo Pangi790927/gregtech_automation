@@ -13,9 +13,7 @@ file_list = {
 	"update.lua"
 }
 
-
-
 for k,f in ipairs(file_list) do
 	shell.execute("rm /home/" .. f)
-	shell.execute("wget https://raw.githubusercontent.com/Pangi790927/gregtech_automation/main/" .. f)
+	shell.execute("wget https://github.com/Pangi790927/gregtech_automation/raw/main/" .. f)
 end
