@@ -10,7 +10,7 @@ file_list = {
 	"recipe_db.lua",
 	"cleanroom.lua",
 	"main.lua",
-	"update.lua",
+	"update.lua"
 }
 
 for f in file_list do
