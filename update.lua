@@ -1,6 +1,6 @@
 shell = require("shell")
 
-file_list = [
+file_list = {
 	"gtnh_crafter.lua",
 	"gtnh_reciper.lua",
 	"helpers.lua",
@@ -11,7 +11,7 @@ file_list = [
 	"cleanroom.lua",
 	"main.lua",
 	"update.lua",
-]
+}
 
 for f in file_list do
 	shell.execute("rm " .. f)
