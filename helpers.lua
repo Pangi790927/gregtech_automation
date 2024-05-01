@@ -40,4 +40,9 @@ function helpers.lcd(a, b)
     return a * b / helpers.gcd(a, b)
 end
 
+function helpers.wait_key()
+    _, _, c = ev.pull("key_down")
+    return string.char(c)
+end
+
 return helpers

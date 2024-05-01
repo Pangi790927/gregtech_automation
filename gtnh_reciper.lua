@@ -6,6 +6,7 @@ ev  = require("event")
 rdb  = require("recipe_db")
 ih   = require("item_helper")
 hwif = require("hw_interface")
+h    = require("helpers")
 
 function wait_key()
     _, _, c = ev.pull("key_down")
@@ -126,7 +127,7 @@ function run_add_recipes()
             print("> Press any key after the recipe was configured")
             print("> q will exit")
             print_empty_lines(screen_rows - 3)
-            if wait_key() == "q" then
+            if h.wait_key() == "q" then
                 break
             end
             pre_recipe = read_recipe_initial()
@@ -170,7 +171,7 @@ function run_add_recipes()
             else
                 print("Recipe can't have no outputs, press key to continue...")
                 print_empty_lines(screen_rows - 3)
-                wait_key()
+                h.wait_key()
                 goto continue
             end
         elseif state == "l" then
@@ -180,7 +181,7 @@ function run_add_recipes()
             local liters = tonumber(usr_in)
             if not liters or liters <= 0 then
                 print("Invalid input: " .. usr_in .. " press any key...")
-                wait_key()
+                h.wait_key()
             else
                 recipe.liq.cnt = liters
             end
@@ -192,7 +193,7 @@ function run_add_recipes()
             if not liters or liters <= 0 then
                 print("Invalid input: " .. usr_in .. " press any key...")
                 print_empty_lines(screen_rows - 2)
-                wait_key()
+                h.wait_key()
             else
                 recipe.liq_out.cnt = liters
                 if recipe.is_liq == 1 then
@@ -210,7 +211,7 @@ function run_add_recipes()
             if not mach_id or mach_id <= 0 or mach_id > #hwif.craft_info then
                 print("Invalid input: " .. usr_in .. " press any key...")
                 print_empty_lines(screen_rows - 2)
-                wait_key()
+                h.wait_key()
             else
                 recipe.mach_id=mach_id
             end
@@ -219,7 +220,7 @@ function run_add_recipes()
                 print("can't config machine none(0), select machine first")
                 print("press any key to continue...")
                 print_empty_lines(screen_rows - 3)
-                wait_key()
+                h.wait_key()
             else
                 print("> Please enter the config id: ")
                 local cfg_slot = hwif.craft_info[recipe.mach_id].cfg
@@ -233,7 +234,7 @@ function run_add_recipes()
                 if not cfg_id or cfg_id <= 0 or cfg_id > cfg_num then
                     print("Invalid input: " .. usr_in .. " press any key...")
                     print_empty_lines(screen_rows - 2)
-                    wait_key()
+                    h.wait_key()
                 else
                     recipe.mach_cfg=cfg_id
                 end
@@ -241,7 +242,7 @@ function run_add_recipes()
         elseif state == "v" then
             print("> Press 1 for visible or 0 for hidden")
             print_empty_lines(screen_rows - 2)
-            local vis = wait_key()
+            local vis = h.wait_key()
             if vis == "1" then
                 recipe.is_visible = 1
             elseif vis == "0" then
@@ -260,7 +261,7 @@ function run_add_recipes()
                         pre_recipe.liq_out.cnt)
             end
             print_empty_lines(screen_rows - 2 - #pre_recipe.comp_out - has_liq_out)
-            local choice = wait_key()
+            local choice = h.wait_key()
             if choice == "4" then
                 if pre_recipe.liq_out then
                     recipe.is_liq = 1
@@ -282,13 +283,13 @@ function run_add_recipes()
                 print("Recipe was added!")
                 print("> press any key to continue... ")
                 print_empty_lines(screen_rows - 3)
-                wait_key()
+                h.wait_key()
                 state = 'r'
             else
                 print("FAILED!")
                 print("> press any key to continue... ")
                 print_empty_lines(screen_rows - 3)
-                wait_key()
+                h.wait_key()
             end
         elseif state == "q" then
             break
@@ -296,7 +297,7 @@ function run_add_recipes()
             print("> invalifd choice: ", state)
             print("> press any key to continue... ")
             print_empty_lines(screen_rows - 3)
-            wait_key()
+            h.wait_key()
         end
 
         local empty_lines = 0
@@ -319,7 +320,7 @@ function run_add_recipes()
         print("> Press any key to enter action menu")
         empty_lines = empty_lines + 5
         print_empty_lines(screen_rows - empty_lines - 1)
-        wait_key()
+        h.wait_key()
 
         print("> available actions:")
         print("r - redo recipe")
@@ -333,7 +334,7 @@ function run_add_recipes()
         print("d - done, save recipe")
         print("q - quit")
         print_empty_lines(screen_rows - 12)
-        state = wait_key()
+        state = h.wait_key()
         ::continue::
     end
 
