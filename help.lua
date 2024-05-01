@@ -57,8 +57,8 @@ help.helper_texts = {
 
 ,
 "1.  integrated_logic_circuit\n" ..
-"2.  advanced_circuit\n" .. 
-"3.  copper_foil\n" ..
+"2.  good_integrated_circuit\n" .. 
+"3.  advanced_circuit\n" ..
 "4.  circuit_board\n" ..
 "5.  tin_bolt\n" ..
 "6.  fine_copper_wire\n" ..
@@ -80,7 +80,7 @@ help.helper_texts = {
 "17. iron_iii_chloride\n" .. 
 "18. hydrochloric_acid_cell\n" .. 
 "19. good_circuit_board\n" .. 
-"20. good_integrated_circuit\n" .. 
+"20. copper_foil\n" .. 
 "21. integrated_logic_circuit2\n" .. 
 "22. gallium_foil\n" .. 
 "23. random_access_memory_chip_\n(wafer)" .. 

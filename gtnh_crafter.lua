@@ -2,7 +2,7 @@ rdb  = require("recipe_db")
 ih   = require("item_helper")
 hwif = require("hw_interface")
 h    = require("helpers")
-hwc  = require("hw_crafter")
+hwc  = require("hw_crafting")
 
 hwif.init_hw()
 
