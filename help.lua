@@ -6,19 +6,18 @@ maxline =
 "--------------------------------------------------"
 
 help.helper_texts = {
-"For now the main program will not do anything more\n" ..
-"than to print the instructions.\n" ..
+"USAGE MANUAL\n" ..
 "\n" ..
+"For now the main program will not do anything\n" ..
+"more than to print the instructions.\n" ..
 "To run the program you will need to use the lua\n" ..
 "interpreter, by using the \"lua\" command inside\n" ..
 "the terminal. By example:\n" ..
-"/home # lua\n" ..
+"    /home # lua\n" ..
 "\n" ..
-"Once inside the lua program, the prmpt will change\n" ..
-"lua>\n" ..
-"\n" ..
-"\n" ..
-"\n" ..
+"Once inside the lua program, the prompt will\n" ..
+"change to:\n" ..
+"    lua>\n" ..
 "Press any key and press enter for the next page\n" ..
 ""
 -- ,

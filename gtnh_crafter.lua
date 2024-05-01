@@ -6,7 +6,6 @@ hwc  = require("hw_crafter")
 
 hwif.init_hw()
 
-
 function rec_craft_recipe(name, cnt, inv, sim_mode, miss_table)
     local recipe = rdb.find_recipes({item_name})[item_name]
     if not recipe then
