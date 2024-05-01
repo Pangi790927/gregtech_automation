@@ -18,6 +18,7 @@ help.helper_texts = {
 "Once inside the lua program, the prompt will\n" ..
 "change to:\n" ..
 "    lua>\n" ..
+"\n" ..
 "Press any key or press enter for the next page\n" ..
 ""
 ,
@@ -30,8 +31,26 @@ help.helper_texts = {
 "craft_recipe(name, cnt), for example:\n" ..
 "   lua> craft_recipe(\"advanced_circuit\", 9)\n" ..
 "You can use middle mouse button click to paste\n" ..
-"from your clipboard. The next pages heve a list\n" ..
-"of crafting recipes.\n" ..
+"from your clipboard. \n" ..
+"If there are not enough items to craft the\n" ..
+"requested query you must supply them by placing\n" ..
+"them in THE chest.\n" ..
+"Press any key or press enter for the next page\n" ..
+""
+
+,
+"The function can be then called again to start\n" ..
+"the crafting. Usually you would call the\n" ..
+"crafting function, supply the missing materials\n" ..
+"and call it again until the crafting starts.\n" ..
+"If the program mallfunctions you can retry\n" ..
+"the same query again and maybe it helps...\n" ..
+"\n" ..
+"IMPORTANT: whatever the malfunction, check\n" ..
+"to see if the 9 machines, are still there, if\n" ..
+"not, call the maintanance guy.\n" ..
+"\n" ..
+"The next pages heve a list of crafting recipes.\n" ..
 "\n" ..
 "Press any key or press enter for the next page\n" ..
 ""
@@ -49,6 +68,7 @@ help.helper_texts = {
 "10. integrated_logic_circuit_(wafer)\n" ..
 "11. silver_bolt\n" ..
 "12. fine_gold_wire\n" ..
+"\n" ..
 "Press any key or press enter for the next page\n" ..
 ""
 
@@ -65,11 +85,13 @@ help.helper_texts = {
 "22. gallium_foil\n" .. 
 "23. random_access_memory_chip_\n(wafer)" .. 
 "24. random_access_memory_chip\n" .. 
+"\n" ..
 "Press any key or press enter for the next page\n" ..
 ""
 
 ,
 "25. smd_transistor\n" .. 
+"\n" ..
 "\n" ..
 "\n" ..
 "\n" ..
