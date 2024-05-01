@@ -101,6 +101,9 @@ function str2recipe(str)
     res.is_visible = tonumber(flags:sub(2, 2))
     res.mach_id = tonumber(flags:sub(3, 3))
     res.mach_cfg = tonumber(flags:sub(12, #flags))
+    if res.mach_cfg == 0 then
+        res.mach_cfg = nil
+    end
     res.out = {}
     if not (split[last_comp_i + 9] == "[]") then
         for i=last_comp_i + 9, #split, 3 do

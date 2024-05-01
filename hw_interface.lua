@@ -42,14 +42,14 @@ hwif.alarm = { s = s.west, n = 8 }
 hwif.placer = { s = s.south, n = 1 }
 
 -- those enable the liquid to flow from a crafting core to the canner
-hwif.t1_liq_out = { s = s.east,  n = 1 }
-hwif.t2_liq_out = { s = s.west,  n = 2 }
-hwif.t3_liq_out = { s = s.north, n = 1 }
+t1.liq_out = { s = s.east,  n = 1 }
+t2.liq_out = { s = s.west,  n = 2 }
+t3.liq_out = { s = s.north, n = 1 }
 
 -- those enable the liquid to flow from the canner buffer to the crafting core
-hwif.t1_liq_in = { s = s.south, n = 8 }
-hwif.t2_liq_in = { s = s.south, n = 2 }
-hwif.t3_liq_in = { s = s.south, n = 4 }
+t1.liq_in = { s = s.south, n = 8 }
+t2.liq_in = { s = s.south, n = 2 }
+t3.liq_in = { s = s.south, n = 4 }
 
 hwif.cchest_free_slots = 12*6
 
@@ -148,14 +148,14 @@ end
 
 function hwif.rs_toggle(r)
     hwif.rs_set(r)
-    os.sleep(0.2)
+    os.sleep(0.4)
     hwif.rs_reset(r)
-    os.sleep(0.2)
+    os.sleep(0.4)
 end
 
 function hwif.reset_machine(m)
     hwif.rs_toggle(m.brk)
-    os.sleep(2)
+    os.sleep(3)
     hwif.rs_toggle(hwif.placer)
 end
 

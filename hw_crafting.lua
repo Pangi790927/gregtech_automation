@@ -2,6 +2,7 @@ rdb  = require("recipe_db")
 ih   = require("item_helper")
 hwif = require("hw_interface")
 h    = require("helpers")
+s    = require("sides")
 
 hwc = {}
 
@@ -37,17 +38,15 @@ end
 
 function get_min_recipe_cnt(recipe)
     local recipe_mul = 1
-    if recipe.is_liq == 1 then
-        local in_mul = 1
-        local out_mul = 1
-        if recipe.liq.label ~= "none" then
-            in_mul = liq_min_cells(recipe.liq.cnt, recipe.liq.msz)
-        end
-        if recipe.liq_out.label ~= "none" then
-            out_mul = liq_min_cells(recipe.liq_out.cnt, recipe.liq_out.msz)
-        end
-        recipe_mul = recipe_mul * h.lcd(in_mul, out_mul)
+    local in_mul = 1
+    local out_mul = 1
+    if recipe.liq.label ~= "none" then
+        in_mul = liq_min_cells(recipe.liq.cnt, recipe.liq.msz)
     end
+    if recipe.liq_out.label ~= "none" then
+        out_mul = liq_min_cells(recipe.liq_out.cnt, recipe.liq_out.msz)
+    end
+    recipe_mul = recipe_mul * h.lcd(in_mul, out_mul)
     return recipe_mul
 end
 
@@ -61,7 +60,7 @@ function get_min_recipe(recipe)
     for i = 1, #recipe.comp do
         min_recipe[recipe.comp[i].label] = {
             cnt = recipe.comp[i].cnt * min_cnt,
-            msz = recipe.comp[i].msz
+            msz = recipe.comp[i].msz,
             as_liq = false
         }
         if min_recipe[recipe.comp[i].label].cnt > recipe.comp[i].msz then
@@ -94,7 +93,7 @@ function get_max_liq_batch(recipe)
             max_liq_batch = max_machine_liters // (recipe.liq_out.cnt * min_cnt)
         end
     end
-    return min_liq
+    return max_liq_batch
 end
 
 function hwc.get_missing_materials(inv, recipe, cnt)
@@ -123,7 +122,7 @@ function hwc.get_missing_materials(inv, recipe, cnt)
     return req_recipe
 end
 
-function create_batch(inv, recipe, cnt)
+function create_batch(recipe, cnt)
     local min_recipe = get_min_recipe(recipe)
     local batch_cnt = get_max_liq_batch(recipe)
     local min_mul = get_min_recipe_cnt(recipe)
@@ -166,6 +165,7 @@ function create_batch(inv, recipe, cnt)
         local out_item = {
             label = recipe.out[i].label,
             cnt = recipe.out[i].cnt * min_mul * batch_cnt,
+            msz = recipe.out[i].msz,
             as_liq = false
         }
         table.insert(batch_outs, out_item)
@@ -174,103 +174,307 @@ function create_batch(inv, recipe, cnt)
         local out_item = {
             label = ih.label2cell_label(recipe.liq_out.label),
             cnt = recipe.liq_out.cnt * min_mul * batch_cnt / recipe.liq_out.msz,
+            liq_cnt = recipe.liq_out.cnt * min_mul * batch_cnt,
             as_liq = true
         }
         table.insert(batch_outs, out_item)
     end
 
     local batch = {
-        inputs = batch_mats
-        cnt = batch_cnt
+        inputs = batch_mats,
+        cnt = batch_cnt * recipe.res_cnt,
         outs = batch_outs
     }
 
     return batch
 end
 
-function transfer_cell2liq(cchest_slot, target_mach, cell_cnt)
-    -- to do this you will want to transfer all the required cells to the canner, at most
-    -- 64 at a time, wait for the canner to finish and route the resulting liquid to the machine
+function wait_ammount(mach, slot, ammount)
+    while true do
+        local item = mach.trans.getStackInSlot(mach.side, slot)
+        if item and item.size == ammount then
+            break
+        elseif item and item.size > ammount then
+            critical_message("wait_ammount: too many results")
+        end
+        os.sleep(1)
+    end
 end
 
-function transfer_liq2cell(source_mach, cchest_slot, cell_cnt)
+-- cchest_in -> slot to take filled cells from
+-- cchest_out -> slot to store empty cells to
+function hwc.transfer_cell2liq(cchest_in, cchest_out, target_mach, cell_cnt)
+    local mcann = hwif.machines.canner
+    local expetect_liq = cell_cnt * hwif.cchest_get(cchest_in).amount
+    if mcann.trans.transferItem(mcann.cside, mcann.side, cell_cnt,
+            cchest_in, hwif.machine_io[mcann.id].inputs[1]) ~= cell_cnt
+    then
+        critical_message("Failed machine cell transfer 1")
+    end
+    hwif.rs_set(target_mach.trans.liq_in)
+    while true do
+        local liq_cnt = target_mach.trans.getTankLevel(s.down)
+        if liq_cnt == expetect_liq then
+            break
+        elseif liq_cnt > expetect_liq then
+            critical_message("More liquid than expected from cells")
+        end
+        os.sleep(1)
+    end
+    hwif.rs_reset(target_mach.trans.liq_in)
+    target_mach.trans.transferFluid(s.down, target_mach.side, expetect_liq)
+    if mcann.trans.transferItem(mcann.side, mcann.cside, cell_cnt,
+            hwif.machine_io[mcann.id].outs[1], cchest_out) ~= cell_cnt
+    then
+        critical_message("Failed machine cell transfer 2")
+    end
 end
 
-function transfer_item2mach(cchest_slot, target_mach, item_cnt)
+function hwc.transfer_liq2cell(source_mach, cchest_in, cchest_out, cell_cnt)
+    local mcann = hwif.machines.canner
+    if mcann.trans.transferItem(mcann.cside, mcann.side, cell_cnt,
+            cchest_in, hwif.machine_io[mcann.id].inputs[1]) ~= cell_cnt
+    then
+        critical_message("Failed machine empty cell transfer")
+    end
+    source_mach.trans.transferFluid(source_mach.side, s.down, max_machine_liters)
+    hwif.rs_set(source_mach.trans.liq_out)
+    wait_ammount(mcann, hwif.machine_io[mcann.id].outs[1], cell_cnt)
+    if mcann.trans.transferItem(mcann.side, mcann.cside, cell_cnt,
+            hwif.machine_io[mcann.id].outs[1], cchest_out) ~= cell_cnt
+    then
+        critical_message("Failed machine filled cell transfer")
+    end
+    hwif.rs_reset(source_mach.trans.liq_out)
 end
 
-function transfer_mach2item(source_mach, cchest_slot, item_cnt)
+function hwc.transfer_item2mach(cchest_slot, target_mach, item_cnt)
+    -- move the item into the machine
+    if target_mach.trans.transferItem(target_mach.cside, target_mach.side, item_cnt,
+            cchest_slot) ~= item_cnt
+    then
+        critical_message("Failed machine filled cell transfer")
+    end
 end
 
-function inv_transfer_cnt(inv, i, cnt)
+function hwc.transfer_mach2item(target_mach, source_slot, cchest_slot, item_cnt)
+    -- move the item from the machine
+    if target_mach.trans.transferItem(target_mach.side, target_mach.cside, item_cnt,
+            source_slot, cchest_slot) ~= item_cnt
+    then
+        critical_message("Failed machine filled cell transfer")
+    end
+end
+
+function inv_transfer_cnt(inv, i, cnt, is_liq)
+    -- TODO: find a space for cells
+    local cell_slot = nil
+    if is_liq then
+        for j = 1, cchest_workspace_end do
+            if ih.get_name(inv[j]) == "empty_cell" and inv[j].size + cnt <= 64 then
+                cell_slot = j
+                inv[j].size = inv[j].size + cnt
+                break
+            end
+        end
+        if cell_slot == nil then
+            for j = 1, cchest_workspace_end do
+                if inv[j] == nil then
+                    cell_slot = j
+                    inv[j] = hwif.cchest_get(hwif.cchest_cells_slot)
+                    inv[j].size = cnt
+                    break
+                end
+            end
+        end
+        if cell_slot == nil then
+            return 0, 0
+        end
+    end
     if inv[i].size > cnt then
         inv[i].size = inv[i].size - cnt
-        return cnt
+        return cnt, cell_slot
     else
         local ret = inv[i].size
         inv[i] = nil
-        return ret
+        return ret, cell_slot
     end
 end
 
 function craft_batch(inv, machine, batch, sim_mode)
     -- this will send the batch to the respective machine
+    local cbatch = h.copy(batch)
     for i = 1, cchest_workspace_end do
-        for k, v in pairs(batch.inputs) do
+        for k, v in pairs(cbatch.inputs) do
             if k == ih.get_name(inv[i]) and v.cnt >= 1 then
-                local to_transfer = inv_transfer_cnt(inv, i, v.cnt)
+                local to_transfer, cslot = inv_transfer_cnt(inv, i, v.cnt, v.as_liq)
+                if to_transfer == 0 then
+                    return false
+                end
                 if not sim_mode then
                     if v.as_liq then
-                        transfer_cell2liq(i, machine, to_transfer)
+                        hwc.transfer_cell2liq(i, cslot, machine, to_transfer)
                     else
-                        transfer_item2mach(i, machine, to_transfer)
+                        hwc.transfer_item2mach(i, machine, to_transfer)
                     end
                 end
+
                 v.cnt = v.cnt - to_transfer
             end
         end
     end
+    for k, v in pairs(cbatch.inputs) do
+        if v.cnt > 0 then
+            return false
+        end
+    end
+    return true
 end
 
 function wait_batch(inv, machine, batch, sim_mode)
     if sim_mode then
         return true
     end
-
-    -- This here is like so:
-    -- if we wait for a liquid, we must check the liquid count somehow
-    -- if we wait for an item we must iterate it's input slots and check for their content
-
-    while true do
-        -- local item = trans.getStackInSlot(side, out_slot)
-        -- if item and ih.get_name(item) ~= r.label then
-        --     critical_message("Machine didn't craft the expected item: "
-        --             .. ih.get_name(item) .. " expected: " .. r.label)
-        -- end
-        -- if item and item.size == expected_res then
-        --     break
-        -- elseif item and item.size > expected_res then
-        --     critical_message("Wiremill - too many results")
-        -- end
-        -- os.sleep(1)
+    local done = false
+    while not done do
+        for i = 1, #batch.outs do
+            local item = batch.outs[i]
+            if item.as_liq == true then
+                local liq_ammount = machine.trans.getTankLevel(machine.side, 2)
+                if liq_ammount == item.liq_cnt then
+                    done = true
+                    break
+                elseif liq_ammount > item.liq_cnt then
+                    critical_message("More liquid than expected in out slot")
+                end
+            else
+                local out_slots = hwif.machine_io[machine.id].outs
+                for j = 1, #out_slots do
+                    local res = machine.trans.getStackInSlot(machine.side, out_slots[j])
+                    if ih.get_name(res) == item.label and res.size == item.cnt then
+                        done = true
+                        break
+                    elseif ih.get_name(res) == item.label and res.size > item.cnt then
+                        critical_message("More item than expected in out slot")
+                    end
+                end
+            end
+        end
+        os.sleep(1)
     end
-    -- this will wait for the batch to finish
 end
 
 function collect_batch(inv, machine, batch, sim_mode)
-    -- this will take the items from the machine back into the crafting chest
+    for i = 1, #batch.outs do
+        local item = batch.outs[i]
+        if item.as_liq == true then
+            local cell_cnt = item.cnt
+            local cell_src = nil
+            local rem_cell_cnt = cell_cnt
+            for j = 1, cchest_workspace_end do
+                if ih.get_name(inv[j]) == "empty_cell" then
+                    if not cell_src then
+                        cell_src = j
+                        rem_cell_cnt = cell_cnt - inv[j].size
+                    else
+                        local to_transfer = inv_transfer_cnt(inv, j, rem_cell_cnt)
+                        if not sim_mode then
+                            if machine.trans.transferItem(machine.cside, machine.cside, to_transfer,
+                                    j, cell_src) ~= to_transfer
+                            then
+                                critical_message("Failed internal cell transfer from:" .. j .. ", to:" .. cell_src)
+                            end
+                        end
 
-    -- if it has liquids, pack them into cells and send them into the inventory grid
-    -- if it has items just send them into the inventory grid
+                        rem_cell_cnt = rem_cell_cnt - to_transfer
+                    end
+                end
+                if rem_cell_cnt == 0 then
+                    break
+                end
+            end
+            if rem_cell_cnt > 0 or cell_src == nil then
+                print("Failed to get enaugh empty cells")
+                return false
+            end
+            local cell_dst = nil
+            for j = 1, cchest_workspace_end do
+                if inv[j] == nil then
+                    cell_dst = j
+                end
+            end
+            if cell_dst == nil then
+                print("Failed to get enaugh space for resulting cells")
+                return false
+            end
+            inv[cell_src].size = inv[cell_src].size - cell_cnt
+            -- TODO: inv[cell_dst] = 
+            if not sim_mode then
+                hwc.transfer_liq2cell(machine, cell_src, cell_dst, cell_cnt)
+            end
+        else
+            local src_slot = nil
+            if not sim_mode then
+                local out_slots = hwif.machine_io[machine.id].outs
+                for j = 1, #out_slots do
+                    local res_item = machine.trans.getStackInSlot(machine.side, out_slots[j])
+                    if res_item and ih.get_name(res_item) == item.label then
+                        src_slot = out_slots[j]
+                        break
+                    end
+                end
+                if not src_slot then
+                    critical_message("expected output not found in machine output")
+                end
+            end
+
+            local to_move = item.cnt
+            for j = 1, cchest_workspace_end do
+                if ih.get_name(inv[j]) == item.label then
+                    local to_transfer = 0
+                    if to_move + inv[j].size <= item.msz then
+                        inv[j].size = inv[j].size + to_move
+                        to_transfer = to_move
+                        to_move = 0
+                    else
+                        to_move = to_move + inv[j].size - item.msz
+                        to_transfer = item.msz - inv[j].size
+                        inv[j].size = item.msz
+                    end
+                    if not sim_mode then
+                        hwc.transfer_mach2item(machine, src_slot, j, to_transfer)
+                    end
+                end
+            end
+            if to_move > 0 then
+                for j = 1, cchest_workspace_end do
+                    if inv[j] == nil then
+                        inv[j] = {
+                            label = item.label,
+                            maxSize = item.msz,
+                            size = to_move
+                        }
+                        if not sim_mode then
+                            hwc.transfer_mach2item(machine, src_slot, j, to_move)
+                        end
+                        break
+                    end
+                end
+            end
+        end
+    end
 end
 
 function hwc.craft_items(inv, item_name, cnt, sim_mode)
+    if not sim_mode then
+        print("Crafting " .. item_name .. " x" .. cnt)
+    end
     local recipe = rdb.find_recipes({item_name})[item_name]
     if not recipe then
         print("Recipe is not found in database for: " .. item_name)
         return false
     end
-    if not sim_mode and hwc.get_missing_materials(inv, recipe, cnt) ~= nil then
+    if (not sim_mode) and hwc.get_missing_materials(inv, recipe, cnt) ~= nil then
         print("Can't start crafting without all the materials")
         return false
     end
@@ -279,16 +483,16 @@ function hwc.craft_items(inv, item_name, cnt, sim_mode)
     if not sim_mode then
         machine = hwif.machines[hwif.craft_info[recipe.mach_id].mach_name]
         local cfg_slot = hwif.craft_info[recipe.mach_id].cfg
-        local mach_io = hwif.mach_io[machine.id]
+        local mach_io = hwif.machine_io[machine.id]
 
-        hwif.reset_machine(machine)
-        os.sleep(1)
         if cfg_slot and recipe.mach_cfg then
+            hwif.reset_machine(machine)
+            os.sleep(1)
             if not mach_io.cfg then
                 critical_message("machine config required where no config possible")
             end
-            if trans.transferItem(machine.cside, machine.side, 1,
-                    cfg_slot + machine.mach_cfg - 1, mach_io.cfg) ~= 1
+            if machine.trans.transferItem(machine.cside, machine.side, 1,
+                    cfg_slot + recipe.mach_cfg - 1, mach_io.cfg) ~= 1
             then
                 critical_message("Failed machine cfg")
             end
@@ -297,312 +501,51 @@ function hwc.craft_items(inv, item_name, cnt, sim_mode)
     end
     -- now craft the thing
     while true do
-        local batch = create_batch(inv, recipe, cnt)
+        local batch = create_batch(recipe, cnt)
         craft_batch(inv, machine, batch, sim_mode)
         wait_batch(inv, machine, batch, sim_mode)
         collect_batch(inv, machine, batch, sim_mode)
         cnt = cnt - batch.cnt
         if cnt <= 0 then
-            return true
-        end
-    end
-    if not sim_mode then
-        hwif.reset_machine(machine)
-    end
-end
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-function validate_materials(inv, recipe, cnt)
-    local mats = {}
-    for i = 1, #recipe.comp do
-        mats[recipe.comp[i].label] = math.ceil(recipe.comp[i].cnt * cnt / recipe.res_cnt)
-    end
-    for i = 1, cchest_workspace_end do
-        for k, v in pairs(mats) do
-            if inv[i] and not ih.is_cell(inv[i]) and ih.get_name(inv[i]) == k then
-                mats[k] = mats[k] - ih.count(inv[i])
-            end
-        end
-    end
-    local ret = true
-    for k, v in pairs(mats) do
-        if v > 0 then
-            print("Missing material " .. k .. " X " .. v)
-            ret = false
-        end
-    end
-    return ret
-end
-
-batch_example = {
-    in_items = { -- can be empty
-        { label="iron_ingot", cnt=batch_in_cnt1, max_stack=64 },
-        { label="gold_ingot", cnt=batch_in_cnt2, max_stack=1 },
-    },
-    out_items = { -- can be empty
-        { label="gold_nugget", cnt=batch_out_cnt1, max_stack=16 },
-        { label="gold_door", cnt=batch_out_cnt2, max_stack=1 },
-    },
-    in_liq = { label="hidrogen", liters=2000, cell_sz=1000 }, -- can be nil
-    out_liq = { label="diamond_liq", liters=288, cell_sz=144 }, -- can be nil
-}
-
--- this functions takes as an input the fluid name and results in cells fluid cells
-function hwc.chem_reactor(inv, fluid_name, cnt, sim_mode)
-    local r = rdb.find_recipes({fluid_name})[fluid_name]
-    if not r then
-        print("Recipe was not found in DB, can't craft it")
-        return false
-    end
-    local in1 = nil
-    local in2 = nil
-    if #r.comp >= 1 then
-        in1 = r.comp[1]
-    end
-    if #r.comp >= 2 then
-        in2 = r.comp[2]
-    end
-    local inl = nil
-    if r.liq and r.liq.label ~= "none" then
-        inl = r.liq
-    end
-    -- TODO: verify items(in1, in2, cell(inl)) are there
-    local out1 = nil
-    local out2 = nil
-    if #r.out >= 1 then
-        out1 = r.out[1]
-    end
-    if #r.out >= 2 then
-        out2 = r.out[2]
-    end
-    local outl = nil
-    if r.liq_out and r.liq_out.label ~= "none" then
-        outl = r.liq_out
-    end
-    -- create a batch describing the maximum craft
-    -- send batched items and liquids to the reactor
-    -- wait for the reactor to craft the expected liquid
-    -- take the batch outputs and the batch liquids as cells
-    -- repeat until the whole recipe is done
-end
-
--- TODO: split in more functions:
---       a. calculate batch
---       b. insert batch input
---       c. wait for output
---       d. take output batch
--- sim_mode tells the api if it should really craft the recipe or only simulate it
-function hwc.wiremill_craft(inv, item_name, cnt, sim_mode)
-    local r = rdb.find_recipes({item_name})[item_name]
-    if not r then
-        print("Recipe was not found in DB, can't craft it in wiremill")
-        return false
-    end
-    if not validate_materials(inv, r, cnt) then
-        print("Missing materials...")
-        return false
-    end
-
-    -- TODO: use the new msz to figure out max batch size
-    -- TODO: fix this, we don't know inputs or outputs stack to 64
-    -- we won't use more than 64 items in a slot at a time for crafting
-    local batch_cnt = 64 // r.res_cnt
-    for i = 1, #r.comp do
-        if r.comp[i].cnt * batch_cnt > 64 then
-            batch_cnt = 64 // r.comp[i].cnt
-        end
-    end
-
-    -- TODO: add liquid support to the crafter
-    -- TODO: make a generic crafter for items, not only for wiremill
-    local wiremill_in_slot = 6
-    local cfg_slot = 7
-    local out_slot = 8
-    local cfg_offset = hwif.cchest_circuits_slot
-    local trans = hwif.machines.wiremill.trans
-    local side = hwif.machines.wiremill.side
-    local cchest_side = s.south
-
-    if not sim_mode then
-        hwif.reset_machine(hwif.machines.wiremill)
-        os.sleep(1)
-        if r.mach_cfg then
-            if trans.transferItem(cchest_side, side, 1,
-                    cfg_offset + r.mach_cfg - 1, cfg_slot) ~= 1
-            then
-                critical_message("Failed machine cfg")
-            end
-        end
-        os.sleep(1)
-    end
-
-    while true do
-        local batch_mats = {}
-        if batch_cnt * r.res_cnt > cnt then
-            batch_cnt = math.ceil(cnt / r.res_cnt)
-        end
-        for i = 1, #r.comp do
-            batch_mats[r.comp[i].label] = batch_cnt * r.comp[i].cnt
-        end
-        for i = 1, cchest_workspace_end do
-            local j = 0
-            for k, v in pairs(batch_mats) do
-                if inv[i] and not ih.is_cell(inv[i]) and ih.get_name(inv[i]) == k then
-                    local sz = inv[i].size
-                    local transfer_sz = 0
-                    if batch_mats[k] >= sz then
-                        batch_mats[k] = batch_mats[k] - sz
-                        inv[i] = nil
-                        transfer_sz = sz
-                    else
-                        inv[i].size = inv[i].size - batch_mats[k]
-                        transfer_sz = batch_mats[k]
-                        batch_mats[k] = 0
-                    end
-                    if not sim_mode then
-                        if trans.transferItem(cchest_side, side, transfer_sz, i,
-                                wiremill_in_slot + j) ~= transfer_sz
-                        then
-                            critical_message("Wiremill - failed IN transfer")
-                        end
-                    end
-                end
-                j = j + 1
-            end
-        end
-        for k, v in pairs(batch_mats) do
-            if v > 0 then
-                if not sim_mode then
-                    critical_message("not all mats in batch where sent to crafting")
-                end
-            end
-        end
-        -- now the batch is crafting, we will wait for it to finish it's job
-        local expected_res = batch_cnt * r.res_cnt
-        while true do
-            if sim_mode then
-                -- in simulation we do nothing
-                break
-            end
-            local item = trans.getStackInSlot(side, out_slot)
-            if item and ih.get_name(item) ~= r.label then
-                critical_message("Machine didn't craft the expected item: "
-                        .. ih.get_name(item) .. " expected: " .. r.label)
-            end
-            if item and item.size == expected_res then
-                break
-            elseif item and item.size > expected_res then
-                critical_message("Wiremill - too many results")
-            end
-            os.sleep(1)
-        end
-        -- TODO: account for multilpe outputs (only in cutter and chem_reactor)
-
-        -- now we have the items in the output slot, so we must transfer them to
-        -- some free space inside the crafting chest, we will do that in two stages,
-        -- first we will try to stack it with an item with the same name and
-        -- second we will put it in a new slot
-        local to_store = expected_res
-        -- first: try to stack
-        for i = 1, cchest_workspace_end do
-            local to_transfer = 0
-            if inv[i] and not ih.is_cell(inv[i]) and ih.get_name(inv[i]) == r.label then
-                if inv[i].size < inv[i].maxSize then
-                    if inv[i].size + to_store <= inv[i].maxSize then
-                        to_transfer = to_store
-                        inv[i].size = inv[i].size + to_store
-                        to_store = 0
-                    else
-                        to_transfer = inv[i].maxSize - inv[i].size
-                        to_store = to_store - to_transfer
-                        inv[i].size = inv[i].maxSize
-                    end
-                end
-            end
-            if to_transfer > 0 and not sim_mode then
-                if trans.transferItem(side, cchest_side, to_transfer,
-                        out_slot, i) ~= to_transfer
-                then
-                    critical_message("Wiremill - failed OUT transfer")
-                end
-            end
-        end
-        -- second: try empty slots
-        for i = 1, cchest_workspace_end do
-            local to_transfer = 0
-            if to_store <= 0 then
-                break
-            end
-            if not inv[i] then
-                if sim_mode then
-                    -- TODO: fix this, we don't know the stack size of the item, assume it is 64
-                    inv[i] = { label = r.label, maxSize = 64 }
-                else
-                    local item = trans.getStackInSlot(side, out_slot)
-                    inv[i] = item
-                    inv[i].size = 0
-                end
-                if to_store > inv[i].maxSize then
-                    inv[i].size = inv[i].maxSize
-                    to_transfer = inv[i].maxSize
-                    to_store = to_store - inv[i].maxSize
-                else
-                    inv[i].size = to_store
-                    to_transfer = to_store
-                    to_store = 0
-                end
-                if not sim_mode then
-                    if trans.transferItem(side, cchest_side, to_transfer,
-                            out_slot, i) ~= to_transfer
-                    then
-                        critical_message("Wiremill - failed OUT2 transfer")
-                    end
-                    inv[i] = trans.getStackInSlot(cchest_side, i)
-                end
-            end
-        end
-        if to_store > 0 then
-            if not sim_mode then
-                critical_message("No more space for crafting")
-            else
-                print("No enaugh space for crafting")
-            end
-            return false
-        end
-
-        cnt = cnt - expected_res
-        if cnt <= 0 then
-            -- this means that the crafting is done
             break
         end
     end
-    if not sim_mode then
-        hwif.reset_machine(hwif.machines.wiremill)
+    if (not sim_mode) and recipe.mach_cfg then
+        hwif.reset_machine(machine)
     end
+    return true
 end
 
 return hwc
 
 -- hwc = require("hw_crafting")
 -- inv = hwc.read_cchest()
--- r = rdb.find_recipes({"fine_gold_wire"})["fine_gold_wire"]
--- hwc.wiremill_craft(inv, r.label, 1, false)
+-- hwc.craft_items(inv, "gold_foil", 4, false)
+
+-- 1x_annealed_copper_wire
+-- integrated_logic_circuit_(wafer)
+-- integrated_logic_circuit
+
+-- silver_bolt
+-- fine_electrum_wire
+-- gold_foil
+-- fine_gold_wire
+-- annealed_copper_bolt
+
+-- smd_resistor
+-- hydrochloric_acid_cell
+-- iron_iii_chloride
+-- good_circuit_board
+
+-- integrated_logic_circuit2
+-- good_integrated_circuit
+
+-- recipe = rdb.find_recipes({"good_circuit_board"})["good_circuit_board"]
+-- batch = create_batch(recipe, 1)
+-- craft_batch(inv, hwif.machines.chem_reactor, batch, false)
+-- wait_batch(inv, hwif.machines.chem_reactor, batch, false)
+-- collect_batch(inv, hwif.machines.chem_reactor, batch, false)
+
+-- machine = hwif.machines.assembler
+-- sim_mode = false
+-- hwc.transfer_cell2liq(2, 1, hwif.machines.chem_reactor, 10)

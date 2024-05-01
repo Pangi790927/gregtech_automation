@@ -4,6 +4,17 @@ function item_helper.label2cell_label(label)
 	return label .. "_cell"
 end
 
+function item_helper.is_cell_label(label)
+	local cell_str = "_cell"
+	return label:sub(-#cell_str) == cell_str
+end
+
+function item_helper.get_cell_label_fluid_name(label)
+	local cell_str = "_cell"
+	local liq_label = label:sub(1, #label - #cell_str)
+	return liq_label
+end
+
 function item_helper.is_cell(item)
 	local label = string.lower(item.label)
 	local cell_str = " cell"
@@ -29,6 +40,11 @@ function item_helper.get_name(item)
 	end
 	local label = string.lower(item.label)
 	local ret = label:gsub(" ", "_")
+	if ret == "integrated_logic_circuit" then
+		if item.name == "gregtech:gt.metaitem.01" then
+			ret = ret .. "2"
+		end
+	end
 	return ret
 end
 

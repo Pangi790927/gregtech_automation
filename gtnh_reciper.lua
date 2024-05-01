@@ -135,8 +135,8 @@ function run_add_recipes()
                 label="none",
                 comp = {},
                 out = {},
-                liq = { label="none", cnt=0 },
-                liq_out = { label="none", cnt=0 },
+                liq = { label="none", cnt=0, msz=0 },
+                liq_out = { label="none", cnt=0, msz=0 },
                 res_cnt=0,
                 is_liq=0,
                 is_visible=0,
@@ -152,13 +152,15 @@ function run_add_recipes()
             if pre_recipe.liq_in then
                 recipe.liq = {
                     label=pre_recipe.liq_in.label,
-                    cnt=pre_recipe.liq_in.cnt
+                    cnt=pre_recipe.liq_in.cnt,
+                    msz=pre_recipe.liq_in.msz
                 }
             end
             if pre_recipe.liq_out then
                 recipe.liq_out = {
                     label=pre_recipe.liq_out.label,
-                    cnt=pre_recipe.liq_out.cnt
+                    cnt=pre_recipe.liq_out.cnt,
+                    msz=pre_recipe.liq_out.msz
                 }
             end
             if #pre_recipe.comp_out > 0 then
@@ -179,7 +181,7 @@ function run_add_recipes()
             print_empty_lines(screen_rows - 2)
             local usr_in = io.read()
             local liters = tonumber(usr_in)
-            if not liters or liters <= 0 then
+            if (not liters) or liters <= 0 then
                 print("Invalid input: " .. usr_in .. " press any key...")
                 h.wait_key()
             else
@@ -190,7 +192,7 @@ function run_add_recipes()
             print_empty_lines(screen_rows - 2)
             local usr_in = io.read()
             local liters = tonumber(usr_in)
-            if not liters or liters <= 0 then
+            if (not liters) or liters <= 0 then
                 print("Invalid input: " .. usr_in .. " press any key...")
                 print_empty_lines(screen_rows - 2)
                 h.wait_key()
@@ -208,7 +210,7 @@ function run_add_recipes()
             print_empty_lines(screen_rows - 2 - #hwif.craft_info)
             local usr_in = io.read()
             local mach_id = tonumber(usr_in)
-            if not mach_id or mach_id <= 0 or mach_id > #hwif.craft_info then
+            if (not mach_id) or mach_id <= 0 or mach_id > #hwif.craft_info then
                 print("Invalid input: " .. usr_in .. " press any key...")
                 print_empty_lines(screen_rows - 2)
                 h.wait_key()
@@ -231,7 +233,7 @@ function run_add_recipes()
                 print_empty_lines(screen_rows - 2 - cfg_num)
                 local usr_in = io.read()
                 local cfg_id = tonumber(usr_in)
-                if not cfg_id or cfg_id <= 0 or cfg_id > cfg_num then
+                if (not cfg_id) or cfg_id <= 0 or cfg_id > cfg_num then
                     print("Invalid input: " .. usr_in .. " press any key...")
                     print_empty_lines(screen_rows - 2)
                     h.wait_key()

@@ -3,7 +3,9 @@ ev = require("event")
 helpers = {}
 
 function helpers.dbg_tprint(tbl, indent)
-    if not indent then indent = 0 end
+    if not indent then
+        indent = 0
+    end
     for k, v in pairs(tbl) do
         formatting = string.rep("  ", indent) .. k .. ": "
         if type(v) == "table" then
