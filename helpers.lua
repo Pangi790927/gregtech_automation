@@ -12,10 +12,10 @@ function LOG_RECIPE(r)
         LOG("    -> cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
     end
     if r.liq then
-        LOG("    li-> cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
+        LOG("    li-> cnt: %5d msz: %5d comp: %s", v.liq.cnt, v.liq.msz, v.liq.label)
     end
     if r.liq_out then
-        LOG("    li<- cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
+        LOG("    li<- cnt: %5d msz: %5d comp: %s", v.liq_out.cnt, v.liq_out.msz, v.liq_out.label)
     end
     for k, v in ipairs(r.out) do
         LOG("    -> cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
