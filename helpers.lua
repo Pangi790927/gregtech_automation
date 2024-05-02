@@ -6,6 +6,24 @@ helpers.logfile = fs.open("/home/logfile.log", "w")
 
 function LOG(fmt, ...) helpers.logfile:write(string.format(fmt, ...) .. "\n") end
 
+function LOG_RECIPE(r)
+    LOG("name: %s", r.name)
+    for k, v in ipairs(r.comp) do
+        LOG("    -> cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
+    end
+    if r.liq then
+        LOG("    li-> cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
+    end
+    if r.liq_out then
+        LOG("    li<- cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
+    end
+    for k, v in ipairs(r.out) do
+        LOG("    -> cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
+    end
+    LOG("    flags: is_li[] is_vis[] res_cnt[%d]", r.is_liq, r.is_visible, r.res_cnt)
+    LOG("    mach: id[%d] cfg[%d]", r.mach_id, mach_cfg)
+end
+
 function helpers.dbg_tprint(tbl, indent)
     if not indent then
         indent = 0
