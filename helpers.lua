@@ -1,6 +1,10 @@
 ev = require("event")
+fs = require("filesystem")
 
 helpers = {}
+helpers.logfile = fs.open("/home/logfile.log", "w")
+
+function LOG(fmt, ...) helpers.logfile:write(string.format(fmt, ...) .. "\n") end
 
 function helpers.dbg_tprint(tbl, indent)
     if not indent then
