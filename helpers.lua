@@ -12,15 +12,15 @@ function LOG_RECIPE(r)
         LOG("    it-> cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
     end
     if r.liq then
-        LOG("    li-> cnt: %5d msz: %5d comp: %s", v.liq.cnt, v.liq.msz, v.liq.label)
+        LOG("    li-> cnt: %5d msz: %5d comp: %s", r.liq.cnt, r.liq.msz, r.liq.label)
     end
     if r.liq_out then
-        LOG("    li<- cnt: %5d msz: %5d comp: %s", v.liq_out.cnt, v.liq_out.msz, v.liq_out.label)
+        LOG("    li<- cnt: %5d msz: %5d comp: %s", r.liq_out.cnt, r.liq_out.msz, r.liq_out.label)
     end
     for k, v in ipairs(r.out) do
         LOG("    it<- cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
     end
-    LOG("    flags: is_li[] is_vis[] res_cnt[%d]", r.is_liq, r.is_visible, r.res_cnt)
+    LOG("    flags: is_li[%d] is_vis[%d] res_cnt[%d]", r.is_liq, r.is_visible, r.res_cnt)
     LOG("    mach: id[%d] cfg[%d]", r.mach_id, mach_cfg)
 end
 
