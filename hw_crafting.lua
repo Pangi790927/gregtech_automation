@@ -376,6 +376,9 @@ function collect_batch(inv, machine, batch, sim_mode)
                     if not cell_src then
                         cell_src = j
                         rem_cell_cnt = cell_cnt - inv[j].size
+                        if rem_cell_cnt < 0 then
+                            rem_cell_cnt = 0
+                        end
                     else
                         local to_transfer = inv_transfer_cnt(inv, j, rem_cell_cnt)
                         if not sim_mode then
