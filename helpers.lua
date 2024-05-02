@@ -9,7 +9,7 @@ function LOG(fmt, ...) helpers.logfile:write(string.format(fmt, ...) .. "\n") en
 function LOG_RECIPE(r)
     LOG("name: %s", r.name)
     for k, v in ipairs(r.comp) do
-        LOG("    -> cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
+        LOG("    it-> cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
     end
     if r.liq then
         LOG("    li-> cnt: %5d msz: %5d comp: %s", v.liq.cnt, v.liq.msz, v.liq.label)
@@ -18,7 +18,7 @@ function LOG_RECIPE(r)
         LOG("    li<- cnt: %5d msz: %5d comp: %s", v.liq_out.cnt, v.liq_out.msz, v.liq_out.label)
     end
     for k, v in ipairs(r.out) do
-        LOG("    -> cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
+        LOG("    it<- cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
     end
     LOG("    flags: is_li[] is_vis[] res_cnt[%d]", r.is_liq, r.is_visible, r.res_cnt)
     LOG("    mach: id[%d] cfg[%d]", r.mach_id, mach_cfg)
