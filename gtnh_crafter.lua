@@ -74,13 +74,13 @@ end
 return {}
 
 -- lua
--- require("crafter")
+-- require("gtnh_crafter")
 -- craft_recipe("integrated_logic_circuit2", 1)
--- craft_recipe("good_integrated_circuit", 1)
+-- craft_recipe("good_integrated_circuit", 4)
 -- craft_recipe("advanced_circuit", 1)
 -- craft_recipe("iron_iii_chloride", 1)
 -- craft_recipe("smd_transistor", 64)
--- rdb.find_recipes({"good_circuit_board"})["good_circuit_board"]
+-- r = rdb.find_recipes({"good_circuit_board"})["good_circuit_board"]
 
 -- name = "good_circuit_board"
 -- cnt = 1
