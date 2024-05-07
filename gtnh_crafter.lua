@@ -25,6 +25,7 @@ function rec_craft_recipe(name, cnt, inv, sim_mode, miss_table)
             if not subrecipe then
                 if not sim_mode then
                     print("Missing " .. v .. "x" .. subname)
+                    LOG("-> Missing %d of %s", v, subname)
                     return false
                 else
                     if not miss_table[subname] then
