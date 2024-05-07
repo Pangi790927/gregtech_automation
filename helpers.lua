@@ -7,7 +7,7 @@ if logfile == nil then
     logfile = fs.open("/home/logfile.log", "w")
 end
 
-function LOG(fmt, ...) helpers.logfile:write(string.format(fmt, ...) .. "\n") end
+function LOG(fmt, ...) logfile:write(string.format(fmt, ...) .. "\n") end
 
 function LOG_RECIPE(r)
     LOG("name: %s", r.name)
@@ -15,10 +15,10 @@ function LOG_RECIPE(r)
         LOG("    it-> cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
     end
     if r.liq then
-        LOG("    li-> cnt: %5d msz: %5d comp: %s", r.liq.cnt, r.liq.msz, r.liq.label)
+        LOG("    LI-> cnt: %5d msz: %5d comp: %s", r.liq.cnt, r.liq.msz, r.liq.label)
     end
     if r.liq_out then
-        LOG("    li<- cnt: %5d msz: %5d comp: %s", r.liq_out.cnt, r.liq_out.msz, r.liq_out.label)
+        LOG("    LI<- cnt: %5d msz: %5d comp: %s", r.liq_out.cnt, r.liq_out.msz, r.liq_out.label)
     end
     for k, v in ipairs(r.out) do
         LOG("    it<- cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)

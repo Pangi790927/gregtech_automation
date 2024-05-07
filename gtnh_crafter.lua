@@ -6,7 +6,7 @@ hwc  = require("hw_crafting")
 
 function rec_craft_recipe(name, cnt, inv, sim_mode, miss_table)
     local recipe = rdb.find_recipes({name})[name]
-    LOG("Crafting: %s", name)
+    LOG("Crafting: %s cnt: %d sim_mode: %s", name, cnt, tostring(sim_mode))
     LOG_RECIPE(recipe)
     if not recipe then
         print("Recipe is not found in database for: " .. name)
