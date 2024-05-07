@@ -103,7 +103,7 @@ function hwc.get_missing_materials(inv, recipe, cnt)
 
     for k, v in pairs(min_recipe) do
         req_recipe[k] = min_recipe[k].cnt * mul
-        LOG("req_recipe[%s] = %d", k, req_recipe[k])
+        LOG(">> req_recipe[%s] = %d", k, req_recipe[k])
     end
 
     for i = 1, cchest_workspace_end do
