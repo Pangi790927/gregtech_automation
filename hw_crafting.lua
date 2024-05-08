@@ -99,7 +99,11 @@ end
 function hwc.get_missing_materials(inv, recipe, cnt)
     local min_recipe = get_min_recipe(recipe)
     local req_recipe = {}
-    local mul = math.ceil(cnt / get_min_recipe_res_cnt(recipe))
+    local _cnt = cnt
+    if recipe.is_liq == 1 then
+        _cnt = _cnt * recipe.liq_out.msz
+    end
+    local mul = math.ceil(_cnt / get_min_recipe_res_cnt(recipe))
 
     for k, v in pairs(min_recipe) do
         req_recipe[k] = min_recipe[k].cnt * mul
