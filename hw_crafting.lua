@@ -148,8 +148,12 @@ function create_batch(recipe, cnt)
     end
 
     -- make sure to try not to craft more than required
-    if batch_cnt * min_res > cnt then
-        local new_bc = math.ceil(cnt / min_res)
+    local _cnt = cnt
+    if recipe.is_liq == 1 then
+        _cnt = _cnt * recipe.liq_out.msz
+    end
+    if batch_cnt * min_res > _cnt then
+        local new_bc = math.ceil(_cnt / min_res)
         if new_bc < batch_cnt then
             batch_cnt = new_bc
         end
