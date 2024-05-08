@@ -512,13 +512,18 @@ function hwc.craft_items(inv, item_name, cnt, sim_mode)
         os.sleep(1)
     end
     -- now craft the thing
+
+    local _cnt = cnt
+    if recipe.is_liq == 1 then
+        _cnt = _cnt * recipe.liq_out.msz
+    end
     while true do
         local batch = create_batch(recipe, cnt)
         craft_batch(inv, machine, batch, sim_mode)
         wait_batch(inv, machine, batch, sim_mode)
         collect_batch(inv, machine, batch, sim_mode)
-        cnt = cnt - batch.cnt
-        if cnt <= 0 then
+        _cnt = _cnt - batch.cnt
+        if _cnt <= 0 then
             break
         end
     end
