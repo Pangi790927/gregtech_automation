@@ -7,7 +7,25 @@ if logfile == nil then
     logfile = fs.open("/home/logfile.log", "w")
 end
 
-function LOG(fmt, ...) logfile:write(string.format(fmt, ...) .. "\n") end
+function LOG(fmt, ...)
+    local n = 2
+    while n > 0 do
+        local args = ...
+        local ret = pcall(function() logfile:write(string.format(fmt, args) .. "\n") end)
+        if not ret then
+            logfile = fs.open("/home/logfile.log", "w")
+        else
+            break
+        end
+        n = n - 1
+    end
+end
+
+function LOGP(fmt, ...)
+    LOG(fmt, ...)
+    print(string.format(fmt, ...))
+end
+
 
 function LOG_RECIPE(r)
     LOG("name: %s", r.name)
