@@ -73,7 +73,7 @@ local sname = {
     [s.north] = "north",
     [s.west] = "west",
     [s.east] = "east",
-    [s.down] = "east",
+    [s.down] = "down",
     [s.up] = "up"
 }
 
@@ -88,14 +88,16 @@ function move_item(item, slot)
     local route_id = nofilter_out
     if route_dst[uid] then
         route_id = route_dst[uid]
-    else
+    end
     t = route_outs[route_id]
-    print(uid .. " side " .. sname[t.side] .. " src " .. sname[t.src] .. " slot " .. slot ..)
+    print(uid .. " side " .. sname[t.side] .. " src " .. sname[t.src] .. " slot " .. slot .. " route " .. route_id)
     t.transferItem(t.src, t.side, 64, slot)
+    print("doop")
 end
 
 function main_router()
     while true do
+        print("boop")
         os.sleep(1)
         local stack = source_chest.trans.getAllStacks(source_chest.side)
         local inv = stack.getAll()
