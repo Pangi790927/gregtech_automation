@@ -1,3 +1,5 @@
+-- todo: rename programs as gtnh_*.lua and libs at gtl_*.lua
+
 shell = require("shell")
 
 file_list = {
@@ -8,10 +10,14 @@ file_list = {
 	"hw_interface.lua",
 	"item_helper.lua",
 	"recipe_db.lua",
-	"cleanroom.lua",
 	"main.lua",
 	"update.lua",
 	"help.lua"
+	"gtnh_ae2ex.lua",
+	"crc32.lua",
+	"nbt.lua",
+	"deflate.lua",
+	"gtnh_ae2recieper.lua"
 }
 
 for k,f in ipairs(file_list) do
