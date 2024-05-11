@@ -68,6 +68,15 @@ local route_table = {
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
 }
 
+local sname = {
+    [s.south] = "south",
+    [s.north] = "north",
+    [s.west] = "west",
+    [s.east] = "east",
+    [s.down] = "east",
+    [s.up] = "up"
+}
+
 local nofilter_out = 12
 
 local source_chest = { trans=t_wo, side=s.east }
@@ -76,11 +85,12 @@ local route_dst = {}
 function move_item(item, slot)
     local uid = ih.get_name(item)
     local t = {}
+    local route_id = nofilter_out
     if route_dst[uid] then
-        t = route_outs[route_dst[uid]]
+        route_id = route_dst[uid]
     else
-        t = route_outs[nofilter_out]
-    end
+    t = route_outs[route_id]
+    print(uid .. " side " .. sname[t.side] .. " src " .. sname[t.src] .. " slot " .. slot ..)
     t.transferItem(t.src, t.side, 64, slot)
 end
 
