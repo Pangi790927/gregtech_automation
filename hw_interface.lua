@@ -1,6 +1,7 @@
 s   = require("sides")
 c   = require("component")
 b   = require("bit32")
+ih  = require("item_helper")
 
 hwif = {}
 

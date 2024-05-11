@@ -81,13 +81,21 @@ function read_recipes()
     local route_dst_tmp = {}
     for i, v in ipairs(route_filters) do
         local t = route_filters[i]
-        local stacks = t.trans.getAllStacks(t.side)
+        local stack = t.trans.getAllStacks(t.side)
         local inv = stack.getAll()
-        for i, v in ipairs(inv) do
+        local v = inv[0]
+        if v.id then
+            local uid = ih.get_name(v)
+            if not route_dst_tmp[uid] then
+                route_dst_tmp[uid] = route_table[i]
+                print("uid: " .. uid .. " id: " .. v.id .. " dst: " .. route_table[i])
+            end
+        end
+        for j, v in ipairs(inv) do
             if v.id then
-                if not route_dst_tmp[v.id] then
-                    route_dst_tmp[v.id] = route_table[i]
-                    print("name: " .. v.name .. " id: " .. c.id .. " dst: " .. route_table[i])
+                if not route_dst_tmp[id] then
+                    route_dst_tmp[id] = route_table[i]
+                    print("uid: " .. uid .. " id: " .. v.id .. " dst: " .. route_table[i])
                 end
             end
         end
@@ -95,12 +103,19 @@ function read_recipes()
     route_dst = route_dst_tmp
 end
 
-thread.create(main_crafter)
+thread.create(main_router)
 while true do
     print("Press enter to re-read the filters")
+    io.read()
     read_recipes()
 end
 
+-- 
+-- s = require("sides")
+-- c = require("component")
+-- t = c.proxy(c.get("bc1f"))
+-- stack = t.getAllStacks(s.down)
+-- inv = stack.getAll()
 
     -- return t1.getStackInSlot(s.south, slot)
     -- return t1.transferItem(s.south, s.south, cnt, src_slot, dst_slot)
