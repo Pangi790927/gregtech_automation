@@ -12,7 +12,7 @@ file_list = {
 	"recipe_db.lua",
 	"main.lua",
 	"update.lua",
-	"help.lua"
+	"help.lua",
 	"gtnh_ae2ex.lua",
 	"crc32.lua",
 	"nbt.lua",
