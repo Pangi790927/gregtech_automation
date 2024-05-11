@@ -141,12 +141,18 @@ function read_recipes()
     route_dst = route_dst_tmp
 end
 
-thread.create(main_router)
-while true do
-    print("Press enter to re-read the filters")
-    io.read()
-    read_recipes()
+function main_filter()
+    while true do
+        print("Press enter to re-read the filters")
+        io.read()
+        read_recipes()
+    end
 end
+
+read_recipes()
+thread.create(main_filter)
+main_router()
+
 
 -- 
 -- s = require("sides")
