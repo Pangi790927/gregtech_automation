@@ -17,7 +17,7 @@ file_list = {
 	"crc32.lua",
 	"nbt.lua",
 	"deflate.lua",
-	"gtnh_ae2recieper.lua"
+	"gtnh_item_router.lua"
 }
 
 for k,f in ipairs(file_list) do
