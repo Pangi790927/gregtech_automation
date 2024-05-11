@@ -2,6 +2,7 @@ h       = require("helpers")
 thread  = require("thread")
 s       = require("sides")
 c       = require("component")
+ih      = require("item_helper")
 
 -- W - 88cd
 -- N - 29a9
@@ -34,22 +35,20 @@ local t_so = c.proxy(c.get("2611"))
 local t_1r = c.proxy(c.get("50ca"))
 local t_2r = c.proxy(c.get("bc1f"))
 
-local nofilter_out = 12
-
 -- 12 in total
 local route_outs = {
-    { trans=t_wo, side=s.west },
-    { trans=t_wo, side=s.down },
-    { trans=t_wo, side=s.north },
-    { trans=t_wo, side=s.south },
-    { trans=t_no, side=s.north },
-    { trans=t_no, side=s.down },
-    { trans=t_so, side=s.down },
-    { trans=t_so, side=s.south },
-    { trans=t_eo, side=s.north },
-    { trans=t_eo, side=s.down },
-    { trans=t_eo, side=s.south },
-    { trans=t_eo, side=s.east }
+    { trans=t_wo, src = s.east,  side=s.west },
+    { trans=t_wo, src = s.east,  side=s.down },
+    { trans=t_wo, src = s.east,  side=s.north },
+    { trans=t_wo, src = s.east,  side=s.south },
+    { trans=t_no, src = s.south, side=s.north },
+    { trans=t_no, src = s.south, side=s.down },
+    { trans=t_so, src = s.north, side=s.down },
+    { trans=t_so, src = s.north, side=s.south },
+    { trans=t_eo, src = s.west,  side=s.north },
+    { trans=t_eo, src = s.west,  side=s.down },
+    { trans=t_eo, src = s.west,  side=s.south },
+    { trans=t_eo, src = s.west,  side=s.east }
 }
 
 local route_filters = {
@@ -69,11 +68,37 @@ local route_table = {
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
 }
 
+local nofilter_out = 12
+
+local source_chest = { trans=t_wo, side=s.east }
 local route_dst = {}
+
+function move_item(item, slot)
+    local uid = ih.get_name(item)
+    local t = {}
+    if route_dst[uid] then
+        t = route_outs[route_dst[uid]]
+    else
+        t = route_outs[nofilter_out]
+    end
+    t.transferItem(t.src, t.side, 64, slot)
+end
 
 function main_router()
     while true do
         os.sleep(1)
+        local stack = source_chest.trans.getAllStacks(source_chest.side)
+        local inv = stack.getAll()
+
+        local v = inv[0]
+        if v.id then
+            move_item(v, 1)
+        end
+        for i, v in ipairs(inv) do
+            if v.id then
+                move_item(v, i + 1)
+            end
+        end
     end
 end
 
@@ -93,8 +118,9 @@ function read_recipes()
         end
         for j, v in ipairs(inv) do
             if v.id then
-                if not route_dst_tmp[id] then
-                    route_dst_tmp[id] = route_table[i]
+                local uid = ih.get_name(v)
+                if not route_dst_tmp[uid] then
+                    route_dst_tmp[uid] = route_table[i]
                     print("uid: " .. uid .. " id: " .. v.id .. " dst: " .. route_table[i])
                 end
             end
