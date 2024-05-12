@@ -45,7 +45,9 @@ end
 
 function get_one_recipe()
     -- TODO: remove
-    return nil
+    if true then
+        return nil
+    end
 
     local stack = t.trans.getAllStacks(t.side)
     local inv = stack.getAll()
@@ -216,7 +218,7 @@ function read_recipe()
 
     -- read the machine id
     local machine_name2id = {
-        ["chem_reactor_placeholder"] = hwif.machines.chem_reactor.id
+        ["basic_chemical_reactor"] = hwif.machines.chem_reactor.id
     }
     local machine_id = 0
     if not machine then
@@ -227,13 +229,14 @@ function read_recipe()
     end
 
     -- read the machine config
-    local config_name2id = {
-        ["circuit1_placeholder"] = hwif.craft_circuits[1]
-    }
     local config_id = nil
     if config then
         -- TODO: check what needs to be read here to decide the config
-        config_id = config_name2id[ih.get_name(config)]
+        config_id = config.damage
+        if not config_id then
+            print("You must use a programed circuit in the circuit slot")
+            return nil
+        end
     end
 
     local recipe = {}
@@ -249,53 +252,53 @@ function read_recipe()
         print("machine_cfg: " .. config_id)
     end
 
-    for i, v in ipairs(TODO_inputs) do
+    for i, v in ipairs(pattern.inputs) do
         if ih.name_format(v.name) == liqin_cell_name then
             -- this is the input liquid
             local liq_name = ih.get_cell_label_fluid_name({ label=ih.name_format(v.name) })
-            local liq_cnt = liqin_msz * TODO_get_count
+            local liq_cnt = liqin_msz * v.count
             recipe.batch.inputs[liq_name] = {
-                .msz = liqin_msz,
-                .cnt = liq_cnt,
-                .as_liq = true
+                msz = liqin_msz,
+                cnt = liq_cnt,
+                as_liq = true
             }
             print("IN  liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqin_msz)
-        elseif ih.name_format(v.name) == "inscriber_InscribeName" then
+        elseif ih.name_format(v.name) == "inscriber_name_press" then
             -- this is the label name, it is remembered in the uid, so we ignore it here
         else
             -- this is an item
             -- TODO: verify if items need msz, if so, take them from input
             local item_name = ih.name_format(v.name)
-            local item_cnt = TODO_get_count
+            local item_cnt = v.count
             recipe.batch.inputs[item_name] = {
-                .cnt = item_cnt,
-                .as_liq = false
-            })
+                cnt = item_cnt,
+                as_liq = false
+            }
             print("IN  item: " .. item_name .. " cnt " .. item_cnt)
         end
     end
 
-    for i, v in ipairs(TODO_outputs) do
+    for i, v in ipairs(pattern.outputs) do
         if ih.name_format(v.name) == liqout_cell_name then
             -- this is the input liquid
             local liq_name = ih.get_cell_label_fluid_name({ label=ih.name_format(v.name) })
-            local liq_cnt = liqout_msz * TODO_get_count
+            local liq_cnt = liqout_msz * v.count
             table.insert(recipe.batch.outs, {
-                .label = liq_name,
-                .msz = liqout_msz,
-                .cnt = liq_cnt,
-                .as_liq = true
+                label = liq_name,
+                msz = liqout_msz,
+                cnt = liq_cnt,
+                as_liq = true
             })
             print("OUT liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqout_msz)
         else
             -- this is an item
             -- TODO: verify if items need msz, if so, bad luck
             local item_name = ih.name_format(v.name)
-            local item_cnt = TODO_get_count
+            local item_cnt = v.count
             table.insert(recipe.batch.outs, {
-                .label = item_name,
-                .cnt = item_cnt,
-                .as_liq = false
+                label = item_name,
+                cnt = item_cnt,
+                as_liq = false
             })
             print("OUT item: " .. item_name .. " cnt " .. item_cnt)
         end
