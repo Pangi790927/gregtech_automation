@@ -441,17 +441,19 @@ function collect_batch(inv, machine, batch, sim_mode)
             end
 
             local to_move = item.cnt
+            local msz = 0
             for j = 1, cchest_workspace_end do
                 if ih.get_name(inv[j]) == item.label then
                     local to_transfer = 0
-                    if to_move + inv[j].size <= item.msz then
+                    msz = inv[j].maxSize
+                    if to_move + inv[j].size <= msz then
                         inv[j].size = inv[j].size + to_move
                         to_transfer = to_move
                         to_move = 0
                     else
-                        to_move = to_move + inv[j].size - item.msz
-                        to_transfer = item.msz - inv[j].size
-                        inv[j].size = item.msz
+                        to_move = to_move + inv[j].size - msz
+                        to_transfer = msz - inv[j].size
+                        inv[j].size = msz
                     end
                     if not sim_mode then
                         hwc.transfer_mach2item(machine, src_slot, j, to_transfer)
@@ -463,7 +465,7 @@ function collect_batch(inv, machine, batch, sim_mode)
                     if inv[j] == nil then
                         inv[j] = {
                             label = item.label,
-                            maxSize = item.msz,
+                            maxSize = msz,
                             size = to_move
                         }
                         if not sim_mode then
@@ -474,6 +476,29 @@ function collect_batch(inv, machine, batch, sim_mode)
                 end
             end
         end
+    end
+end
+
+function hwc.prepare_machine(mach_id, mach_cfg)
+    local machine = nil
+    if not sim_mode then
+        machine = hwif.machines[hwif.craft_info[mach_id].mach_name]
+        local cfg_slot = hwif.craft_info[mach_id].cfg
+        local mach_io = hwif.machine_io[machine.id]
+
+        if cfg_slot and mach_cfg then
+            hwif.reset_machine(machine)
+            os.sleep(1)
+            if not mach_io.cfg then
+                critical_message("machine config required where no config possible")
+            end
+            if machine.trans.transferItem(machine.cside, machine.side, 1,
+                    cfg_slot + mach_cfg - 1, mach_io.cfg) ~= 1
+            then
+                critical_message("Failed machine cfg")
+            end
+        end
+        os.sleep(1)
     end
 end
 
@@ -491,28 +516,9 @@ function hwc.craft_items(inv, item_name, cnt, sim_mode)
         return false
     end
     -- set the machine to the right configuration
-    local machine = nil
-    if not sim_mode then
-        machine = hwif.machines[hwif.craft_info[recipe.mach_id].mach_name]
-        local cfg_slot = hwif.craft_info[recipe.mach_id].cfg
-        local mach_io = hwif.machine_io[machine.id]
+    local machine = hwc.prepare_machine(recipe.mach_id, recipe.mach_cfg)
 
-        if cfg_slot and recipe.mach_cfg then
-            hwif.reset_machine(machine)
-            os.sleep(1)
-            if not mach_io.cfg then
-                critical_message("machine config required where no config possible")
-            end
-            if machine.trans.transferItem(machine.cside, machine.side, 1,
-                    cfg_slot + recipe.mach_cfg - 1, mach_io.cfg) ~= 1
-            then
-                critical_message("Failed machine cfg")
-            end
-        end
-        os.sleep(1)
-    end
     -- now craft the thing
-
     local _cnt = cnt
     if recipe.is_liq == 1 then
         _cnt = _cnt * recipe.liq_out.msz

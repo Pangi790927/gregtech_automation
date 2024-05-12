@@ -13,6 +13,7 @@ rs = c.redstone
 t1 = c.proxy(c.get("6861")) -- w-wiremill e-chem_react u-extruder
 t2 = c.proxy(c.get("a85a")) -- w-asmmach  e-bendingm   u-canner
 t3 = c.proxy(c.get("7c02")) -- w-circasm  e-lasereng   u-cutting
+t4 = c.proxy(c.get("????"))
 
 hwif.machines = {
     wiremill     = { id = 1, trans = t1, side = s.west, cside = s.south, brk = { s = s.east,  n = 2 }},
@@ -161,6 +162,10 @@ end
 
 function hwif.cchest_get(slot)
     return t1.getStackInSlot(s.south, slot)
+end
+
+function hwif.rchest_get(slot)
+    return t4.getStackInSlot(s.west, slot)
 end
 
 function hwif.cchest_move(src_slot, dst_slot, cnt)

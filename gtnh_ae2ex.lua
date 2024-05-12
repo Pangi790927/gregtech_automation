@@ -1,114 +1,170 @@
-h    	= require("helpers")
-thread 	= require("thread")
-event	= require("event")
-ser		= require("serialization")
-fs 		= require("filesystem")
+h       = require("helpers")
+thread  = require("thread")
+event   = require("event")
+ser     = require("serialization")
+fs      = require("filesystem")
+deflate = require("deflate")
+nbt     = require("nbt")
 
-crafting_registrations = {}
-crafting_recipes = {}
+local crafting_registrations = {}
+local crafting_recipes = {}
 
-requests_path = "/home/requests.db"
-crafts_path = "/home/crafts.db"
+local requests_path = "/home/requests.db"
+local crafts_path = "/home/crafts.db"
 
 local rf = fs.open(requests_path, "r")
 if rf then
-	requests = ser.unserialize(rf:read(1000000000))
+    requests = ser.unserialize(rf:read(1000000000))
 else
-	requests = {}
+    requests = {}
 end
 
 local cf = fs.open(crafts_path)
 if cf then
-	crafts = ser.unserialize(cf:read(1000000000))
+    crafts = ser.unserialize(cf:read(1000000000))
 else
-	crafts = {}
+    crafts = {}
 end
 
 function update_files()
-	local rf = fs.open(requests_path, "w")
-	rf:write(ser.serialize(requests))
-	rf:close()
+    local rf = fs.open(requests_path, "w")
+    rf:write(ser.serialize(requests))
+    rf:close()
 
-	local cf = fs.open(crafts_path, "w")
-	cf:write(ser.serialize(crafts))
-	cf:close()
+    local cf = fs.open(crafts_path, "w")
+    cf:write(ser.serialize(crafts))
+    cf:close()
 end
 
 function add_crafting_recipe(registration)
-	LOG("registering recipe for: %s", registration.name)
+    LOG("registering recipe for: %s", registration.name)
 
-	crafts.registration = {registration}
+    crafts.registration = {registration}
 
-	LOG("serialized: %d", ser.serialize(crafts))
+    LOG("serialized: %d", ser.serialize(crafts))
 
-	update_files()
+    update_files()
 end
 
 -- This is the thread that receives the requests from the ae2 system and crafts them it will exit
 -- on error and should be independent of the main_reciper, except from receiving crafting recipes
 -- from it
 function main_crafter()
-	while true do
-		local ev_name = event.pullMultiple("_added_recipe", "interrupted")
+    while true do
+        -- TODO: event: redstone from the request chest
+        local ev_name = event.pullMultiple("_added_recipe", "interrupted")
 
-		if ev_name == "_added_recipe" then
-			LOG("Received event")
-			registration = table.remove(crafting_registrations, 1)
-			add_crafting_recipe(registration)
-		elseif ev_name == "interrupted" then
-			LOG("Program interupted")
-			os.exit()
-		end
+        if ev_name == "_added_recipe" then
+            LOG("Received event")
+            registration = table.remove(crafting_registrations, 1)
+            add_crafting_recipe(registration)
+        elseif ev_name == "interrupted" then
+            LOG("Program interupted")
+            os.exit()
+        end
 
-		-- print("I'm still alive in the background")
-		os.sleep(1)
-	end
+        -- print("I'm still alive in the background")
+        os.sleep(1)
+
+        -- find the first label in the chest
+        -- wait for as many from each recipe as stated by the label
+        -- transfer the recipe to the crafting chest
+        -- start the crafting process
+    end
+end
+
+local pattern_slot = 3
+local config_slot = 6
+local machine_slot = 9
+local liquid_in_slot = 12
+local liquid_out_slot = 15
+local max_cnt_slot = 18
+
+function read_pattern()
+    local pattern = hwif.rchest_get(pattern_slot)
+    local out = {}
+    deflate.gunzip({input = pattern.tag, output = function(byte)out[#out+1]=string.char(byte)end})
+    local t = nbt.readFromNBT(out)
+
+    -- TODO: after geting the nbt info, find the label, the items and construct the new pattern info,
+    -- like in the return bellow.
+
+    -- TODO: we make a great assumption here: the name in the pattern is the label in our crafting
+    -- system
+    -- TODO: make a database keeping the infos(msz, label...) for known items, when all the items
+    -- from a recipe are known, register them and make crafting batches, instead of single craftings
+    return {
+        pattern_name="smart_glass",
+        pattern_out=nil,
+        input_items={
+            { name="name", cnt=2 }
+        },
+        output_items={
+            { name="x", cnt=3 }
+        }
+        liq_in_name={cell_name="oxygen_cell", cnt=4},
+        liq_out_name=nil
+    }
+end
+
+function create_batch()
+    return {
+        inputs={
+            ["item_name"] = { as_liq=false, cnt=32 },
+            ["liquid_name"] = { as_liq=true, cnt=1000 } -- msz is important for liquids, so read it
+        },
+        outs={
+            { label="itemname", as_liq=false, cnt=32 }
+            { label="liquid_name", as_liq=false, cnt=3000 }
+        }
+    }
 end
 
 -- This is the reciper, this will be used to add recipes into the system
 function main_reciper()
-	while true do
-		io.write("> Configure the recipe and press enter: ")
-		local r = io.read() -- TODO: replace with button wait
-		
-		-- 0. Read the recipe pattern
-		local recipe = {}
+    while true do
+        io.write("> Configure the recipe and press enter: ")
+        local r = io.read() -- TODO: replace with button wait
+        
+        -- 0. Read the recipe pattern
+        local liq_in = read_liq_in()
+        local pattern_recipe = read_pattern()
 
-		-- TODO: remove temporary
-		recipe["in"] = {{id=2, count=5}, {id=5, count=2}}
-		recipe["out"] = {{id=7, count=1}}
+        -- TODO: remove temporary
+        recipe["in"] = {{id=2, count=5}, {id=5, count=2}}
+        recipe["out"] = {{id=7, count=1}}
 
-		-- 1. Find the label inside the recipe and remove it from the recipe
-		-- 2. Read the machine from the machine slot
-		-- 3. Read the config from the config slot
-		-- 4. Read the liquid from the input liquid slot
-		-- 5. Read the liquid from the output liquid slot
+        -- 1. Find the label inside the recipe and remove it from the recipe
+        -- 2. Read the machine from the machine slot
+        -- 3. Read the config from the config slot
+        -- 4. Read the liquid from the input liquid slot
+        -- 5. Read the liquid from the output liquid slot
 
-		-- 6. Compose a recipe add request
-		local registration = {}
-		registration.recipe = h.copy(recipe)
+        -- 6. Compose a recipe add request
+        local registration = {}
+        registration.recipe = h.copy(recipe)
 
-		-- TODO: remove temporary
-		registration.mach_id = 1
-		registration.mach_cfg = 1
-		registration.liq_in_id = 4
-		registration.liq_out_id = -1
+        -- TODO: remove temporary
+        registration.mach_id = 1
+        registration.mach_cfg = 1
+        registration.liq_in_id = 4
+        registration.liq_out_id = -1
 
-		-- 7. The name comming from the label
-		registration.name = "A label name"
+        -- 7. The name comming from the label
+        registration.name = "A label name"
 
-		-- TODO: print the recipe
-		io.write("> Would you like to save the recipe [y/n]: ")
-		r = io.read()
-		if r == "y" or r == "Y" then
-			table.insert(crafting_registrations, h.copy(registration))
-			event.push("_added_recipe")
-			LOGP("> Recipe sent to the crafting unit, please install the new recipe in the interface" ..
-					" and clean the recipe editor slots.")
-		else
-			LOGP("> Recipe was not added, please clean the recipe editor before leaving.")
-		end
-	end
+        -- TODO: print the recipe
+        io.write("> Would you like to save the recipe [y/n]: ")
+        r = io.read()
+        if r == "y" or r == "Y" then
+            table.insert(crafting_registrations, h.copy(registration))
+            event.push("_added_recipe")
+            LOGP("> Recipe sent to the crafting unit, please install the new recipe in the interface" ..
+                    " and clean the recipe editor slots.")
+        else
+            LOGP("> Recipe was not added, please clean the recipe editor before leaving.")
+        end
+    end
 end
 
 thread.create(main_reciper)
@@ -116,7 +172,6 @@ main_crafter()
 
 -- TODO: main program that waits for AE2 crafting requests
 
--- item = require("item")
 -- hwif = require("hw_interface")
 -- deflate = require("deflate")
 -- nbt = require("nbt")
