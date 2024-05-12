@@ -8,7 +8,7 @@
 --   char  3:   the machine id
 --   chars 4,5: the machine config setting
 
-recipe_db = { file = "recipes.db"}
+recipe_db = { file = "/home/recipes.db" }
 
 recipe_db.example_recipe = {
     label = "iron_plate",
@@ -200,7 +200,7 @@ function recipe_db.find_recipes(label_list)
     local res = {}
     local f = io.open(recipe_db.file, "r")
     if not f then
-        print("no database")
+        print("no database: " .. recipe_db.file)
         return res
     end
     local line = f:read("*l")

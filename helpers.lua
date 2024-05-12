@@ -28,6 +28,10 @@ end
 
 
 function LOG_RECIPE(r)
+    if not r then
+        LOG("Recipe is nil")
+        return
+    end
     LOG("name: %s", r.name)
     for k, v in ipairs(r.comp) do
         LOG("    it-> cnt: %5d msz: %5d comp: %s", v.cnt, v.msz, v.label)
