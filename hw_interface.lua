@@ -13,7 +13,7 @@ rs = c.redstone
 t1 = c.proxy(c.get("6861")) -- w-wiremill e-chem_react u-extruder
 t2 = c.proxy(c.get("a85a")) -- w-asmmach  e-bendingm   u-canner
 t3 = c.proxy(c.get("7c02")) -- w-circasm  e-lasereng   u-cutting
-t4 = c.proxy(c.get("dd46"))
+t4 = c.proxy(c.get("dd46")) -- reciper chest
 
 hwif.machines = {
     wiremill     = { id = 1, trans = t1, side = s.west, cside = s.south, brk = { s = s.east,  n = 2 }},

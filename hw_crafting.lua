@@ -563,6 +563,7 @@ return hwc
 -- integrated_logic_circuit2
 -- good_integrated_circuit
 
+-- rdb  = require("recipe_db")
 -- recipe = rdb.find_recipes({"good_circuit_board"})["good_circuit_board"]
 -- batch = create_batch(recipe, 1)
 -- craft_batch(inv, hwif.machines.chem_reactor, batch, false)
