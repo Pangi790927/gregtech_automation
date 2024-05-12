@@ -37,9 +37,9 @@ function update_files()
 end
 
 function add_crafting_recipe(registration)
-    LOG("registering recipe for: %s", registration.name)
+    LOG("registering recipe uid: %s", registration)
 
-    crafts.registration = {registration}
+    crafts[registration.uid] = { registration }
 
     LOG("serialized: %d", ser.serialize(crafts))
 
@@ -56,7 +56,7 @@ function main_crafter()
 
         if ev_name == "_added_recipe" then
             LOG("Received event")
-            registration = table.remove(crafting_registrations, 1)
+            local registration = table.remove(crafting_registrations, 1)
             add_crafting_recipe(registration)
         elseif ev_name == "interrupted" then
             LOG("Program interupted")
@@ -73,18 +73,48 @@ function main_crafter()
     end
 end
 
-local pattern_slot = 3
-local config_slot = 6
-local machine_slot = 9
-local liquid_in_slot = 12
-local liquid_out_slot = 15
-local max_cnt_slot = 18
+local pattern_slot = 20
+local machine_slot = 23
+local config_slot = 26
+local liquid_in_slot = 38
+local liquid_out_slot = 44
 
-function read_pattern()
+function read_recipe()
     local pattern = hwif.rchest_get(pattern_slot)
     local out = {}
     deflate.gunzip({input = pattern.tag, output = function(byte)out[#out+1]=string.char(byte)end})
-    local t = nbt.readFromNBT(out)
+    local r = nbt.readFromNBT(out)
+
+    local uid = nil
+    for i, v in ipairs(r["in"]) do
+    	if v.tag then
+    		if v.tag.InscribeName then
+    			uid = v.tag.InscribeName
+    		end
+    	end
+    end
+    if not uid then
+    	print("Pattern needs to have a label inside")
+    	return nil
+    else
+    	print("Recipe uid: " .. uid)
+    end
+
+    local recipe = {}
+    recipe.uid = uid
+    recipe.batch = {}
+    recipe.batch.inputs = {}
+
+    return recipe
+
+-- stack = hwif.rchest_get(1)
+-- out = {}
+-- deflate.gunzip({input = stack.tag,output = function(byte)out[#out+1]=string.char(byte)end})
+-- r = nbt.readFromNBT(out)
+-- r["in"] -- list of 
+-- r["in"][1] -- first item
+-- r["in"][1].tag.InscribeName
+
 
     -- TODO: after geting the nbt info, find the label, the items and construct the new pattern info,
     -- like in the return bellow.
@@ -93,18 +123,18 @@ function read_pattern()
     -- system
     -- TODO: make a database keeping the infos(msz, label...) for known items, when all the items
     -- from a recipe are known, register them and make crafting batches, instead of single craftings
-    return {
-        pattern_name="smart_glass",
-        pattern_out=nil,
-        input_items={
-            { name="name", cnt=2 }
-        },
-        output_items={
-            { name="x", cnt=3 }
-        }
-        liq_in_name={cell_name="oxygen_cell", cnt=4},
-        liq_out_name=nil
-    }
+
+    -- return {
+    --     pattern_name="smart_glass",
+    --     input_items={
+    --         { name="name", cnt=2 }
+    --     },
+    --     output_items={
+    --         { name="x", cnt=3 }
+    --     }
+    --     liq_in_name={cell_name="oxygen_cell", cnt=4, msz=144},
+    --     liq_out_name=nil
+    -- }
 end
 
 function create_batch()
@@ -127,48 +157,56 @@ function main_reciper()
         local r = io.read() -- TODO: replace with button wait
         
         -- 0. Read the recipe pattern
-        local liq_in = read_liq_in()
-        local pattern_recipe = read_pattern()
+        local pattern_recipe = read_recipe()
+        if pattern_recipe then
+        	io.write("> Would you like to save the recipe [y/n]: ")
+	        r = io.read()
+	        if r == "y" or r == "Y" then
+	            table.insert(crafting_registrations, h.copy(registration))
+	            event.push("_added_recipe")
+	            LOGP("> Recipe sent to the crafting unit, please install the new recipe in the interface" ..
+	                    " and clean the recipe editor slots.")
+	        else
+	            LOGP("> Recipe was not added, please clean the recipe editor before leaving.")
+	        end
+        end
 
-        -- TODO: remove temporary
-        recipe["in"] = {{id=2, count=5}, {id=5, count=2}}
-        recipe["out"] = {{id=7, count=1}}
+        -- -- TODO: remove temporary
+        -- recipe["in"] = {{id=2, count=5}, {id=5, count=2}}
+        -- recipe["out"] = {{id=7, count=1}}
 
-        -- 1. Find the label inside the recipe and remove it from the recipe
-        -- 2. Read the machine from the machine slot
-        -- 3. Read the config from the config slot
-        -- 4. Read the liquid from the input liquid slot
-        -- 5. Read the liquid from the output liquid slot
+        -- -- 1. Find the label inside the recipe and remove it from the recipe
+        -- -- 2. Read the machine from the machine slot
+        -- -- 3. Read the config from the config slot
+        -- -- 4. Read the liquid from the input liquid slot
+        -- -- 5. Read the liquid from the output liquid slot
 
-        -- 6. Compose a recipe add request
-        local registration = {}
-        registration.recipe = h.copy(recipe)
+        -- -- 6. Compose a recipe add request
+        -- local registration = {}
+        -- registration.recipe = h.copy(recipe)
 
-        -- TODO: remove temporary
-        registration.mach_id = 1
-        registration.mach_cfg = 1
-        registration.liq_in_id = 4
-        registration.liq_out_id = -1
+        -- -- TODO: remove temporary
+        -- registration.mach_id = 1
+        -- registration.mach_cfg = 1
+        -- registration.liq_in_id = 4
+        -- registration.liq_out_id = -1
 
-        -- 7. The name comming from the label
-        registration.name = "A label name"
+        -- -- 7. The name comming from the label
+        -- registration.name = "A label name"
 
         -- TODO: print the recipe
-        io.write("> Would you like to save the recipe [y/n]: ")
-        r = io.read()
-        if r == "y" or r == "Y" then
-            table.insert(crafting_registrations, h.copy(registration))
-            event.push("_added_recipe")
-            LOGP("> Recipe sent to the crafting unit, please install the new recipe in the interface" ..
-                    " and clean the recipe editor slots.")
-        else
-            LOGP("> Recipe was not added, please clean the recipe editor before leaving.")
-        end
+        
     end
 end
 
 thread.create(main_reciper)
 main_crafter()
+
+-- 20 -> pattern
+-- 23 -> machine
+-- 26 -> config of machine
+-- 38 -> input_liquid
+-- 44 -> output_liquid
 
 -- TODO: main program that waits for AE2 crafting requests
 
@@ -176,10 +214,13 @@ main_crafter()
 -- deflate = require("deflate")
 -- nbt = require("nbt")
 
--- stack = hwif.cchest_get(1)
+-- stack = hwif.rchest_get(1)
 -- out = {}
 -- deflate.gunzip({input = stack.tag,output = function(byte)out[#out+1]=string.char(byte)end})
--- t1 = nbt.readFromNBT(out)
+-- r = nbt.readFromNBT(out)
+-- r["in"] -- list of 
+-- r["in"][1] -- first item
+-- r["in"][1].tag.InscribeName
 
 -- ip = hwif.cchest_get(2)
 -- out2 = {}
