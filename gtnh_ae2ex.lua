@@ -5,19 +5,30 @@ ser     = require("serialization")
 fs      = require("filesystem")
 deflate = require("deflate")
 nbt     = require("nbt")
+ih      = require("item_helper")
+hwif    = require("hw_interface")
+hwc     = require("hw_crafting")
 
+-- queue for registering new recipes
 local crafting_registrations = {}
-local crafting_recipes = {}
 
-local requests_path = "/home/requests.db"
+-- local requests_path = "/home/requests.db"
+
+-- 
 local crafts_path = "/home/crafts.db"
 
-local rf = fs.open(requests_path, "r")
-if rf then
-    requests = ser.unserialize(rf:read(1000000000))
-else
-    requests = {}
-end
+local pattern_slot = 20
+local machine_slot = 23
+local config_slot = 26
+local liquid_in_slot = 38
+local liquid_out_slot = 44
+
+-- local rf = fs.open(requests_path, "r")
+-- if rf then
+--     requests = ser.unserialize(rf:read(1000000000))
+-- else
+--     requests = {}
+-- end
 
 local cf = fs.open(crafts_path)
 if cf then
@@ -27,9 +38,9 @@ else
 end
 
 function update_files()
-    local rf = fs.open(requests_path, "w")
-    rf:write(ser.serialize(requests))
-    rf:close()
+    -- local rf = fs.open(requests_path, "w")
+    -- rf:write(ser.serialize(requests))
+    -- rf:close()
 
     local cf = fs.open(crafts_path, "w")
     cf:write(ser.serialize(crafts))
@@ -46,13 +57,49 @@ function add_crafting_recipe(registration)
     update_files()
 end
 
+function get_one_recipe()
+    return nil
+end
+
+function move_recipe_items(recipe)
+    -- TODO: also move the label out
+end
+
+function move_outputs()
+    -- Take from chest and move into the output chest
+end
+
+function craft_one_batch()
+    local recipe = get_one_recipe()
+    if not recipe then
+        print("WARNING: recipe is unknown!!!!")
+    end
+    move_recipe_items(recipe)
+
+    local machine = hwc.prepare_machine(recipe.mach_id, recipe.mach_cfg, false)
+    local inv = hwc.read_cchest()
+    hwc.craft_batch(inv, machine, recipe.batch, false)
+    hwc.wait_batch(inv, machine, recipe.batch, false)
+    hwc.collect_batch(inv, machine, recipe.batch, false)
+
+    move_outputs()
+end
+
 -- This is the thread that receives the requests from the ae2 system and crafts them it will exit
 -- on error and should be independent of the main_reciper, except from receiving crafting recipes
 -- from it
 function main_crafter()
     while true do
         -- TODO: event: redstone from the request chest
-        local ev_name = event.pullMultiple("_added_recipe", "interrupted")
+        local ev_name = nil
+        local read_redstone_value = nil
+        if #crafting_registrations > 0 then
+            ev_name = "_added_recipe"
+        elseif read_redstone_value then
+            ev_name = redstone
+        else
+            ev_name = event.pullMultiple("_added_recipe", "interrupted", "redstone")
+        end
 
         if ev_name == "_added_recipe" then
             LOG("Received event")
@@ -61,6 +108,8 @@ function main_crafter()
         elseif ev_name == "interrupted" then
             LOG("Program interupted")
             os.exit()
+        elseif ev_name == redstone then
+            craft_one_batch()
         end
 
         -- print("I'm still alive in the background")
@@ -73,37 +122,134 @@ function main_crafter()
     end
 end
 
-local pattern_slot = 20
-local machine_slot = 23
-local config_slot = 26
-local liquid_in_slot = 38
-local liquid_out_slot = 44
-
 function read_recipe()
     local pattern = hwif.rchest_get(pattern_slot)
+    local machine = hwif.rchest_get(machine_slot)
+    local config = hwif.rchest_get(config_slot)
+    local liq_in = hwif.rchest_get(liquid_in_slot)
+    local liq_out = hwif.rchest_get(liquid_out_slot)
+
+    -- Find the uid of the recipe
+    local uid = nil
     local out = {}
     deflate.gunzip({input = pattern.tag, output = function(byte)out[#out+1]=string.char(byte)end})
     local r = nbt.readFromNBT(out)
-
-    local uid = nil
     for i, v in ipairs(r["in"]) do
-    	if v.tag then
-    		if v.tag.InscribeName then
-    			uid = v.tag.InscribeName
-    		end
-    	end
+        if v.tag then
+            if v.tag.InscribeName then
+                uid = v.tag.InscribeName
+            end
+        end
     end
     if not uid then
-    	print("Pattern needs to have a label inside")
-    	return nil
+        print("Pattern needs to have a label inside")
+        return nil
     else
-    	print("Recipe uid: " .. uid)
+        print("Recipe uid: " .. uid)
+    end
+
+    -- read the input liquid
+    local liqin_cell_name = nil
+    local liqin_msz = nil
+    if liq_in then
+        liqin_cell_name = ih.get_name(liq_in)
+        liqin_msz = liq_in.amount
+    end
+
+    -- read the output liquid
+    local liqout_cell_name = nil
+    local liqout_msz = nil
+    if liq_out then
+        liqout_cell_name = ih.get_name(liq_out)
+        liqout_msz = liq_out.amount
+    end
+
+    -- read the machine id
+    local machine_name2id = {
+        ["chem_reactor_placeholder"] = hwif.machines.chem_reactor.id
+    }
+    local machine_id = 0
+    if not machine then
+        print("You need to have a machine configured")
+        return nil
+    else
+        machine_id = machine_name2id[ih.get_name(machine)]
+    end
+
+    -- read the machine config
+    local config_name2id = {
+        ["circuit1_placeholder"] = hwif.craft_circuits[1]
+    }
+    local config_id = nil
+    if config then
+        -- TODO: check what needs to be read here to decide the config
+        config_id = config_name2id[ih.get_name(config)]
     end
 
     local recipe = {}
     recipe.uid = uid
+    recipe.mach_id = machine_id
+    recipe.mach_cfg = config_id
     recipe.batch = {}
     recipe.batch.inputs = {}
+    recipe.batch.outs = {}
+
+    print("machine id: " .. machine_id)
+    if config_id then
+        print("machine_cfg: " .. config_id)
+    end
+
+    for i, v in ipairs(TODO_inputs) do
+        if ih.name_format(v.name) == liqin_cell_name then
+            -- this is the input liquid
+            local liq_name = ih.get_cell_fluid_name({ label=ih.name_format(v.name) })
+            local liq_cnt = liqin_msz * TODO_get_count
+            recipe.batch.inputs[liq_name] = {
+                .msz = liqin_msz,
+                .cnt = liq_cnt,
+                .as_liq = true
+            }
+            print("IN  liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqin_msz)
+        elseif ih.name_format(v.name) == "inscriber_InscribeName" then
+            -- this is the label name, it is remembered in the uid, so we ignore it here
+        else
+            -- this is an item
+            -- TODO: verify if items need msz, if so, take them from input
+            local item_name = ih.name_format(v.name)
+            local item_cnt = TODO_get_count
+            recipe.batch.inputs[item_name] = {
+                .cnt = item_cnt,
+                .as_liq = false
+            })
+            print("IN  item: " .. item_name .. " cnt " .. item_cnt)
+        end
+    end
+
+    for i, v in ipairs(TODO_outputs) do
+        if ih.name_format(v.name) == liqout_cell_name then
+            -- this is the input liquid
+            local liq_name = ih.get_cell_fluid_name({ label=ih.name_format(v.name) })
+            local liq_cnt = liqout_msz * TODO_get_count
+            table.insert(recipe.batch.outs, {
+                .label = liq_name,
+                .msz = liqout_msz,
+                .cnt = liq_cnt,
+                .as_liq = true
+            })
+            print("OUT liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqout_msz)
+        else
+            -- this is an item
+            -- TODO: verify if items need msz, if so, bad luck
+            local item_name = ih.name_format(v.name)
+            local item_cnt = TODO_get_count
+            table.insert(recipe.batch.outs, {
+                .label = item_name,
+                .cnt = item_cnt,
+                .as_liq = false
+            })
+            print("OUT item: " .. item_name .. " cnt " .. item_cnt)
+        end
+    end
 
     return recipe
 
@@ -159,16 +305,16 @@ function main_reciper()
         -- 0. Read the recipe pattern
         local pattern_recipe = read_recipe()
         if pattern_recipe then
-        	io.write("> Would you like to save the recipe [y/n]: ")
-	        r = io.read()
-	        if r == "y" or r == "Y" then
-	            table.insert(crafting_registrations, h.copy(registration))
-	            event.push("_added_recipe")
-	            LOGP("> Recipe sent to the crafting unit, please install the new recipe in the interface" ..
-	                    " and clean the recipe editor slots.")
-	        else
-	            LOGP("> Recipe was not added, please clean the recipe editor before leaving.")
-	        end
+            io.write("> Would you like to save the recipe [y/n]: ")
+            r = io.read()
+            if r == "y" or r == "Y" then
+                table.insert(crafting_registrations, h.copy(registration))
+                event.push("_added_recipe")
+                LOGP("> Recipe sent to the crafting unit, please install the new recipe in the interface" ..
+                        " and clean the recipe editor slots.")
+            else
+                LOGP("> Recipe was not added, please clean the recipe editor before leaving.")
+            end
         end
 
         -- -- TODO: remove temporary

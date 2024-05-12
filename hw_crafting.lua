@@ -463,6 +463,10 @@ function collect_batch(inv, machine, batch, sim_mode)
             if to_move > 0 then
                 for j = 1, cchest_workspace_end do
                     if inv[j] == nil then
+                        if not sim_mode then
+                            local tmpitem = machine.trans.getStackInSlot(machine.side, src_slot)
+                            msz = tmpitem.maxSize
+                        end
                         inv[j] = {
                             label = item.label,
                             maxSize = msz,
@@ -500,6 +504,7 @@ function hwc.prepare_machine(mach_id, mach_cfg, sim_mode)
         end
         os.sleep(1)
     end
+    return machine
 end
 
 function hwc.craft_items(inv, item_name, cnt, sim_mode)

@@ -34,12 +34,17 @@ function item_helper.get_fluid_cell_name(item)
 	return label .. "_cell"
 end
 
+function item_helper.name_format(name)
+	local label = string.lower(name)
+	local ret = label:gsub(" ", "_")
+	return ret
+end
+
 function item_helper.get_name(item)
 	if not item then
 		return nil
 	end
-	local label = string.lower(item.label)
-	local ret = label:gsub(" ", "_")
+	local ret = item_helper.name_format(item.label)
 	if ret == "integrated_logic_circuit" then
 		if item.name == "gregtech:gt.metaitem.01" then
 			ret = ret .. "2"
