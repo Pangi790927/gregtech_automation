@@ -90,14 +90,14 @@ function move_item(item, slot)
         route_id = route_dst[uid]
     end
     t = route_outs[route_id]
-    print(uid .. " side " .. sname[t.side] .. " src " .. sname[t.src] .. " slot " .. slot .. " route " .. route_id)
-    t.transferItem(t.src, t.side, 64, slot)
-    print("doop")
+    -- print(uid .. " side " .. sname[t.side] .. " src " .. sname[t.src] .. " slot " .. slot .. " route " .. route_id)
+    t.trans.transferItem(t.src, t.side, 64, slot)
+    -- print("doop")
 end
 
 function main_router()
     while true do
-        print("boop")
+        -- print("boop")
         os.sleep(1)
         local stack = source_chest.trans.getAllStacks(source_chest.side)
         local inv = stack.getAll()

@@ -67,56 +67,52 @@ end
 
 -- This is the reciper, this will be used to add recipes into the system
 function main_reciper()
-	io.write("> Configure the recipe and press enter: ")
-	local r = io.read() -- TODO: replace with button wait
-	
-	-- 0. Read the recipe pattern
-	local recipe = {}
+	while true do
+		io.write("> Configure the recipe and press enter: ")
+		local r = io.read() -- TODO: replace with button wait
+		
+		-- 0. Read the recipe pattern
+		local recipe = {}
 
-	-- TODO: remove temporary
-	recipe["in"] = {{id=2, count=5}, {id=5, count=2}}
-	recipe["out"] = {{id=7, count=1}}
+		-- TODO: remove temporary
+		recipe["in"] = {{id=2, count=5}, {id=5, count=2}}
+		recipe["out"] = {{id=7, count=1}}
 
-	-- 1. Find the label inside the recipe and remove it from the recipe
-	-- 2. Read the machine from the machine slot
-	-- 3. Read the config from the config slot
-	-- 4. Read the liquid from the input liquid slot
-	-- 5. Read the liquid from the output liquid slot
+		-- 1. Find the label inside the recipe and remove it from the recipe
+		-- 2. Read the machine from the machine slot
+		-- 3. Read the config from the config slot
+		-- 4. Read the liquid from the input liquid slot
+		-- 5. Read the liquid from the output liquid slot
 
-	-- 6. Compose a recipe add request
-	local registration = {}
-	registration.recipe = h.copy(recipe)
+		-- 6. Compose a recipe add request
+		local registration = {}
+		registration.recipe = h.copy(recipe)
 
-	-- TODO: remove temporary
-	registration.mach_id = 1
-	registration.mach_cfg = 1
-	registration.liq_in_id = 4
-	registration.liq_out_id = -1
+		-- TODO: remove temporary
+		registration.mach_id = 1
+		registration.mach_cfg = 1
+		registration.liq_in_id = 4
+		registration.liq_out_id = -1
 
-	-- 7. The name comming from the label
-	registration.name = "A label name"
+		-- 7. The name comming from the label
+		registration.name = "A label name"
 
-	-- TODO: print the recipe
-	io.write("> Would you like to save the recipe [y/n]: ")
-	r = io.read()
-	if r == "y" or r == "Y" then
-		table.insert(crafting_registrations, h.copy(registration))
-		event.push("_added_recipe")
-		LOGP("> Recipe sent to the crafting unit, please install the new recipe in the interface" ..
-				" and clean the recipe editor slots.")
-	else
-		LOGP("> Recipe was not added, please clean the recipe editor before leaving.")
+		-- TODO: print the recipe
+		io.write("> Would you like to save the recipe [y/n]: ")
+		r = io.read()
+		if r == "y" or r == "Y" then
+			table.insert(crafting_registrations, h.copy(registration))
+			event.push("_added_recipe")
+			LOGP("> Recipe sent to the crafting unit, please install the new recipe in the interface" ..
+					" and clean the recipe editor slots.")
+		else
+			LOGP("> Recipe was not added, please clean the recipe editor before leaving.")
+		end
 	end
 end
 
-thread.create(main_crafter)
-while true do
-	local status, err = pcall(main_reciper)
-	if not status then
-		LOGP("Shall exit")
-		os.exit()
-	end
-end
+thread.create(main_reciper)
+main_crafter()
 
 -- TODO: main program that waits for AE2 crafting requests
 
