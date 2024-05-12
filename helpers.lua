@@ -3,7 +3,7 @@ fs = require("filesystem")
 
 helpers = {}
 
-if logfile == nil then
+if not logfile then
     logfile = fs.open("/home/logfile.log", "w")
 end
 
@@ -13,6 +13,9 @@ function LOG(fmt, ...)
         local args = ...
         local ret = pcall(function() logfile:write(string.format(fmt, args) .. "\n") end)
         if not ret then
+            if logfile then
+                logfile:close()
+            end
             logfile = fs.open("/home/logfile.log", "w")
         else
             break

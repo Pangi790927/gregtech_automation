@@ -479,7 +479,7 @@ function collect_batch(inv, machine, batch, sim_mode)
     end
 end
 
-function hwc.prepare_machine(mach_id, mach_cfg)
+function hwc.prepare_machine(mach_id, mach_cfg, sim_mode)
     local machine = nil
     if not sim_mode then
         machine = hwif.machines[hwif.craft_info[mach_id].mach_name]
@@ -516,7 +516,7 @@ function hwc.craft_items(inv, item_name, cnt, sim_mode)
         return false
     end
     -- set the machine to the right configuration
-    local machine = hwc.prepare_machine(recipe.mach_id, recipe.mach_cfg)
+    local machine = hwc.prepare_machine(recipe.mach_id, recipe.mach_cfg, sim_mode)
 
     -- now craft the thing
     local _cnt = cnt
