@@ -12,9 +12,6 @@ hwc     = require("hw_crafting")
 -- queue for registering new recipes
 local crafting_registrations = {}
 
--- local requests_path = "/home/requests.db"
-
--- 
 local crafts_path = "/home/crafts.db"
 
 local pattern_slot = 20
@@ -22,13 +19,6 @@ local machine_slot = 23
 local config_slot = 26
 local liquid_in_slot = 38
 local liquid_out_slot = 44
-
--- local rf = fs.open(requests_path, "r")
--- if rf then
---     requests = ser.unserialize(rf:read(1000000000))
--- else
---     requests = {}
--- end
 
 local cf = fs.open(crafts_path)
 if cf then
@@ -38,35 +28,95 @@ else
 end
 
 function update_files()
-    -- local rf = fs.open(requests_path, "w")
-    -- rf:write(ser.serialize(requests))
-    -- rf:close()
-
     local cf = fs.open(crafts_path, "w")
     cf:write(ser.serialize(crafts))
     cf:close()
 end
 
 function add_crafting_recipe(registration)
-    LOG("registering recipe uid: %s", registration)
+    LOG("registering recipe uid: %s", registration.uid)
 
     crafts[registration.uid] = { registration }
 
-    LOG("serialized: %d", ser.serialize(crafts))
-
-    update_files()
+    local cf = fs.open(crafts_path, "w")
+    cf:write(ser.serialize(crafts))
+    cf:close()
 end
 
 function get_one_recipe()
+    -- TODO: remove
     return nil
+
+    local stack = t.trans.getAllStacks(t.side)
+    local inv = stack.getAll()
+    for i=0, #inv - 1 do
+        local name = ih.get_name(inv[i])
+        if name == "placeholder_inscriber_name" then
+            -- TODO: get recipe name
+            local recipe_name = nil
+            -- TODO: transfer recipe name at output
+            return crafts[recipe_name]
+        end
+    end
+end
+
+function transfer_inputs(in_slot, max_cnt)
+    local return_cnt = nil
+    -- TODO: search for place to place the input
+    -- TODO: transfer as many as you can there
+    -- TODO: return the quantity transfered
+    return return_cnt
+end
+
+function transfer_outputs(in_slot, max_cnt)
+    local return_cnt = nil
+    -- TODO: search for place to place the output till one apears
+    -- TODO: transfer them there
+    -- TODO: return the quantity transfered
+    return return_cnt
 end
 
 function move_recipe_items(recipe)
-    -- TODO: also move the label out
+    local required = {}
+    for k, v in recipe.batch.inputs do
+        if v.as_liq then
+            required[ih.get_fluid_cell_name(k)] = v.cnt / v.msz
+        else
+            required[k] = v.cnt
+        end
+    end
+
+    local stack = t.trans.getAllStacks(t.side)
+    local inv = stack.getAll()
+    for i=0, #inv - 1 do
+        local name = ih.get_name(inv[i])
+        if required[name] and required[name] > 0.01 then
+            local cnt = transfer_inputs(i + 1, required[name])
+            required[name] = required[name] - cnt
+        end
+    end
 end
 
-function move_outputs()
+function move_outputs(recipe)
     -- Take from chest and move into the output chest
+    local required = {}
+    for i, v in ipairs(recipe.batch.outs) do
+        if v.as_liq then
+            required[ih.get_fluid_cell_name(v.label)] = v.cnt / v.msz
+        else
+            required[v.label] = v.cnt
+        end
+    end
+
+    local stack = t.trans.getAllStacks(t.side)
+    local inv = stack.getAll()
+    for i=0, #inv - 1 do
+        local name = ih.get_name(inv[i])
+        if required[name] and required[name] > 0.01 then
+            local cnt = transfer_inputs(i + 1, required[name])
+            required[name] = required[name] - cnt
+        end
+    end
 end
 
 function craft_one_batch()
@@ -202,7 +252,7 @@ function read_recipe()
     for i, v in ipairs(TODO_inputs) do
         if ih.name_format(v.name) == liqin_cell_name then
             -- this is the input liquid
-            local liq_name = ih.get_cell_fluid_name({ label=ih.name_format(v.name) })
+            local liq_name = ih.get_cell_label_fluid_name({ label=ih.name_format(v.name) })
             local liq_cnt = liqin_msz * TODO_get_count
             recipe.batch.inputs[liq_name] = {
                 .msz = liqin_msz,
@@ -228,7 +278,7 @@ function read_recipe()
     for i, v in ipairs(TODO_outputs) do
         if ih.name_format(v.name) == liqout_cell_name then
             -- this is the input liquid
-            local liq_name = ih.get_cell_fluid_name({ label=ih.name_format(v.name) })
+            local liq_name = ih.get_cell_label_fluid_name({ label=ih.name_format(v.name) })
             local liq_cnt = liqout_msz * TODO_get_count
             table.insert(recipe.batch.outs, {
                 .label = liq_name,
@@ -251,49 +301,12 @@ function read_recipe()
         end
     end
 
-    return recipe
-
--- stack = hwif.rchest_get(1)
--- out = {}
--- deflate.gunzip({input = stack.tag,output = function(byte)out[#out+1]=string.char(byte)end})
--- r = nbt.readFromNBT(out)
--- r["in"] -- list of 
--- r["in"][1] -- first item
--- r["in"][1].tag.InscribeName
-
-
-    -- TODO: after geting the nbt info, find the label, the items and construct the new pattern info,
-    -- like in the return bellow.
-
     -- TODO: we make a great assumption here: the name in the pattern is the label in our crafting
     -- system
     -- TODO: make a database keeping the infos(msz, label...) for known items, when all the items
     -- from a recipe are known, register them and make crafting batches, instead of single craftings
 
-    -- return {
-    --     pattern_name="smart_glass",
-    --     input_items={
-    --         { name="name", cnt=2 }
-    --     },
-    --     output_items={
-    --         { name="x", cnt=3 }
-    --     }
-    --     liq_in_name={cell_name="oxygen_cell", cnt=4, msz=144},
-    --     liq_out_name=nil
-    -- }
-end
-
-function create_batch()
-    return {
-        inputs={
-            ["item_name"] = { as_liq=false, cnt=32 },
-            ["liquid_name"] = { as_liq=true, cnt=1000 } -- msz is important for liquids, so read it
-        },
-        outs={
-            { label="itemname", as_liq=false, cnt=32 }
-            { label="liquid_name", as_liq=false, cnt=3000 }
-        }
-    }
+    return recipe
 end
 
 -- This is the reciper, this will be used to add recipes into the system
@@ -316,45 +329,11 @@ function main_reciper()
                 LOGP("> Recipe was not added, please clean the recipe editor before leaving.")
             end
         end
-
-        -- -- TODO: remove temporary
-        -- recipe["in"] = {{id=2, count=5}, {id=5, count=2}}
-        -- recipe["out"] = {{id=7, count=1}}
-
-        -- -- 1. Find the label inside the recipe and remove it from the recipe
-        -- -- 2. Read the machine from the machine slot
-        -- -- 3. Read the config from the config slot
-        -- -- 4. Read the liquid from the input liquid slot
-        -- -- 5. Read the liquid from the output liquid slot
-
-        -- -- 6. Compose a recipe add request
-        -- local registration = {}
-        -- registration.recipe = h.copy(recipe)
-
-        -- -- TODO: remove temporary
-        -- registration.mach_id = 1
-        -- registration.mach_cfg = 1
-        -- registration.liq_in_id = 4
-        -- registration.liq_out_id = -1
-
-        -- -- 7. The name comming from the label
-        -- registration.name = "A label name"
-
-        -- TODO: print the recipe
-        
     end
 end
 
 thread.create(main_reciper)
 main_crafter()
-
--- 20 -> pattern
--- 23 -> machine
--- 26 -> config of machine
--- 38 -> input_liquid
--- 44 -> output_liquid
-
--- TODO: main program that waits for AE2 crafting requests
 
 -- hwif = require("hw_interface")
 -- deflate = require("deflate")
