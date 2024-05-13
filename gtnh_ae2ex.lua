@@ -188,16 +188,25 @@ function read_recipe()
     -- pattern_slot = 20
     -- pattern = hwif.rchest_get(pattern_slot)
     -- outpattern = {}
-
     -- pstr = ""
     -- for i,v in ipairs(outpattern) do pstr = pstr .. v end
     -- print(pstr)
 
+    if not pattern then
+        print("You must insert a pattern")
+        return nil
+    end
+
     -- Find the uid of the recipe
     local uid = nil
     local outpattern = {}
-    deflate.gunzip({input = pattern.tag, output = function(byte)outpattern[#outpattern+1]=string.char(byte)end},
-            disable_crc = true)
+    deflate.gunzip({
+        input = pattern.tag,
+        output = function(byte)
+            outpattern[#outpattern+1] = string.char(byte)
+        end,
+        disable_crc = true
+    })
     local r = nbt.readFromNBT(outpattern)
     
     for i, v in ipairs(r["in"]) do
@@ -267,7 +276,7 @@ function read_recipe()
     end
 
     for i, v in ipairs(pattern.inputs) do
-        if ih.name_format(v.name) == liqin_cell_name then
+        if v.name and (ih.name_format(v.name) == liqin_cell_name) then
             -- this is the input liquid
             local liq_name = ih.get_cell_label_fluid_name({ label=ih.name_format(v.name) })
             local liq_cnt = liqin_msz * v.count
@@ -277,9 +286,9 @@ function read_recipe()
                 as_liq = true
             }
             print("IN  liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqin_msz)
-        elseif ih.name_format(v.name) == "inscriber_name_press" then
+        elseif v.name and (ih.name_format(v.name) == "inscriber_name_press") then
             -- this is the label name, it is remembered in the uid, so we ignore it here
-        else
+        elseif v.name then
             -- this is an item
             -- TODO: verify if items need msz, if so, take them from input
             local item_name = ih.name_format(v.name)
@@ -293,7 +302,7 @@ function read_recipe()
     end
 
     for i, v in ipairs(pattern.outputs) do
-        if ih.name_format(v.name) == liqout_cell_name then
+        if v.name and (ih.name_format(v.name) == liqout_cell_name) then
             -- this is the input liquid
             local liq_name = ih.get_cell_label_fluid_name({ label=ih.name_format(v.name) })
             local liq_cnt = liqout_msz * v.count
@@ -304,7 +313,7 @@ function read_recipe()
                 as_liq = true
             })
             print("OUT liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqout_msz)
-        else
+        elseif v.name then
             -- this is an item
             -- TODO: verify if items need msz, if so, bad luck
             local item_name = ih.name_format(v.name)
@@ -338,7 +347,7 @@ function main_reciper()
             io.write("> Would you like to save the recipe [y/n]: ")
             r = io.read()
             if r == "y" or r == "Y" then
-                table.insert(crafting_registrations, h.copy(registration))
+                table.insert(crafting_registrations, h.copy(pattern_recipe))
                 event.push("_added_recipe")
                 LOGP("> Recipe sent to the crafting unit, please install the new recipe in the interface" ..
                         " and clean the recipe editor slots.")
