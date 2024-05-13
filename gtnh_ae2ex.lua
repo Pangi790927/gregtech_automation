@@ -181,11 +181,25 @@ function read_recipe()
     local liq_in = hwif.rchest_get(liquid_in_slot)
     local liq_out = hwif.rchest_get(liquid_out_slot)
 
+    -- TODO: remove
+    deflate = require("deflate")
+    nbt     = require("nbt")
+    hwif    = require("hw_interface")
+    pattern_slot = 20
+    pattern = hwif.rchest_get(pattern_slot)
+    outpattern = {}
+
+    pstr = ""
+    for i,v in ipairs(outpattern) do pstr = pstr .. v end
+    print(pstr)
+
     -- Find the uid of the recipe
     local uid = nil
-    local out = {}
-    deflate.gunzip({input = pattern.tag, output = function(byte)out[#out+1]=string.char(byte)end})
-    local r = nbt.readFromNBT(out)
+    local outpattern = {}
+    deflate.gunzip({input = pattern.tag, output = function(byte)outpattern[#outpattern+1]=string.char(byte)end})
+    local r = nbt.readFromNBT(outpattern)
+    
+    print(r["in"][19].tag.InscribeName)
     for i, v in ipairs(r["in"]) do
         if v.tag then
             if v.tag.InscribeName then
