@@ -14,6 +14,7 @@ t1 = c.proxy(c.get("6861")) -- w-wiremill e-chem_react u-extruder
 t2 = c.proxy(c.get("a85a")) -- w-asmmach  e-bendingm   u-canner
 t3 = c.proxy(c.get("7c02")) -- w-circasm  e-lasereng   u-cutting
 t4 = c.proxy(c.get("dd46")) -- reciper chest
+t5 = c.proxy(c.get("0bb7")) -- ME transposer
 
 hwif.machines = {
     wiremill     = { id = 1, trans = t1, side = s.west, cside = s.south, brk = { s = s.east,  n = 2 }},
@@ -164,8 +165,39 @@ function hwif.cchest_get(slot)
     return t1.getStackInSlot(s.south, slot)
 end
 
+function hwif.cchest_get_all()
+    local stack = t1.getAllStacks(s.south)
+    return stack.getAll()
+end
+
 function hwif.rchest_get(slot)
     return t4.getStackInSlot(s.west, slot)
+end
+
+function hwif.me_in_chest_get(slot)
+    return t5.getStackInSlot(s.east, slot)
+end
+
+function hwif.me_in_chest_get_all(slot)
+    local stack = t5.getAllStacks(s.east)
+    return stack.getAll()
+end
+
+function hwif.me_out_chest_get(slot)
+    return t5.getStackInSlot(s.south, slot)
+end
+
+function hwif.me_out_chest_get_all(slot)
+    local stack = t5.getAllStacks(s.east)
+    return stack.getAll()
+end
+
+function hwif.me_c_move(src_slot, dst_slot, cnt)
+    return t5.transferItem(s.east, s.west, cnt, src_slot, dst_slot)
+end
+
+function hwif.c_me_move(src_slot, dst_slot, cnt)
+    return t5.transferItem(s.west, s.south, cnt, src_slot, dst_slot)
 end
 
 function hwif.cchest_move(src_slot, dst_slot, cnt)

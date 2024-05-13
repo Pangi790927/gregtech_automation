@@ -49,6 +49,14 @@ function get_one_recipe()
         return nil
     end
 
+    cchest_get_all
+    me_in_chest_get
+    me_in_chest_get_all
+    me_out_chest_get
+    me_out_chest_get_all
+    me_c_move
+    c_me_move
+
     local stack = t.trans.getAllStacks(t.side)
     local inv = stack.getAll()
     for i=0, #inv - 1 do
@@ -56,7 +64,7 @@ function get_one_recipe()
         if name == "placeholder_inscriber_name" then
             -- TODO: get recipe name
             local recipe_name = nil
-            -- TODO: transfer recipe name at output
+            -- TODO: transfer recipe label at output
             return crafts[recipe_name]
         end
     end
