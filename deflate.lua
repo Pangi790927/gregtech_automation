@@ -209,12 +209,12 @@ local function noeof(val)
 end
 
 
-function hasbit(bits, bit)
+local function hasbit(bits, bit)
   return bits % (bit + bit) >= bit
 end
 
 
-function memoize(f)
+local function memoize(f)
   local mt = {}
   local t = setmetatable({}, mt)
   function mt:__index(k)
@@ -260,7 +260,7 @@ local function bits_tostring(bits, nbits)
 end
 --]]
 
-function bytestream_from_file(fh)
+local function bytestream_from_file(fh)
   local o = {}
   function o:read()
     local sb = fh:read(1)
@@ -270,7 +270,7 @@ function bytestream_from_file(fh)
 end
 
 
-function bytestream_from_string(s)
+local function bytestream_from_string(s)
   local i = 1
   local o = {}
   function o:read()
@@ -285,7 +285,7 @@ function bytestream_from_string(s)
 end
 
 
-function bytestream_from_function(f)
+local function bytestream_from_function(f)
   local i = 0
   local buffer = ''
   local o = {}
@@ -302,7 +302,7 @@ function bytestream_from_function(f)
 end
 
 
-function bitstream_from_bytestream(bys)
+local function bitstream_from_bytestream(bys)
   local buf_byte = 0
   local buf_nbit = 0
   local o = {}
@@ -356,7 +356,7 @@ function bitstream_from_bytestream(bys)
 end
 
 
-function get_bitstream(o)
+local function get_bitstream(o)
   local bs
   if is_bitstream[o] then
     return o
@@ -373,7 +373,7 @@ function get_bitstream(o)
 end
 
 
-function get_obytestream(o)
+local function get_obytestream(o)
   local bs
   if io.type(o) == 'file' then
     bs = function(sbyte) o:write(string_char(sbyte)) end
@@ -386,7 +386,7 @@ function get_obytestream(o)
 end
 
 
-function HuffmanTable(init, is_full)
+local function HuffmanTable(init, is_full)
   local t = {}
   if is_full then
     for val,nbits in pairs(init) do
@@ -484,7 +484,7 @@ function HuffmanTable(init, is_full)
 end
 
 
-function parse_gzip_header(bs)
+local function parse_gzip_header(bs)
   -- local FLG_FTEXT = 2^0
   local FLG_FHCRC = 2^1
   local FLG_FEXTRA = 2^2
@@ -548,7 +548,7 @@ function parse_gzip_header(bs)
   end
 end
 
-function parse_zlib_header(bs)
+local function parse_zlib_header(bs)
   local cm = bs:read(4) -- Compression Method
   local cinfo = bs:read(4) -- Compression info
   local fcheck = bs:read(5) -- FLaGs: FCHECK (check bits for CMF and FLG)
@@ -577,7 +577,7 @@ function parse_zlib_header(bs)
   return window_size
 end
 
-function parse_huffmantables(bs)
+local function parse_huffmantables(bs)
     local hlit = bs:read(5)  -- # of literal/length codes - 257
     local hdist = bs:read(5) -- # of distance codes - 1
     local hclen = noeof(bs:read(4)) -- # of code length codes - 4
@@ -640,7 +640,7 @@ local tdecode_len_base
 local tdecode_len_nextrabits
 local tdecode_dist_base
 local tdecode_dist_nextrabits
-function parse_compressed_item(bs, outstate, littable, disttable)
+local function parse_compressed_item(bs, outstate, littable, disttable)
   local val = littable:read(bs)
   --debug(val, val < 256 and string_char(val))
   if val < 256 then -- literal
@@ -723,7 +723,7 @@ function parse_compressed_item(bs, outstate, littable, disttable)
 end
 
 
-function parse_block(bs, outstate)
+local function parse_block(bs, outstate)
   local bfinal = bs:read(1)
   local btype = bs:read(2)
 
@@ -787,7 +787,7 @@ function M.gunzip(t)
 
   parse_gzip_header(bs)
 
-  data_crc32 = 0
+  local data_crc32 = 0
 
   inflate{input=bs, output=
     disable_crc and outbs or
@@ -799,7 +799,7 @@ function M.gunzip(t)
 
   bs:read(bs:nbits_left_in_byte())
 
-  expected_crc32 = bs:read(32)
+  local expected_crc32 = bs:read(32)
   local isize = bs:read(32) -- ignored
   if DEBUG then
     debug('drc32=', data_crc32)
