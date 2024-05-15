@@ -365,8 +365,16 @@ function main_reciper()
     end
 end
 
+function catch_exceptions(fn)
+    local ok, res = xpcall(fn, debug.traceback)
+end
+
 thread.create(main_reciper)
-main_crafter()
+thread.create(main_crafter)
+
+while true do
+    os.sleep(1)
+end
 
 -- hwif = require("hw_interface")
 -- deflate = require("deflate")
