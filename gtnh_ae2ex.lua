@@ -49,13 +49,13 @@ function get_one_recipe()
         return nil
     end
 
-    cchest_get_all
-    me_in_chest_get
-    me_in_chest_get_all
-    me_out_chest_get
-    me_out_chest_get_all
-    me_c_move
-    c_me_move
+    -- cchest_get_all
+    -- me_in_chest_get
+    -- me_in_chest_get_all
+    -- me_out_chest_get
+    -- me_out_chest_get_all
+    -- me_c_move
+    -- c_me_move
 
     local stack = t.trans.getAllStacks(t.side)
     local inv = stack.getAll()
@@ -366,8 +366,16 @@ function main_reciper()
     end
 end
 
+function catch_exceptions(fn)
+    local ok, res = xpcall(fn, debug.traceback)
+end
+
 thread.create(main_reciper)
-main_crafter()
+thread.create(main_crafter)
+
+while true do
+    os.sleep(1)
+end
 
 -- hwif = require("hw_interface")
 -- deflate = require("deflate")
