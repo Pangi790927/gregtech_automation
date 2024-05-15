@@ -49,16 +49,15 @@ function get_one_recipe()
         return nil
     end
 
-    cchest_get_all
-    me_in_chest_get
-    me_in_chest_get_all
-    me_out_chest_get
-    me_out_chest_get_all
-    me_c_move
-    c_me_move
+    -- cchest_get_all
+    -- me_in_chest_get
+    -- me_in_chest_get_all
+    -- me_out_chest_get
+    -- me_out_chest_get_all
+    -- me_c_move
+    -- c_me_move
 
-    local stack = t.trans.getAllStacks(t.side)
-    local inv = stack.getAll()
+    local inv = hwif.cchest_get_all()
     for i=0, #inv - 1 do
         local name = ih.get_name(inv[i])
         if name == "placeholder_inscriber_name" then

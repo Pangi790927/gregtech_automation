@@ -1,2 +1,0 @@
--- TODO: auxiliary computer main program that is used to save
--- crafting recipes for the main AE2 Extension computer
