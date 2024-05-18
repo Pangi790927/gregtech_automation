@@ -37,7 +37,7 @@ end
 local function add_crafting_recipe(registration)
     th.tprint("registering recipe uid: " .. registration.uid)
 
-    crafts[registration.uid] = { registration }
+    crafts[registration.uid] = registration
 
     local cf = fs.open(crafts_path, "w")
     cf:write(ser.serialize(crafts))
