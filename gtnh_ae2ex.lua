@@ -337,18 +337,31 @@ function read_recipe()
     return recipe
 end
 
+local KEY_ENTER = 28
+local KEY_Y = 21
+function wait_keys(codes)
+    while true do
+        local msg = th.kd_chann.recv()
+        for i, v in ipairs(codes) do
+            if msg.code == v then
+                return v
+            end
+        end
+    end
+end
+
 -- This is the reciper, this will be used to add recipes into the system
 function main_reciper()
     while true do
         th.tprint("> Configure the recipe and press enter: ")
-        local r = io.read() -- TODO: replace with button wait
+        wait_keys({KEY_ENTER})
         
         -- 0. Read the recipe pattern
         local pattern_recipe = read_recipe()
         if pattern_recipe then
             th.tprint("> Would you like to save the recipe [y/n]: ")
-            r = io.read()
-            if r == "y" or r == "Y" then
+            local key = th.kd_chann.recv()
+            if key.code = KEY_Y then
                 crafter2reciper.send(pattern_recipe)
                 -- table.insert(crafting_registrations, h.copy(pattern_recipe))
                 -- event.push("_added_recipe")

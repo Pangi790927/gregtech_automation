@@ -93,15 +93,17 @@ function th.wait_any(...)
     end
 end
 
--- Only one thread should ever listen to this channel
+-- Only one thread should ever listen to those channels
 th.rs_chann = th.create_channel("redstone")
+th.kd_chann = th.create_channel("key_up")
+th.ku_chann = th.create_channel("key_up")
 
 function th.handle_threads()
     while true do
         local registered_events = {
-            "interrupted", "redstone", "gtnh_abort", "gtnh_print"
+            "interrupted", "redstone", "key_down", "gtnh_abort", "gtnh_print"
         }
-        local name, var = ev.pullMultiple(table.unpack(registered_events))
+        local name, var, var2, var3 = ev.pullMultiple(table.unpack(registered_events))
         if name == "interrupted" or name == "gtnh_abort" then
             print("will exit [" .. name .. "]")
             th.kill_all()
@@ -111,6 +113,8 @@ function th.handle_threads()
             th.rs_chann.send("redstone_changed_event")
         elseif name == "gtnh_print" then
             print("MSG: " .. var)
+        elseif name == "key_down" then
+            th.kd_chann.send({ char=var2, code=var3 })
         else
             print("Recived an unknown message: " .. name .. ", will exit")
             th.kill_all()
