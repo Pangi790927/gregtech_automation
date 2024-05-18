@@ -24,7 +24,7 @@ function main_crafter()
 		local msg = reciper2crafter.recv()
 		th.tprint("Message from reciper: " .. msg)
 		th.tprint("Will send a message to the reciper")
-		os.sleep(10)
+		os.sleep(1)
 		crafter2reciper.send("[DONE WORK]")
 		-- x.dox()
 	end
