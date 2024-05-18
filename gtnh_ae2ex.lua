@@ -163,7 +163,7 @@ local function main_crafter()
             -- th.tprint(">> Redstone was up, will craft a recipe and clear rs queue")
             -- craft_one_batch()
             if th.rs_chann.pending() then
-                th.print("redstone queue cleared")
+                th.tprint("redstone queue cleared")
                 th.rs_chann.clear()
             end
         else

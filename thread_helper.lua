@@ -1,5 +1,6 @@
 local thread    = require("thread")
 local ev        = require("event")
+local h       = require("helpers")
 
 local th = {}
 
@@ -13,8 +14,11 @@ function th.abort()
     ev.push("gtnh_abort")
 end
 
-function th.err_msg()
-    th.tprint(debug.traceback())
+function th.err_msg(...)
+    local args = {...}
+
+    th.tprint("ERROR: " .. h.table2str(args))
+    th.tprint("TRACE: " .. debug.traceback())
 end
 
 function th.create_thread(fn)
