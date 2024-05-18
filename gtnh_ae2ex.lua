@@ -82,11 +82,19 @@ local function get_one_recipe()
     end
 end
 
+local cchest_workspace_end = 72
 local function transfer_inputs(in_slot, max_cnt)
     local return_cnt = nil
-    -- TODO: search for place to place the input
-    -- TODO: transfer as many as you can there
-    -- TODO: return the quantity transfered
+    for i=1, cchest_workspace_end do
+        local slot = hwif.cchest_get(i)
+        if not slot then
+            return_cnt = hwif.me_c_move(in_slot, i, max_cnt)
+            break
+        end
+    end
+    -- search for place to place the input
+    -- transfer as many as you can there
+    -- return the quantity transfered
     return return_cnt
 end
 
