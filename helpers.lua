@@ -84,7 +84,7 @@ function helpers.table2str(val, name, skipnewlines, depth)
     if type(val) == "table" then
         tmp = tmp .. "{" .. (not skipnewlines and "\n" or "")
         for k, v in pairs(val) do
-            tmp =  tmp .. serializeTable(v, k, skipnewlines, depth + 1) .. "," .. (not skipnewlines and "\n" or "")
+            tmp =  tmp .. helpers.table2str(v, k, skipnewlines, depth + 1) .. "," .. (not skipnewlines and "\n" or "")
         end
         tmp = tmp .. string.rep(" ", depth) .. "}"
     elseif type(val) == "number" then

@@ -160,12 +160,14 @@ local function main_crafter()
             local recipe = some_chann.recv()
             -- add_crafting_recipe(recipe)
         elseif has_items_in_me_c or th.rs_chann.pending() then
-            -- th.tprint(">> Redstone was up, will craft a recipe and clear rs queue")
+            th.tprint(">> Redstone was up, will craft a recipe")
             -- craft_one_batch()
             if th.rs_chann.pending() then
-                th.tprint("redstone queue cleared")
+                th.tprint("redstone queue pending")
                 th.rs_chann.clear()
+                th.tprint("redstone queue cleared")
             end
+            os.sleep(0.2)
         else
             th.tprint(">> Waiting for events")
             local some_chan = th.wait_any(reciper2crafter, th.rs_chann)
