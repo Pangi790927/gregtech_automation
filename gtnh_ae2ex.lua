@@ -45,11 +45,6 @@ local function add_crafting_recipe(registration)
 end
 
 local function get_one_recipe()
-    -- TODO: remove
-    if true then
-        return nil
-    end
-
     -- cchest_get_all
     -- me_in_chest_get
     -- me_in_chest_get_all
@@ -58,13 +53,30 @@ local function get_one_recipe()
     -- me_c_move
     -- c_me_move
 
-    local inv = hwif.cchest_get_all()
+    local inv = hwif.me_in_chest_get_all()
     for i=0, #inv - 1 do
         local name = ih.get_name(inv[i])
-        if name == "placeholder_inscriber_name" then
-            -- TODO: get recipe name
+        if name == "inscriber_name_press" then
+            -- get recipe name
+            local outpattern = {}
+            deflate.gunzip({
+                input = inv[i].tag,
+                output = function(byte)
+                    outpattern[#outpattern+1] = string.char(byte)
+                end,
+                disable_crc = true
+            })
+            local r = nbt.readFromNBT(outpattern)
             local recipe_name = nil
-            -- TODO: transfer recipe label at output
+            if r and r.InscribeName then
+                recipe_name = r.InscribeName
+            end
+            -- transfer one recipe label at output
+            while hwif.me_c_move(i+1, 1, 1) ~= 1 do
+                th.tprint("Output chest is not empty...")
+                os.sleep(1)
+            end
+            -- return recipe:
             return crafts[recipe_name]
         end
     end
@@ -136,6 +148,11 @@ local function craft_one_batch()
     end
     move_recipe_items(recipe)
 
+    -- TODO: remove
+    if true then
+        return
+    end
+
     local machine = hwc.prepare_machine(recipe.mach_id, recipe.mach_cfg, false)
     local inv = hwc.read_cchest()
     hwc.craft_batch(inv, machine, recipe.batch, false)
@@ -157,11 +174,11 @@ local function main_crafter()
         if reciper2crafter.pending() then
             -- highest priority
             th.tprint(">> Adding a recipe")
-            local recipe = some_chann.recv()
-            -- add_crafting_recipe(recipe)
+            local recipe = reciper2crafter.recv()
+            add_crafting_recipe(recipe)
         elseif has_items_in_me_c or th.rs_chann.pending() then
             th.tprint(">> Redstone was up, will craft a recipe")
-            -- craft_one_batch()
+            craft_one_batch()
             if th.rs_chann.pending() then
                 th.tprint("redstone queue pending")
                 th.rs_chann.clear()
