@@ -35,7 +35,7 @@ local function update_files()
 end
 
 local function add_crafting_recipe(registration)
-    LOG("registering recipe uid: %s", registration.uid)
+    th.tprint("registering recipe uid: " .. registration.uid)
 
     crafts[registration.uid] = { registration }
 
@@ -55,8 +55,11 @@ local function get_one_recipe()
 
     local inv = hwif.me_in_chest_get_all()
     for i=0, #inv - 1 do
-        local name = ih.get_name(inv[i])
-        if name == "inscriber_name_press" then
+        local name
+        if inv[i] then
+            name = ih.get_name(inv[i])
+        end
+        if name and (name == "inscriber_name_press") then
             -- get recipe name
             local outpattern = {}
             deflate.gunzip({
@@ -80,6 +83,7 @@ local function get_one_recipe()
             return crafts[recipe_name]
         end
     end
+    return nil
 end
 
 local cchest_workspace_end = 72
@@ -151,6 +155,7 @@ end
 
 local function craft_one_batch()
     local recipe = get_one_recipe()
+    th.tprint(h.table2str(recipe))
     if not recipe then
         th.tprint("WARNING: recipe is unknown!!!!")
     end
@@ -185,8 +190,10 @@ local function main_crafter()
             local recipe = reciper2crafter.recv()
             add_crafting_recipe(recipe)
         elseif has_items_in_me_c or th.rs_chann.pending() then
-            th.tprint(">> Redstone was up, will craft a recipe")
-            craft_one_batch()
+            if has_items_in_me_c then
+                th.tprint(">> Redstone was up, will craft a recipe")
+                craft_one_batch()
+            end
             if th.rs_chann.pending() then
                 th.tprint("redstone queue pending")
                 th.rs_chann.clear()
