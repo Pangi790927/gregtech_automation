@@ -132,7 +132,7 @@ end
 function craft_one_batch()
     local recipe = get_one_recipe()
     if not recipe then
-        print("WARNING: recipe is unknown!!!!")
+        th.tprint("WARNING: recipe is unknown!!!!")
     end
     move_recipe_items(recipe)
 
@@ -195,7 +195,7 @@ function read_recipe()
     -- print(pstr)
 
     if not pattern then
-        print("You must insert a pattern")
+        th.tprint("You must insert a pattern")
         return nil
     end
 
@@ -219,10 +219,10 @@ function read_recipe()
         end
     end
     if not uid then
-        print("Pattern needs to have a label inside")
+        th.tprint("Pattern needs to have a label inside")
         return nil
     else
-        print("Recipe uid: " .. uid)
+        th.tprint("Recipe uid: " .. uid)
     end
 
     -- read the input liquid
@@ -247,7 +247,7 @@ function read_recipe()
     }
     local machine_id = 0
     if not machine then
-        print("You need to have a machine configured")
+        th.tprint("You need to have a machine configured")
         return nil
     else
         machine_id = machine_name2id[ih.get_name(machine)]
@@ -259,7 +259,7 @@ function read_recipe()
         -- TODO: check what needs to be read here to decide the config
         config_id = config.damage
         if not config_id then
-            print("You must use a programed circuit in the circuit slot")
+            th.tprint("You must use a programed circuit in the circuit slot")
             return nil
         end
     end
@@ -272,9 +272,9 @@ function read_recipe()
     recipe.batch.inputs = {}
     recipe.batch.outs = {}
 
-    print("machine id: " .. machine_id)
+    th.tprint("machine id: " .. machine_id)
     if config_id then
-        print("machine_cfg: " .. config_id)
+        th.tprint("machine_cfg: " .. config_id)
     end
 
     for i, v in ipairs(pattern.inputs) do
@@ -287,7 +287,7 @@ function read_recipe()
                 cnt = liq_cnt,
                 as_liq = true
             }
-            print("IN  liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqin_msz)
+            th.tprint("IN  liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqin_msz)
         elseif v.name and (ih.name_format(v.name) == "inscriber_name_press") then
             -- this is the label name, it is remembered in the uid, so we ignore it here
         elseif v.name then
@@ -299,7 +299,7 @@ function read_recipe()
                 cnt = item_cnt,
                 as_liq = false
             }
-            print("IN  item: " .. item_name .. " cnt " .. item_cnt)
+            th.tprint("IN  item: " .. item_name .. " cnt " .. item_cnt)
         end
     end
 
@@ -314,7 +314,7 @@ function read_recipe()
                 cnt = liq_cnt,
                 as_liq = true
             })
-            print("OUT liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqout_msz)
+            th.tprint("OUT liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqout_msz)
         elseif v.name then
             -- this is an item
             -- TODO: verify if items need msz, if so, bad luck
@@ -325,7 +325,7 @@ function read_recipe()
                 cnt = item_cnt,
                 as_liq = false
             })
-            print("OUT item: " .. item_name .. " cnt " .. item_cnt)
+            th.tprint("OUT item: " .. item_name .. " cnt " .. item_cnt)
         end
     end
 
