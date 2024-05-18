@@ -64,7 +64,7 @@ function th.create_channel(name)
     end
 
     chann.clear = function()
-        while #chann._queue do
+        while #chann._queue > 0 do
             table.remove(chann._queue, #chann._queue)
         end
     end

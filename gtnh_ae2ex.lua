@@ -112,7 +112,7 @@ local function move_outputs(recipe)
     local required = {}
     for i, v in ipairs(recipe.batch.outs) do
         if v.as_liq then
-            required[ih.get_fluid_cell_name(v.label)] = v.cnt / v.msz
+            required[ih.get_fluid_cell_name(v)] = v.cnt / v.msz
         else
             required[v.label] = v.cnt
         end
@@ -236,6 +236,9 @@ local function read_recipe()
     if liq_in then
         liqin_cell_name = ih.get_name(liq_in)
         liqin_msz = liq_in.amount
+        th.tprint("IN_LIQUID: " ..
+                ih.get_cell_label_fluid_name(liqin_cell_name)
+                .. " msz: " .. liqin_msz)
     end
 
     -- read the output liquid
@@ -244,6 +247,9 @@ local function read_recipe()
     if liq_out then
         liqout_cell_name = ih.get_name(liq_out)
         liqout_msz = liq_out.amount
+        th.tprint("OUT_LIQUID: " ..
+                ih.get_cell_label_fluid_name(liqout_cell_name)
+                .. " msz: " .. liqout_msz)
     end
 
     -- read the machine id
@@ -285,7 +291,7 @@ local function read_recipe()
     for i, v in ipairs(pattern.inputs) do
         if v.name and (ih.name_format(v.name) == liqin_cell_name) then
             -- this is the input liquid
-            local liq_name = ih.get_cell_label_fluid_name({ label=ih.name_format(v.name) })
+            local liq_name = ih.get_cell_label_fluid_name(ih.name_format(v.name))
             local liq_cnt = liqin_msz * v.count
             recipe.batch.inputs[liq_name] = {
                 msz = liqin_msz,
@@ -311,7 +317,7 @@ local function read_recipe()
     for i, v in ipairs(pattern.outputs) do
         if v.name and (ih.name_format(v.name) == liqout_cell_name) then
             -- this is the input liquid
-            local liq_name = ih.get_cell_label_fluid_name({ label=ih.name_format(v.name) })
+            local liq_name = ih.get_cell_label_fluid_name(ih.name_format(v.name))
             local liq_cnt = liqout_msz * v.count
             table.insert(recipe.batch.outs, {
                 label = liq_name,
