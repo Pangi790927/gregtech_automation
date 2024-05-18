@@ -155,6 +155,10 @@ function hwif.rs_toggle(r)
     os.sleep(0.4)
 end
 
+function hwif.rs_me_read()
+    return rs.getInput(s.down)
+end
+
 function hwif.reset_machine(m)
     hwif.rs_toggle(m.brk)
     os.sleep(3)

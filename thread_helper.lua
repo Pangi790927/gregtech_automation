@@ -54,6 +54,16 @@ function th.create_channel(name)
 		return table.remove(chann._queue, 1)
 	end
 
+	chann.pending = function()
+		return #chann > 0
+	end
+
+	chann.clear = function()
+		for i, v in ipairs(chann._queue) do
+			chann._queue[i] = nil
+		end
+	end
+
 	chann._queue = {}
 
 	return chann

@@ -1,16 +1,17 @@
-h       = require("helpers")
-thread  = require("thread")
-event   = require("event")
-ser     = require("serialization")
-fs      = require("filesystem")
-deflate = require("deflate")
-nbt     = require("nbt")
-ih      = require("item_helper")
-hwif    = require("hw_interface")
-hwc     = require("hw_crafting")
+local h       = require("helpers")
+local thread  = require("thread")
+local event   = require("event")
+local ser     = require("serialization")
+local fs      = require("filesystem")
+local deflate = require("deflate")
+local nbt     = require("nbt")
+local ih      = require("item_helper")
+local hwif    = require("hw_interface")
+local hwc     = require("hw_crafting")
+local th      = require("thread_helper")
 
 -- queue for registering new recipes
-local crafting_registrations = {}
+local reciper2crafter = th.create_channel("r2c")
 
 local crafts_path = "/home/crafts.db"
 
@@ -150,29 +151,23 @@ end
 function main_crafter()
     while true do
         -- TODO: event: redstone from the request chest
-        local ev_name = nil
-        local read_redstone_value = nil
-        if #crafting_registrations > 0 then
-            ev_name = "_added_recipe"
-        elseif read_redstone_value then
-            ev_name = redstone
+
+        -- TODO fill this var
+        local has_items_in_me_c = hwif.rs_me_read() > 0
+        if reciper2crafter.pending() then
+            -- highest priority
+            th.tprint(">> Adding a recipe")
+            local recipe = some_chann.recv()
+            -- add_crafting_recipe(recipe)
+        elseif has_items_in_me_c or th.rs_chann.pending() then
+            th.tprint(">> Redstone was up, will craft a recipe and clear rs queue")
+            -- craft_one_batch()
+            th.rs_chann.clear()
         else
-            ev_name = event.pullMultiple("_added_recipe", "interrupted", "redstone")
+            th.tprint(">> Waiting for events")
+            local some_chan = th.wait_any(reciper2crafter, th.rs_chann)
+            th.tprint(">> Got event on channel " .. some_chan.name)
         end
-
-        if ev_name == "_added_recipe" then
-            LOG("Received event")
-            local registration = table.remove(crafting_registrations, 1)
-            add_crafting_recipe(registration)
-        elseif ev_name == "interrupted" then
-            LOG("Program interupted")
-            os.exit()
-        elseif ev_name == redstone then
-            craft_one_batch()
-        end
-
-        -- print("I'm still alive in the background")
-        os.sleep(1)
 
         -- find the first label in the chest
         -- wait for as many from each recipe as stated by the label
@@ -345,36 +340,31 @@ end
 -- This is the reciper, this will be used to add recipes into the system
 function main_reciper()
     while true do
-        io.write("> Configure the recipe and press enter: ")
+        th.tprint("> Configure the recipe and press enter: ")
         local r = io.read() -- TODO: replace with button wait
         
         -- 0. Read the recipe pattern
         local pattern_recipe = read_recipe()
         if pattern_recipe then
-            io.write("> Would you like to save the recipe [y/n]: ")
+            th.tprint("> Would you like to save the recipe [y/n]: ")
             r = io.read()
             if r == "y" or r == "Y" then
-                table.insert(crafting_registrations, h.copy(pattern_recipe))
-                event.push("_added_recipe")
-                LOGP("> Recipe sent to the crafting unit, please install the new recipe in the interface" ..
+                crafter2reciper.send(pattern_recipe)
+                -- table.insert(crafting_registrations, h.copy(pattern_recipe))
+                -- event.push("_added_recipe")
+                th.tprint("> Recipe sent to the crafting unit, please install the new recipe in the interface" ..
                         " and clean the recipe editor slots.")
             else
-                LOGP("> Recipe was not added, please clean the recipe editor before leaving.")
+                th.tprint("> Recipe was not added, please clean the recipe editor before leaving.")
             end
         end
     end
 end
 
-function catch_exceptions(fn)
-    local ok, res = xpcall(fn, debug.traceback)
-end
+local t1 = th.create_thread(main_crafter)
+local t2 = th.create_thread(main_reciper)
 
-thread.create(main_reciper)
-thread.create(main_crafter)
-
-while true do
-    os.sleep(1)
-end
+th.handle_threads()
 
 -- hwif = require("hw_interface")
 -- deflate = require("deflate")
