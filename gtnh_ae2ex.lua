@@ -18,8 +18,8 @@ local crafts_path = "/home/crafts.db"
 local pattern_slot = 20
 local machine_slot = 23
 local config_slot = 26
-local liquid_in_slot = 38
-local liquid_out_slot = 44
+local liquid_in_slot = 47
+local liquid_out_slot = 53
 
 local cf = fs.open(crafts_path)
 if cf then
@@ -236,9 +236,6 @@ local function read_recipe()
     if liq_in then
         liqin_cell_name = ih.get_name(liq_in)
         liqin_msz = liq_in.amount
-        th.tprint("IN_LIQUID: " ..
-                ih.get_cell_label_fluid_name(liqin_cell_name)
-                .. " msz: " .. liqin_msz)
     end
 
     -- read the output liquid
@@ -247,9 +244,6 @@ local function read_recipe()
     if liq_out then
         liqout_cell_name = ih.get_name(liq_out)
         liqout_msz = liq_out.amount
-        th.tprint("OUT_LIQUID: " ..
-                ih.get_cell_label_fluid_name(liqout_cell_name)
-                .. " msz: " .. liqout_msz)
     end
 
     -- read the machine id
@@ -373,7 +367,7 @@ local function main_reciper()
             th.tprint("> Would you like to save the recipe [y/n]: ")
             local key = th.kd_chann.recv()
             if key.code == KEY_Y then
-                crafter2reciper.send(pattern_recipe)
+                reciper2crafter.send(pattern_recipe)
                 -- table.insert(crafting_registrations, h.copy(pattern_recipe))
                 -- event.push("_added_recipe")
                 th.tprint("> Recipe sent to the crafting unit, please install the new recipe in the interface" ..
