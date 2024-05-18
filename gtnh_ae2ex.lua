@@ -28,13 +28,13 @@ else
     crafts = {}
 end
 
-function update_files()
+local function update_files()
     local cf = fs.open(crafts_path, "w")
     cf:write(ser.serialize(crafts))
     cf:close()
 end
 
-function add_crafting_recipe(registration)
+local function add_crafting_recipe(registration)
     LOG("registering recipe uid: %s", registration.uid)
 
     crafts[registration.uid] = { registration }
@@ -44,7 +44,7 @@ function add_crafting_recipe(registration)
     cf:close()
 end
 
-function get_one_recipe()
+local function get_one_recipe()
     -- TODO: remove
     if true then
         return nil
@@ -70,7 +70,7 @@ function get_one_recipe()
     end
 end
 
-function transfer_inputs(in_slot, max_cnt)
+local function transfer_inputs(in_slot, max_cnt)
     local return_cnt = nil
     -- TODO: search for place to place the input
     -- TODO: transfer as many as you can there
@@ -78,7 +78,7 @@ function transfer_inputs(in_slot, max_cnt)
     return return_cnt
 end
 
-function transfer_outputs(in_slot, max_cnt)
+local function transfer_outputs(in_slot, max_cnt)
     local return_cnt = nil
     -- TODO: search for place to place the output till one apears
     -- TODO: transfer them there
@@ -86,7 +86,7 @@ function transfer_outputs(in_slot, max_cnt)
     return return_cnt
 end
 
-function move_recipe_items(recipe)
+local function move_recipe_items(recipe)
     local required = {}
     for k, v in recipe.batch.inputs do
         if v.as_liq then
@@ -107,7 +107,7 @@ function move_recipe_items(recipe)
     end
 end
 
-function move_outputs(recipe)
+local function move_outputs(recipe)
     -- Take from chest and move into the output chest
     local required = {}
     for i, v in ipairs(recipe.batch.outs) do
@@ -129,7 +129,7 @@ function move_outputs(recipe)
     end
 end
 
-function craft_one_batch()
+local function craft_one_batch()
     local recipe = get_one_recipe()
     if not recipe then
         th.tprint("WARNING: recipe is unknown!!!!")
@@ -148,7 +148,7 @@ end
 -- This is the thread that receives the requests from the ae2 system and crafts them it will exit
 -- on error and should be independent of the main_reciper, except from receiving crafting recipes
 -- from it
-function main_crafter()
+local function main_crafter()
     while true do
         -- TODO: event: redstone from the request chest
 
@@ -160,9 +160,12 @@ function main_crafter()
             local recipe = some_chann.recv()
             -- add_crafting_recipe(recipe)
         elseif has_items_in_me_c or th.rs_chann.pending() then
-            th.tprint(">> Redstone was up, will craft a recipe and clear rs queue")
+            -- th.tprint(">> Redstone was up, will craft a recipe and clear rs queue")
             -- craft_one_batch()
-            th.rs_chann.clear()
+            if th.rs_chann.pending() then
+                th.print("redstone queue cleared")
+                th.rs_chann.clear()
+            end
         else
             th.tprint(">> Waiting for events")
             local some_chan = th.wait_any(reciper2crafter, th.rs_chann)
@@ -176,7 +179,7 @@ function main_crafter()
     end
 end
 
-function read_recipe()
+local function read_recipe()
     local pattern = hwif.rchest_get(pattern_slot)
     local machine = hwif.rchest_get(machine_slot)
     local config = hwif.rchest_get(config_slot)
@@ -339,7 +342,7 @@ end
 
 local KEY_ENTER = 28
 local KEY_Y = 21
-function wait_keys(codes)
+local function wait_keys(codes)
     while true do
         local msg = th.kd_chann.recv()
         for i, v in ipairs(codes) do
@@ -351,7 +354,7 @@ function wait_keys(codes)
 end
 
 -- This is the reciper, this will be used to add recipes into the system
-function main_reciper()
+local function main_reciper()
     while true do
         th.tprint("> Configure the recipe and press enter: ")
         wait_keys({KEY_ENTER})
@@ -361,7 +364,7 @@ function main_reciper()
         if pattern_recipe then
             th.tprint("> Would you like to save the recipe [y/n]: ")
             local key = th.kd_chann.recv()
-            if key.code = KEY_Y then
+            if key.code == KEY_Y then
                 crafter2reciper.send(pattern_recipe)
                 -- table.insert(crafting_registrations, h.copy(pattern_recipe))
                 -- event.push("_added_recipe")

@@ -34,6 +34,7 @@ function th.kill_all()
     end
 end
 
+-- TODO: don't allow channels that can match registered events bellow
 function th.create_channel(name)
     -- This may be the most horific way to do this, but I don't think I care
     local chann = {}
@@ -94,7 +95,7 @@ function th.wait_any(...)
 end
 
 -- Only one thread should ever listen to those channels
-th.rs_chann = th.create_channel("redstone")
+th.rs_chann = th.create_channel("rssig")
 th.kd_chann = th.create_channel("key_up")
 th.ku_chann = th.create_channel("key_up")
 
@@ -114,7 +115,7 @@ function th.handle_threads()
         elseif name == "gtnh_print" then
             print("MSG: " .. var)
         elseif name == "key_down" then
-            th.kd_chann.send({ char=var2, code=var3 })
+            th.kd_chann.send({ key=var2, code=var3 })
         else
             print("Recived an unknown message: " .. name .. ", will exit")
             th.kill_all()
