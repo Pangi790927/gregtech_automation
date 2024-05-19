@@ -266,6 +266,7 @@ local function read_recipe()
     -- read the machine id
     local machine_name2id = {
         ["basic_chemical_reactor"] = hwif.machines.chem_reactor.id
+        ["basic_assembling_machine"] = hwif.machines.assembler.id
     }
     local machine_id = 0
     if not machine then
