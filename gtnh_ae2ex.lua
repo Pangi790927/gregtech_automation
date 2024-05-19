@@ -21,6 +21,8 @@ local config_slot = 26
 local liquid_in_slot = 47
 local liquid_out_slot = 53
 
+local cf = fs.open(crafts_path)
+
 local function read_all()
     local ret = ""
     local read_res = cf:read(1000000000)
@@ -31,12 +33,15 @@ local function read_all()
     return ret
 end
 
-local cf = fs.open(crafts_path)
 local crafts
 if cf then
     crafts = ser.unserialize(read_all())
 else
     crafts = {}
+end
+
+for k, v in pairs(hwif.machines) do
+    hwif.reset_machine(v)
 end
 
 local function update_files()
@@ -137,6 +142,13 @@ local function move_outputs(recipe)
     end
 end
 
+local function is_empty_liq(machine)
+    return true
+end
+
+local last_mach_id = nil
+local last_mach_cfg = nil
+local last_mach = nil
 local function craft_one_batch()
     local recipe = get_one_recipe()
     if not recipe then
@@ -147,7 +159,15 @@ local function craft_one_batch()
     end
     move_recipe_items(recipe)
 
-    local machine = hwc.prepare_machine(recipe.mach_id, recipe.mach_cfg, false)
+    local machine
+    if not ((last_mach_id == recipe.mach_id) and (last_mach_cfg == recipe.mach_cfg) and is_empty_liq(machine)) then
+        machine = hwc.prepare_machine(recipe.mach_id, recipe.mach_cfg, false)
+        last_mach = machine
+        last_mach_id = recipe.mach_id
+        last_mach_cfg = recipe.mach_cfg
+    else
+        machine = last_mach
+    end
     local inv = hwc.read_cchest()
     if not craft_batch(inv, machine, recipe.batch, false) then
         th.tprint("ERROR: FAILED CRAFT STAGE")
@@ -160,10 +180,6 @@ local function craft_one_batch()
     if not collect_batch(inv, machine, recipe.batch, false) then
         th.tprint("ERROR: FAILED COLLECT STAGE")
         return
-    end
-
-    if recipe.mach_cfg then
-        hwif.reset_machine(machine)
     end
 
     move_outputs()
