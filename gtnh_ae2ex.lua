@@ -143,6 +143,12 @@ local function move_outputs(recipe)
 end
 
 local function is_empty_liq(machine)
+    local all_slots = machine.trans.getAllStacks(machine.side).getAll()
+    for i, v in ipairs(all_slots) do
+        if v and v.label then
+            return false
+        end
+    end
     return true
 end
 
