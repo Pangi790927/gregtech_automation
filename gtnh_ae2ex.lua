@@ -93,11 +93,7 @@ local cchest_workspace_end = 70
 local function move_recipe_items(recipe)
     local required = {}
     for k, v in pairs(recipe.batch.inputs) do
-        if v.as_liq then
-            required[ih.get_fluid_cell_name({label=k})] = v.cnt
-        else
-            required[k] = v.cnt
-        end
+        required[k] = v.cnt
     end
 
     local inv = hwif.me_in_chest_get_all()
@@ -118,12 +114,14 @@ local function move_outputs(recipe)
 
     local inv = hwif.cchest_get_all()
     for i=0, #inv - 1 - cchest_workspace_end do
-        local name = ih.get_name(inv[i])
-        local req_cnt = inv[i].size
-        while req_cnt > 0 do
-            local cnt = hwif.C_me_move(i + 1, nil, req_cnt)
-            req_cnt = req_cnt - cnt
-            os.sleep(0.1)
+        if inv[i] and inv[i].label then 
+            local name = ih.get_name(inv[i])
+            local req_cnt = inv[i].size
+            while req_cnt > 0 do
+                local cnt = hwif.c_me_move(i + 1, nil, req_cnt)
+                req_cnt = req_cnt - cnt
+                os.sleep(0.1)
+            end
         end
     end
 end
