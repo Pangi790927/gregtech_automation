@@ -17,27 +17,34 @@ t4 = c.proxy(c.get("dd46")) -- reciper chest
 t5 = c.proxy(c.get("0bb7")) -- ME transposer
 
 hwif.machines = {
-    wiremill     = { id = 1, trans = t1, side = s.west, cside = s.south, brk = { s = s.east,  n = 2 }},
-    extruder     = { id = 2, trans = t1, side = s.up,   cside = s.south, brk = { s = s.east,  n = 4 }},
+    distillery   = { id = 1, trans = t1, side = s.west, cside = s.south, brk = { s = s.east,  n = 2 }},
+    chembath     = { id = 2, trans = t1, side = s.up,   cside = s.south, brk = { s = s.east,  n = 4 }},
     chem_reactor = { id = 3, trans = t1, side = s.east, cside = s.south, brk = { s = s.east,  n = 8 }},
     assembler    = { id = 4, trans = t2, side = s.west, cside = s.north, brk = { s = s.west,  n = 1 }},
-    bending_mach = { id = 5, trans = t2, side = s.east, cside = s.north, brk = { s = s.west,  n = 4 }},
+    electrolyzer = { id = 5, trans = t2, side = s.east, cside = s.north, brk = { s = s.west,  n = 4 }},
     canner       = { id = 6, trans = t2, side = s.up,   cside = s.north, brk = nil, liq = nil},
-    circ_assemb  = { id = 7, trans = t3, side = s.west, cside = s.south, brk = { s = s.north, n = 8 }},
-    cutting_mach = { id = 8, trans = t3, side = s.up,   cside = s.south, brk = { s = s.north, n = 4 }},
-    lasser_engr  = { id = 9, trans = t3, side = s.east, cside = s.south, brk = { s = s.north, n = 2 }},
+    fextractor   = { id = 7, trans = t3, side = s.west, cside = s.south, brk = { s = s.north, n = 8 }},
+    mixer        = { id = 8, trans = t3, side = s.up,   cside = s.south, brk = { s = s.north, n = 4 }},
+    fsolidifier  = { id = 9, trans = t3, side = s.east, cside = s.south, brk = { s = s.north, n = 2 }},
 }
 
+-- distillery
+-- chembath
+-- electrolyzer
+-- fextractor
+-- mixer
+-- fsolidifier
+
 hwif.machine_io = {
-    {inputs={6},    cfg=7, outs={8},    lin=nil, lout=nil, name="wiremill"},
-    {inputs={6},    cfg=7, outs={8},    lin=nil, lout=nil, name="extruder"},
-    {inputs={6, 7}, cfg=7, outs={8, 9}, lin=10,  lout=3,   name="chem_reactor"},
-    {inputs={6, 7, 8, 9, 10, 11, 12, 13, 14}, cfg=14, outs={15}, lin=16, lout=15, name="assembler"},
-    {inputs={6}, cfg=7, outs={8}, lin=nil, lout=nil, name="bending_mach"},
-    {inputs={6}, cfg=nil, outs={7}, lin=3, lout=8, name="canner"},
-    {inputs={6, 7, 8, 9, 10, 11}, cfg=11, outs={12}, lin=13, lout=nil, name="circ_assemb"},
-    {inputs={6}, cfg=7, outs={8, 9}, lin=nil, lout=nil, name="cutting_mach"},
-    {inputs={6}, cfg=7, outs={8}, lin=nil, lout=nil, name="lasser_engr"},
+    {inputs={6},                              cfg=6,   outs={8},    lin=nil, lout=nil, name="distillery"},      -- ???
+    {inputs={6},                              cfg=7,   outs={8},    lin=nil, lout=nil, name="chembath"},        -- ???
+    {inputs={6, 7},                           cfg=7,   outs={8, 9}, lin=10,  lout=3,   name="chem_reactor"},
+    {inputs={6, 7, 8, 9, 10, 11, 12, 13, 14}, cfg=14,  outs={15},   lin=16,  lout=15,  name="assembler"},
+    {inputs={6},                              cfg=7,   outs={8},    lin=nil, lout=nil, name="electrolyzer"},    -- ???
+    {inputs={6},                              cfg=nil, outs={7},    lin=3,   lout=8,   name="canner"},
+    {inputs={6, 7, 8, 9, 10, 11},             cfg=11,  outs={12},   lin=13,  lout=nil, name="fextractor"},      -- ???
+    {inputs={6},                              cfg=7,   outs={8, 9}, lin=nil, lout=nil, name="mixer"},           -- ???
+    {inputs={6},                              cfg=7,   outs={8},    lin=nil, lout=nil, name="fsolidifier"},     -- ???
 }
 
 hwif.alarm = { s = s.west, n = 8 }
@@ -59,42 +66,19 @@ hwif.cchest_lens_slot = 73
 hwif.cchest_pannels_slot = 77
 hwif.cchest_cells_slot = 78
 hwif.cchest_circuits_slot = 81
-hwif.cchest_extruder_slot = 97
+hwif.cchest_solidif_slot = 97
 
 hwif.craft_info = {
-    { mach_name="wiremill",     cfg=hwif.cchest_circuits_slot, cfg_num=16 },
-    { mach_name="extruder",     cfg=hwif.cchest_extruder_slot, cfg_num=12 },
+    { mach_name="distillery",   cfg=hwif.cchest_circuits_slot, cfg_num=16 },
+    { mach_name="chembath",     cfg=hwif.cchest_circuits_slot, cfg_num=16 },
     { mach_name="chem_reactor", cfg=hwif.cchest_circuits_slot, cfg_num=16 },
     { mach_name="assembler",    cfg=hwif.cchest_circuits_slot, cfg_num=16 },
-    { mach_name="bending_mach", cfg=hwif.cchest_circuits_slot, cfg_num=16 },
+    { mach_name="electrolyzer", cfg=hwif.cchest_circuits_slot, cfg_num=16 },
     { mach_name="canner",       cfg=nil, cfg_num=0 },
-    { mach_name="circ_assemb",  cfg=hwif.cchest_circuits_slot, cfg_num=16 },
-    { mach_name="cutting_mach", cfg=nil, cfg_num=0 },
-    { mach_name="lasser_engr",  cfg=hwif.cchest_lens_slot,     cfg_num=4 },
+    { mach_name="fextractor",   cfg=nil, cfg_num=0 },
+    { mach_name="mixer",        cfg=hwif.cchest_circuits_slot, cfg_num=16 },
+    { mach_name="fsolidifier",  cfg=hwif.cchest_solidif_slot,  cfg_num=2 },
 }
-
-hwif.craft_frame = {
-    1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
-    13,             17,     19,     21, 22, 23, 24,
-    25,             29,     31, 32, 33, 34, 35, 36,
-    37,             41,     43,     45, 46, 47, 48,
-    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60
-}
-
-hwif.craft_inputs = {
-    14, 15, 16,
-    26, 27, 28,
-    38, 39, 40
-}
-
-hwif.craft_outputs = {
-    18, 30, 42
-}
-
-hwif.craft_liq_in  = 20
-hwif.craft_liq_out = 44
-
-hwif.screen_rows = 16
 
 hwif.craft_circuits = {
     "circ_1",  "circ_2",  "circ_3",  "circ_4",
@@ -104,8 +88,8 @@ hwif.craft_circuits = {
 }
 
 hwif.craft_extuders = {
-    "small_pipe",
-    "normal_pipe",
+    "small_pipe", -- changed
+    "normal_pipe", -- changed
     "large_pipe",
     "small_gear",
     "gear",

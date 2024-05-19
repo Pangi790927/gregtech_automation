@@ -265,8 +265,14 @@ local function read_recipe()
 
     -- read the machine id
     local machine_name2id = {
-        ["basic_chemical_reactor"] = hwif.machines.chem_reactor.id
-        ["basic_assembling_machine"] = hwif.machines.assembler.id
+        ["basic_chemical_reactor"] = hwif.machines.chem_reactor.id,
+        ["basic_assembling_machine"] = hwif.machines.assembler.id,
+        ["basic_electrolyzer"] = hwif.machines.electrolyzer.id,
+        ["basic_distillery"] = hwif.machines.distillery.id,
+        ["basic_mixer"] = hwif.machines.mixer.id,
+        ["basic_fluid_solidifier"] = hwif.machines.fsolidifier.id,
+        ["basic_fluid_extractor"] = hwif.machines.fextractor.id,
+        ["basic_fluid_chemical_bath"] = hwif.machines.chembath.id
     }
     local machine_id = 0
     if not machine then
@@ -276,13 +282,21 @@ local function read_recipe()
         machine_id = machine_name2id[ih.get_name(machine)]
     end
 
+    local solidif_name2id = {
+        ["Mold (Ingot)"] = 1,
+        ["Mold (Plate)"] = 2,
+    }
     -- read the machine config
     local config_id = nil
     if config then
         -- TODO: check what needs to be read here to decide the config
-        config_id = config.damage
+        if machine_id == hwif.machines.fsolidifier.id then
+            config_id = solidif_name2id[config.label]
+        else
+            config_id = config.damage
+        end
         if not config_id then
-            th.tprint("You must use a programed circuit in the circuit slot")
+            th.tprint("You must use a programed_circuit/mold in the config slot")
             return nil
         end
     end
