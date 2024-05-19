@@ -22,6 +22,7 @@ local liquid_in_slot = 47
 local liquid_out_slot = 53
 
 local cf = fs.open(crafts_path)
+local crafts
 if cf then
     crafts = ser.unserialize(cf:read(1000000000))
 else
