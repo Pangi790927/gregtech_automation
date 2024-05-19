@@ -40,10 +40,6 @@ else
     crafts = {}
 end
 
-for k, v in pairs(hwif.machines) do
-    hwif.reset_machine(v)
-end
-
 local function update_files()
     local cf = fs.open(crafts_path, "w")
     cf:write(ser.serialize(crafts))
@@ -142,7 +138,10 @@ local function move_outputs(recipe)
     end
 end
 
-local function is_empty_liq(machine)
+local function is_empty_machine(machine)
+    if not machine then
+        return true
+    end
     local all_slots = machine.trans.getAllStacks(machine.side).getAll()
     for i, v in ipairs(all_slots) do
         if v and v.label then
@@ -166,7 +165,9 @@ local function craft_one_batch()
     move_recipe_items(recipe)
 
     local machine
-    if not ((last_mach_id == recipe.mach_id) and (last_mach_cfg == recipe.mach_cfg) and is_empty_liq(machine)) then
+    if not ((last_mach_id == recipe.mach_id) and (last_mach_cfg == recipe.mach_cfg)
+            and machine and is_empty_machine(machine))
+    then
         machine = hwc.prepare_machine(recipe.mach_id, recipe.mach_cfg, false)
         last_mach = machine
         last_mach_id = recipe.mach_id
@@ -444,6 +445,13 @@ local function main_reciper()
         end
     end
 end
+
+for k, v in pairs(hwif.machines) do
+    if not is_empty_machine(v) then
+        hwif.reset_machine(v)
+    end
+end
+
 
 local t1 = th.create_thread(main_crafter)
 local t2 = th.create_thread(main_reciper)
