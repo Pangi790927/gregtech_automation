@@ -90,37 +90,6 @@ end
 -- 72 - 2(eggs and coins)
 local cchest_workspace_end = 70
 
-local function transfer_inputs(in_slot, max_cnt)
-    local return_cnt = 0
-    for i=1, cchest_workspace_end do
-        local slot = hwif.cchest_get(i)
-        if not slot then
-            return_cnt = hwif.me_c_move(in_slot, i, max_cnt)
-            break
-        end
-    end
-    -- search for place to place the input
-    -- transfer as many as you can there
-    -- return the quantity transfered
-    return return_cnt
-end
-
-local function transfer_outputs(in_slot, max_cnt)
-    local return_cnt = 0
-
-    local inv = hwif.me_out_chest_get_all()
-    for i=0, #inv do
-        if not (inv[0] and inv[0].label)then
-            return_cnt = hwif.C_me_move(in_slot, i, max_cnt)
-            break
-        end
-    end
-    -- TODO: search for place to place the output till one apears
-    -- TODO: transfer them there
-    -- TODO: return the quantity transfered
-    return return_cnt
-end
-
 local function move_recipe_items(recipe)
     local required = {}
     for k, v in pairs(recipe.batch.inputs) do
@@ -137,7 +106,7 @@ local function move_recipe_items(recipe)
             local name = ih.get_name(inv[i])
             th.tprint("move in name: " .. name)
             if required[name] and required[name] > 0.01 then
-                local cnt = transfer_inputs(i + 1, required[name])
+                local cnt = hwif.me_c_move(i + 1, nil, required[name])
                 required[name] = required[name] - cnt
             end
         end
@@ -152,7 +121,7 @@ local function move_outputs(recipe)
         local name = ih.get_name(inv[i])
         local req_cnt = inv[i].size
         while req_cnt > 0 do
-            local cnt = transfer_outputs(i + 1, required[name])
+            local cnt = hwif.C_me_move(i + 1, nil, req_cnt)
             req_cnt = req_cnt - cnt
             os.sleep(0.1)
         end
