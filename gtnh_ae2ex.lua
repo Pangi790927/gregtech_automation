@@ -21,10 +21,20 @@ local config_slot = 26
 local liquid_in_slot = 47
 local liquid_out_slot = 53
 
+local function read_all()
+    local ret = ""
+    local read_res = cf:read(1000000000)
+    while read_res do
+        ret = ret .. read_res
+        read_res = cf:read(1000000000)
+    end
+    return ret
+end
+
 local cf = fs.open(crafts_path)
 local crafts
 if cf then
-    crafts = ser.unserialize(cf:read(1000000000))
+    crafts = ser.unserialize(read_all())
 else
     crafts = {}
 end
