@@ -123,9 +123,9 @@ end
 
 local function move_recipe_items(recipe)
     local required = {}
-    for k, v in recipe.batch.inputs do
+    for k, v in pairs(recipe.batch.inputs) do
         if v.as_liq then
-            required[ih.get_fluid_cell_name(k)] = v.cnt / v.msz
+            required[ih.get_fluid_cell_name({label=k})] = v.cnt / v.msz
         else
             required[k] = v.cnt
         end
@@ -133,10 +133,13 @@ local function move_recipe_items(recipe)
 
     local inv = hwif.me_in_chest_get_all()
     for i=0, #inv - 1 do
-        local name = ih.get_name(inv[i])
-        if required[name] and required[name] > 0.01 then
-            local cnt = transfer_inputs(i + 1, required[name])
-            required[name] = required[name] - cnt
+        if inv[i] and inv[i].label then
+            local name = ih.get_name(inv[i])
+            th.tprint("move in name: " .. name)
+            if required[name] and required[name] > 0.01 then
+                local cnt = transfer_inputs(i + 1, required[name])
+                required[name] = required[name] - cnt
+            end
         end
     end
 end
@@ -161,17 +164,18 @@ local function craft_one_batch()
     if not recipe then
         -- no recipe was found in the chest
         return
+    else
+        th.tprint(">> will craft: " .. recipe.uid)
     end
     move_recipe_items(recipe)
 
-    -- TODO: remove
-    if true then return end
-
     local machine = hwc.prepare_machine(recipe.mach_id, recipe.mach_cfg, false)
     local inv = hwc.read_cchest()
-    hwc.craft_batch(inv, machine, recipe.batch, false)
-    hwc.wait_batch(inv, machine, recipe.batch, false)
-    hwc.collect_batch(inv, machine, recipe.batch, false)
+    craft_batch(inv, machine, recipe.batch, false)
+    wait_batch(inv, machine, recipe.batch, false)
+    collect_batch(inv, machine, recipe.batch, false)
+
+    if true then return end
 
     move_outputs()
 end
@@ -349,7 +353,8 @@ local function read_recipe()
             table.insert(recipe.batch.outs, {
                 label = liq_name,
                 msz = liqout_msz,
-                cnt = liq_cnt,
+                cnt = v.count,
+                liq_cnt = liq_cnt,
                 as_liq = true
             })
             th.tprint("OUT liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqout_msz)
