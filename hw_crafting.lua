@@ -318,7 +318,8 @@ function craft_batch(inv, machine, batch, sim_mode)
             if k == ih.get_name(inv[i]) and v.cnt >= 1 then
                 print("transfering: " .. k)
                 local to_transfer, cslot = inv_transfer_cnt(inv, i, v.cnt, v.as_liq)
-                if to_transfer == 0 then
+                if to_transfer < 0.1 then
+                    print("failed to_transfer")
                     return false
                 end
                 if not sim_mode then
@@ -334,7 +335,8 @@ function craft_batch(inv, machine, batch, sim_mode)
         end
     end
     for k, v in pairs(cbatch.inputs) do
-        if v.cnt > 0 then
+        if v.cnt > 0.1 then
+            print("failed v.cnt")
             return false
         end
     end

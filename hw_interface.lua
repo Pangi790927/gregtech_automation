@@ -205,7 +205,6 @@ function hwif.me_c_move(src_slot, dst_slot, cnt)
 end
 
 function hwif.me_me_move(src_slot, dst_slot, cnt)
-    return t5.transferItem(s.east, s.south, cnt, src_slot, dst_slot)
     if dst_slot then
         return t5.transferItem(s.east, s.south, cnt, src_slot, dst_slot)
     else
@@ -221,8 +220,7 @@ function hwif.c_me_move(src_slot, dst_slot, cnt)
     end
 end
 
-function hwif.cchest_move(src_slot, dst_slot, cnt)
-    return 
+function hwif.cchest_move(src_slot, dst_slot, cnt) 
     if dst_slot then
         return t1.transferItem(s.south, s.south, cnt, src_slot, dst_slot)
     else

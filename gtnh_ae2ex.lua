@@ -298,13 +298,12 @@ local function read_recipe()
         if v.name and (ih.name_format(v.name) == liqin_cell_name) then
             -- this is the input liquid
             local liq_name = ih.get_cell_label_fluid_name(ih.name_format(v.name))
-            local liq_cnt = liqin_msz * v.count
             recipe.batch.inputs[liq_name] = {
                 msz = liqin_msz,
-                cnt = liq_cnt,
+                cnt = v.count,
                 as_liq = true
             }
-            th.tprint("IN  liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqin_msz)
+            th.tprint("IN  liqname: " .. liq_name .. " cnt " .. v.count .. " msz " .. liqin_msz)
         elseif v.name and (ih.name_format(v.name) == "inscriber_name_press") then
             -- this is the label name, it is remembered in the uid, so we ignore it here
         elseif v.name then
