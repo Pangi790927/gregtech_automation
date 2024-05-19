@@ -252,7 +252,7 @@ function hwc.transfer_liq2cell(source_mach, cchest_in, cchest_out, cell_cnt)
     if mcann.trans.transferItem(mcann.side, mcann.cside, cell_cnt,
             hwif.machine_io[mcann.id].outs[1], cchest_out) ~= cell_cnt
     then
-        critical_message("Failed machine filled cell transfer")
+        critical_message("Failed machine filled cell transfer 1")
     end
     hwif.rs_reset(source_mach.trans.liq_out)
 end
@@ -262,7 +262,7 @@ function hwc.transfer_item2mach(cchest_slot, target_mach, item_cnt)
     if target_mach.trans.transferItem(target_mach.cside, target_mach.side, item_cnt,
             cchest_slot) ~= item_cnt
     then
-        critical_message("Failed machine filled cell transfer")
+        critical_message("Failed machine filled cell transfer 2")
     end
 end
 
@@ -271,7 +271,7 @@ function hwc.transfer_mach2item(target_mach, source_slot, cchest_slot, item_cnt)
     if target_mach.trans.transferItem(target_mach.side, target_mach.cside, item_cnt,
             source_slot, cchest_slot) ~= item_cnt
     then
-        critical_message("Failed machine filled cell transfer")
+        critical_message("Failed machine filled cell transfer 3")
     end
 end
 
@@ -378,6 +378,18 @@ function wait_batch(inv, machine, batch, sim_mode)
 end
 
 function collect_batch(inv, machine, batch, sim_mode)
+    local out_slots = hwif.machine_io[machine.id].outs
+    for j = 1, #out_slots do
+        local res_item = machine.trans.getStackInSlot(machine.side, out_slots[j])
+        if res_item then
+            if machine.trans.transferItem(machine.side, machine.cside, res_item.size,
+                    out_slots[j]) ~= res_item.size
+            then
+                critical_message("Failed machine filled cell transfer X")
+            end
+        end
+    end
+
     for i = 1, #batch.outs do
         local item = batch.outs[i]
         if item.as_liq == true then
@@ -417,6 +429,7 @@ function collect_batch(inv, machine, batch, sim_mode)
             for j = 1, cchest_workspace_end do
                 if inv[j] == nil then
                     cell_dst = j
+                    break
                 end
             end
             if cell_dst == nil then
@@ -427,18 +440,6 @@ function collect_batch(inv, machine, batch, sim_mode)
             -- TODO: inv[cell_dst] = 
             if not sim_mode then
                 hwc.transfer_liq2cell(machine, cell_src, cell_dst, cell_cnt)
-            end
-        end
-    end
-
-    local out_slots = hwif.machine_io[machine.id].outs
-    for j = 1, #out_slots do
-        local res_item = machine.trans.getStackInSlot(machine.side, out_slots[j])
-        if res_item then
-            if machine.trans.transferItem(machine.side, machine.cside, res_item.size,
-                    out_slots[j]) ~= res_item.size
-            then
-                critical_message("Failed machine filled cell transfer")
             end
         end
     end

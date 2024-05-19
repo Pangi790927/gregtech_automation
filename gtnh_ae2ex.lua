@@ -113,7 +113,7 @@ local function move_outputs(recipe)
     -- Take from chest and move into the output chest
 
     local inv = hwif.cchest_get_all()
-    for i=0, #inv - 1 - cchest_workspace_end do
+    for i=0, cchest_workspace_end - 1 do
         if inv[i] and inv[i].label then 
             local name = ih.get_name(inv[i])
             local req_cnt = inv[i].size
@@ -149,6 +149,10 @@ local function craft_one_batch()
     if not collect_batch(inv, machine, recipe.batch, false) then
         th.tprint("ERROR: FAILED COLLECT STAGE")
         return
+    end
+
+    if recipe.mach_cfg then
+        hwif.reset_machine(machine)
     end
 
     move_outputs()
@@ -304,7 +308,7 @@ local function read_recipe()
             liq_cnt = liq_cnt,
             as_liq = true
         })
-        th.tprint("OUT liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqout_msz)
+        th.tprint("OUT liqname: " .. liqout_cell_name .. " cnt " .. liq_cnt .. " msz " .. liqout_msz)
     end
 
     for i, v in ipairs(pattern.inputs) do
@@ -315,7 +319,7 @@ local function read_recipe()
                 cnt = v.count,
                 as_liq = true
             }
-            th.tprint("IN  liqname: " .. liq_name .. " cnt " .. v.count .. " msz " .. liqin_msz)
+            th.tprint("IN  liqname: " .. liqin_cell_name .. " cnt " .. v.count .. " msz " .. liqin_msz)
         elseif v.name and (ih.name_format(v.name) == "inscriber_name_press") then
             -- this is the label name, it is remembered in the uid, so we ignore it here
         elseif v.name then
