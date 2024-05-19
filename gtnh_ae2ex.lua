@@ -56,7 +56,7 @@ local function get_one_recipe()
     local inv = hwif.me_in_chest_get_all()
     for i=0, #inv - 1 do
         local name
-        if inv[i] then
+        if inv[i] and inv[i].label then
             name = ih.get_name(inv[i])
         end
         if name and (name == "inscriber_name_press") then
@@ -75,20 +75,23 @@ local function get_one_recipe()
                 recipe_name = r.InscribeName
             end
             -- transfer one recipe label at output
-            while hwif.me_c_move(i+1, 1, 1) ~= 1 do
+            while hwif.me_me_move(i+1, 1, 1) ~= 1 do
                 th.tprint("Output chest is not empty...")
                 os.sleep(1)
             end
             -- return recipe:
+            th.tprint("Found valid recipe: " .. recipe_name)
             return crafts[recipe_name]
         end
     end
     return nil
 end
 
-local cchest_workspace_end = 72
+-- 72 - 2(eggs and coins)
+local cchest_workspace_end = 70
+
 local function transfer_inputs(in_slot, max_cnt)
-    local return_cnt = nil
+    local return_cnt = 0
     for i=1, cchest_workspace_end do
         local slot = hwif.cchest_get(i)
         if not slot then
@@ -103,7 +106,15 @@ local function transfer_inputs(in_slot, max_cnt)
 end
 
 local function transfer_outputs(in_slot, max_cnt)
-    local return_cnt = nil
+    local return_cnt = 0
+
+    local inv = hwif.me_out_chest_get_all()
+    for i=0, #inv do
+        if not (inv[0] and inv[0].label)then
+            return_cnt = hwif.C_me_move(in_slot, i, max_cnt)
+            break
+        end
+    end
     -- TODO: search for place to place the output till one apears
     -- TODO: transfer them there
     -- TODO: return the quantity transfered
@@ -120,8 +131,7 @@ local function move_recipe_items(recipe)
         end
     end
 
-    local stack = t.trans.getAllStacks(t.side)
-    local inv = stack.getAll()
+    local inv = hwif.me_in_chest_get_all()
     for i=0, #inv - 1 do
         local name = ih.get_name(inv[i])
         if required[name] and required[name] > 0.01 then
@@ -133,38 +143,29 @@ end
 
 local function move_outputs(recipe)
     -- Take from chest and move into the output chest
-    local required = {}
-    for i, v in ipairs(recipe.batch.outs) do
-        if v.as_liq then
-            required[ih.get_fluid_cell_name(v)] = v.cnt / v.msz
-        else
-            required[v.label] = v.cnt
-        end
-    end
 
-    local stack = t.trans.getAllStacks(t.side)
-    local inv = stack.getAll()
-    for i=0, #inv - 1 do
+    local inv = hwif.cchest_get_all()
+    for i=0, #inv - 1 - cchest_workspace_end do
         local name = ih.get_name(inv[i])
-        if required[name] and required[name] > 0.01 then
-            local cnt = transfer_inputs(i + 1, required[name])
-            required[name] = required[name] - cnt
+        local req_cnt = inv[i].size
+        while req_cnt > 0 do
+            local cnt = transfer_outputs(i + 1, required[name])
+            req_cnt = req_cnt - cnt
+            os.sleep(0.1)
         end
     end
 end
 
 local function craft_one_batch()
     local recipe = get_one_recipe()
-    th.tprint(h.table2str(recipe))
     if not recipe then
-        th.tprint("WARNING: recipe is unknown!!!!")
+        -- no recipe was found in the chest
+        return
     end
     move_recipe_items(recipe)
 
     -- TODO: remove
-    if true then
-        return
-    end
+    if true then return end
 
     local machine = hwc.prepare_machine(recipe.mach_id, recipe.mach_cfg, false)
     local inv = hwc.read_cchest()
@@ -191,7 +192,7 @@ local function main_crafter()
             add_crafting_recipe(recipe)
         elseif has_items_in_me_c or th.rs_chann.pending() then
             if has_items_in_me_c then
-                th.tprint(">> Redstone was up, will craft a recipe")
+                -- th.tprint(">> Redstone was up, will craft a recipe")
                 craft_one_batch()
             end
             if th.rs_chann.pending() then

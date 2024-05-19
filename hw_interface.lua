@@ -200,6 +200,10 @@ function hwif.me_c_move(src_slot, dst_slot, cnt)
     return t5.transferItem(s.east, s.west, cnt, src_slot, dst_slot)
 end
 
+function hwif.me_me_move(src_slot, dst_slot, cnt)
+    return t5.transferItem(s.east, s.south, cnt, src_slot, dst_slot)
+end
+
 function hwif.c_me_move(src_slot, dst_slot, cnt)
     return t5.transferItem(s.west, s.south, cnt, src_slot, dst_slot)
 end
