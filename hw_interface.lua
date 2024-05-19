@@ -197,19 +197,37 @@ function hwif.me_out_chest_get_all(slot)
 end
 
 function hwif.me_c_move(src_slot, dst_slot, cnt)
-    return t5.transferItem(s.east, s.west, cnt, src_slot, dst_slot)
+    if dst_slot then
+        return t5.transferItem(s.east, s.west, cnt, src_slot, dst_slot)
+    else
+        return t5.transferItem(s.east, s.west, cnt, src_slot)
+    end
 end
 
 function hwif.me_me_move(src_slot, dst_slot, cnt)
     return t5.transferItem(s.east, s.south, cnt, src_slot, dst_slot)
+    if dst_slot then
+        return t5.transferItem(s.east, s.south, cnt, src_slot, dst_slot)
+    else
+        return t5.transferItem(s.east, s.south, cnt, src_slot)
+    end
 end
 
 function hwif.c_me_move(src_slot, dst_slot, cnt)
-    return t5.transferItem(s.west, s.south, cnt, src_slot, dst_slot)
+    if dst_slot then
+        return t5.transferItem(s.west, s.south, cnt, src_slot, dst_slot)
+    else
+        return t5.transferItem(s.west, s.south, cnt, src_slot)
+    end
 end
 
 function hwif.cchest_move(src_slot, dst_slot, cnt)
-    return t1.transferItem(s.south, s.south, cnt, src_slot, dst_slot)
+    return 
+    if dst_slot then
+        return t1.transferItem(s.south, s.south, cnt, src_slot, dst_slot)
+    else
+        return t1.transferItem(s.south, s.south, cnt, src_slot)
+    end
 end
 
 return hwif
