@@ -36,15 +36,15 @@ hwif.machines = {
 -- fsolidifier
 
 hwif.machine_io = {
-    {inputs={6},                              cfg=6,   outs={8},    lin=nil, lout=nil, name="distillery"},      -- ???
-    {inputs={6},                              cfg=7,   outs={8},    lin=nil, lout=nil, name="chembath"},        -- ???
-    {inputs={6, 7},                           cfg=7,   outs={8, 9}, lin=10,  lout=3,   name="chem_reactor"},
-    {inputs={6, 7, 8, 9, 10, 11, 12, 13, 14}, cfg=14,  outs={15},   lin=16,  lout=15,  name="assembler"},
-    {inputs={6},                              cfg=7,   outs={8},    lin=nil, lout=nil, name="electrolyzer"},    -- ???
-    {inputs={6},                              cfg=nil, outs={7},    lin=3,   lout=8,   name="canner"},
-    {inputs={6, 7, 8, 9, 10, 11},             cfg=11,  outs={12},   lin=13,  lout=nil, name="fextractor"},      -- ???
-    {inputs={6},                              cfg=7,   outs={8, 9}, lin=nil, lout=nil, name="mixer"},           -- ???
-    {inputs={6},                              cfg=7,   outs={8},    lin=nil, lout=nil, name="fsolidifier"},     -- ???
+    {inputs={6},                              cfg=6,   outs={7},                    name="distillery"},
+    {inputs={6},                              cfg=6,   outs={7, 8, 9},              name="chembath"},
+    {inputs={6, 7},                           cfg=7,   outs={8, 9},                 name="chem_reactor"},
+    {inputs={6, 7, 8, 9, 10, 11, 12, 13, 14}, cfg=14,  outs={15},                   name="assembler"},
+    {inputs={6, 7},                           cfg=7,   outs={8, 9, 10, 11, 12, 13}, name="electrolyzer"},
+    {inputs={6},                              cfg=nil, outs={7},                    name="canner"},
+    {inputs={6},                              cfg=6,   outs={7},                    name="fextractor"},
+    {inputs={6, 7, 8, 9, 10, 11},             cfg=11,  outs={8, 9, 10, 11},         name="mixer"},
+    {inputs={6},                              cfg=6,   outs={7},                    name="fsolidifier"},
 }
 
 hwif.alarm = { s = s.west, n = 8 }
