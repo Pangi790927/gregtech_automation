@@ -239,7 +239,7 @@ function hwc.transfer_cell2liq(cchest_in, cchest_out, target_mach, cell_cnt)
     end
 end
 
-function hwc.transfer_liq2cell(source_mach, cchest_in, cchest_out, cell_cnt)
+function hwc.transfer_liq2cell(source_mach, cchest_in, cell_cnt)
     local mcann = hwif.machines.canner
     if mcann.trans.transferItem(mcann.cside, mcann.side, cell_cnt,
             cchest_in, hwif.machine_io[mcann.id].inputs[1]) ~= cell_cnt
@@ -250,7 +250,7 @@ function hwc.transfer_liq2cell(source_mach, cchest_in, cchest_out, cell_cnt)
     hwif.rs_set(source_mach.trans.liq_out)
     wait_ammount(mcann, hwif.machine_io[mcann.id].outs[1], cell_cnt)
     if mcann.trans.transferItem(mcann.side, mcann.cside, cell_cnt,
-            hwif.machine_io[mcann.id].outs[1], cchest_out) ~= cell_cnt
+            hwif.machine_io[mcann.id].outs[1]) ~= cell_cnt
     then
         critical_message("Failed machine filled cell transfer 1")
     end
@@ -425,21 +425,9 @@ function collect_batch(inv, machine, batch, sim_mode)
                 print("Failed to get enaugh empty cells")
                 return false
             end
-            local cell_dst = nil
-            for j = 1, cchest_workspace_end do
-                if inv[j] == nil then
-                    cell_dst = j
-                    break
-                end
-            end
-            if cell_dst == nil then
-                print("Failed to get enaugh space for resulting cells")
-                return false
-            end
             inv[cell_src].size = inv[cell_src].size - cell_cnt
-            -- TODO: inv[cell_dst] = 
             if not sim_mode then
-                hwc.transfer_liq2cell(machine, cell_src, cell_dst, cell_cnt)
+                hwc.transfer_liq2cell(machine, cell_src, cell_cnt)
             end
         end
     end
