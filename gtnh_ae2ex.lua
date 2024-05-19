@@ -140,9 +140,15 @@ local function craft_one_batch()
 
     local machine = hwc.prepare_machine(recipe.mach_id, recipe.mach_cfg, false)
     local inv = hwc.read_cchest()
-    craft_batch(inv, machine, recipe.batch, false)
-    wait_batch(inv, machine, recipe.batch, false)
-    collect_batch(inv, machine, recipe.batch, false)
+    if not craft_batch(inv, machine, recipe.batch, false) then
+        th.tprint("ERROR: FAILED CRAFT STAGE")
+    end
+    if not wait_batch(inv, machine, recipe.batch, false) then
+        th.tprint("ERROR: FAILED WAIT STAGE")
+    end
+    if not collect_batch(inv, machine, recipe.batch, false) then
+        th.tprint("ERROR: FAILED COLLECT STAGE")
+    end
 
     if true then return end
 

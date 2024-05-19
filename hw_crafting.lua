@@ -316,6 +316,7 @@ function craft_batch(inv, machine, batch, sim_mode)
     for i = 1, cchest_workspace_end do
         for k, v in pairs(cbatch.inputs) do
             if k == ih.get_name(inv[i]) and v.cnt >= 1 then
+                print("transfering: " .. k)
                 local to_transfer, cslot = inv_transfer_cnt(inv, i, v.cnt, v.as_liq)
                 if to_transfer == 0 then
                     return false
