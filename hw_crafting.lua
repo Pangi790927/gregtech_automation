@@ -374,6 +374,7 @@ function wait_batch(inv, machine, batch, sim_mode)
         end
         os.sleep(1)
     end
+    return true
 end
 
 function collect_batch(inv, machine, batch, sim_mode)
@@ -427,63 +428,22 @@ function collect_batch(inv, machine, batch, sim_mode)
             if not sim_mode then
                 hwc.transfer_liq2cell(machine, cell_src, cell_dst, cell_cnt)
             end
-        else
-            local src_slot = nil
-            if not sim_mode then
-                local out_slots = hwif.machine_io[machine.id].outs
-                for j = 1, #out_slots do
-                    local res_item = machine.trans.getStackInSlot(machine.side, out_slots[j])
-                    if res_item and ih.get_name(res_item) == item.label then
-                        src_slot = out_slots[j]
-                        break
-                    end
-                end
-                if not src_slot then
-                    critical_message("expected output not found in machine output")
-                end
-            end
+        end
+    end
 
-            local to_move = item.cnt
-            local msz = 0
-            for j = 1, cchest_workspace_end do
-                if ih.get_name(inv[j]) == item.label then
-                    local to_transfer = 0
-                    msz = inv[j].maxSize
-                    if to_move + inv[j].size <= msz then
-                        inv[j].size = inv[j].size + to_move
-                        to_transfer = to_move
-                        to_move = 0
-                    else
-                        to_move = to_move + inv[j].size - msz
-                        to_transfer = msz - inv[j].size
-                        inv[j].size = msz
-                    end
-                    if not sim_mode then
-                        hwc.transfer_mach2item(machine, src_slot, j, to_transfer)
-                    end
-                end
-            end
-            if to_move > 0 then
-                for j = 1, cchest_workspace_end do
-                    if inv[j] == nil then
-                        if not sim_mode then
-                            local tmpitem = machine.trans.getStackInSlot(machine.side, src_slot)
-                            msz = tmpitem.maxSize
-                        end
-                        inv[j] = {
-                            label = item.label,
-                            maxSize = msz,
-                            size = to_move
-                        }
-                        if not sim_mode then
-                            hwc.transfer_mach2item(machine, src_slot, j, to_move)
-                        end
-                        break
-                    end
-                end
+    local out_slots = hwif.machine_io[machine.id].outs
+    for j = 1, #out_slots do
+        local res_item = machine.trans.getStackInSlot(machine.side, out_slots[j])
+        if res_item then
+            if machine.trans.transferItem(machine.side, machine.cside, res_item.size,
+                    out_slots[j]) ~= res_item.size
+            then
+                critical_message("Failed machine filled cell transfer")
             end
         end
     end
+
+    return true
 end
 
 function hwc.prepare_machine(mach_id, mach_cfg, sim_mode)

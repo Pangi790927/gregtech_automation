@@ -94,7 +94,7 @@ local function move_recipe_items(recipe)
     local required = {}
     for k, v in pairs(recipe.batch.inputs) do
         if v.as_liq then
-            required[ih.get_fluid_cell_name({label=k})] = v.cnt / v.msz
+            required[ih.get_fluid_cell_name({label=k})] = v.cnt
         else
             required[k] = v.cnt
         end
@@ -142,15 +142,16 @@ local function craft_one_batch()
     local inv = hwc.read_cchest()
     if not craft_batch(inv, machine, recipe.batch, false) then
         th.tprint("ERROR: FAILED CRAFT STAGE")
+        return
     end
     if not wait_batch(inv, machine, recipe.batch, false) then
         th.tprint("ERROR: FAILED WAIT STAGE")
+        return
     end
     if not collect_batch(inv, machine, recipe.batch, false) then
         th.tprint("ERROR: FAILED COLLECT STAGE")
+        return
     end
-
-    if true then return end
 
     move_outputs()
 end
@@ -253,9 +254,11 @@ local function read_recipe()
     -- read the output liquid
     local liqout_cell_name = nil
     local liqout_msz = nil
+    local liqout_cnt = nil
     if liq_out then
         liqout_cell_name = ih.get_name(liq_out)
         liqout_msz = liq_out.amount
+        liqout_cnt = liq_out.size
     end
 
     -- read the machine id
@@ -294,11 +297,22 @@ local function read_recipe()
         th.tprint("machine_cfg: " .. config_id)
     end
 
+    if liq_out then
+        local liq_cnt = liqout_msz * liqout_cnt
+        table.insert(recipe.batch.outs, {
+            label = liqout_cell_name,
+            msz = liqout_msz,
+            cnt = liqout_cnt,
+            liq_cnt = liq_cnt,
+            as_liq = true
+        })
+        th.tprint("OUT liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqout_msz)
+    end
+
     for i, v in ipairs(pattern.inputs) do
         if v.name and (ih.name_format(v.name) == liqin_cell_name) then
             -- this is the input liquid
-            local liq_name = ih.get_cell_label_fluid_name(ih.name_format(v.name))
-            recipe.batch.inputs[liq_name] = {
+            recipe.batch.inputs[liqin_cell_name] = {
                 msz = liqin_msz,
                 cnt = v.count,
                 as_liq = true
@@ -321,17 +335,7 @@ local function read_recipe()
 
     for i, v in ipairs(pattern.outputs) do
         if v.name and (ih.name_format(v.name) == liqout_cell_name) then
-            -- this is the input liquid
-            local liq_name = ih.get_cell_label_fluid_name(ih.name_format(v.name))
-            local liq_cnt = liqout_msz * v.count
-            table.insert(recipe.batch.outs, {
-                label = liq_name,
-                msz = liqout_msz,
-                cnt = v.count,
-                liq_cnt = liq_cnt,
-                as_liq = true
-            })
-            th.tprint("OUT liqname: " .. liq_name .. " cnt " .. liq_cnt .. " msz " .. liqout_msz)
+            -- liquid out is added whenever liquid is specified
         elseif v.name then
             -- this is an item
             -- TODO: verify if items need msz, if so, bad luck
