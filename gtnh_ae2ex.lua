@@ -138,13 +138,15 @@ local function move_outputs(recipe)
     end
 end
 
+local except_table = {
+    ["programed_circuit"] = {},
+    ["mold_(ingot)"] = {},
+    ["mold_(plate)"] = {}
+}
 local function is_empty_machine(machine)
-    if not machine then
-        return true
-    end
     local all_slots = machine.trans.getAllStacks(machine.side).getAll()
     for i, v in ipairs(all_slots) do
-        if v and v.label then
+        if v and v.label and (not except_table[ih.get_name(v)]) then
             return false
         end
     end

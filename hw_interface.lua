@@ -144,7 +144,7 @@ function hwif.rs_me_read()
 end
 
 function hwif.reset_machine(m)
-    if m.brk then
+    if not m.brk then
         return
     end
     hwif.rs_toggle(m.brk)
