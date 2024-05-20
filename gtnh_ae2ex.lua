@@ -242,6 +242,14 @@ local function main_crafter()
     end
 end
 
+local function get_msz_of_liq(liq)
+    if ih.get_name(liq) == "water_cell" then
+        return 1000
+    else
+        return liq_in.amount
+    end
+end
+
 local function read_recipe()
     local pattern = hwif.rchest_get(pattern_slot)
     local machine = hwif.rchest_get(machine_slot)
@@ -296,7 +304,7 @@ local function read_recipe()
     local liqin_msz = nil
     if liq_in then
         liqin_cell_name = ih.get_name(liq_in)
-        liqin_msz = liq_in.amount
+        liqin_msz = get_msz_of_liq(liq_in)
     end
 
     -- read the output liquid
@@ -305,7 +313,7 @@ local function read_recipe()
     local liqout_cnt = nil
     if liq_out then
         liqout_cell_name = ih.get_name(liq_out)
-        liqout_msz = liq_out.amount
+        liqout_msz = get_msz_of_liq(liq_out)
         liqout_cnt = liq_out.size
     end
 
