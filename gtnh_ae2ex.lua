@@ -167,6 +167,10 @@ local function craft_one_batch()
     move_recipe_items(recipe)
 
     local machine
+    th.tprint(": last_mach_id     " .. tostring(last_mach_id) .. "  mach_id  " .. tostring(recipe.mach_id))
+    th.tprint(": last_mach_cfg    " .. tostring(last_mach_cfg) .. " mach_cfg " .. tostring(recipe.mach_cfg))
+    th.tprint(": last_mach        " .. tostring(last_mach))
+    th.tprint(": is_empty_machine " .. tostring(is_empty_machine(last_mach)))
     if not ((last_mach_id == recipe.mach_id) and (last_mach_cfg == recipe.mach_cfg)
             and last_mach and is_empty_machine(last_mach))
     then
