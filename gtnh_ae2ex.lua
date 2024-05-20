@@ -139,13 +139,16 @@ local function move_outputs(recipe)
 end
 
 local except_table = {
-    ["programed_circuit"] = {},
+    ["programmed_circuit"] = {},
     ["mold_(ingot)"] = {},
     ["mold_(plate)"] = {}
 }
 local function is_empty_machine(machine)
     local all_slots = machine.trans.getAllStacks(machine.side).getAll()
     for i, v in ipairs(all_slots) do
+        if v and v.label then
+            th.tprint("empty_name: " .. ih.get_name(v))
+        end
         if v and v.label and (not except_table[ih.get_name(v)]) then
             return false
         end
@@ -167,10 +170,10 @@ local function craft_one_batch()
     move_recipe_items(recipe)
 
     local machine
-    th.tprint(": last_mach_id     " .. tostring(last_mach_id) .. "  mach_id  " .. tostring(recipe.mach_id))
+    th.tprint(": last_mach_id     " .. tostring(last_mach_id) .. " mach_id  " .. tostring(recipe.mach_id))
     th.tprint(": last_mach_cfg    " .. tostring(last_mach_cfg) .. " mach_cfg " .. tostring(recipe.mach_cfg))
     th.tprint(": last_mach        " .. tostring(last_mach))
-    th.tprint(": is_empty_machine " .. tostring(is_empty_machine(last_mach)))
+    th.tprint(": is_empty_machine " .. tostring(last_mach and is_empty_machine(last_mach)))
     if not ((last_mach_id == recipe.mach_id) and (last_mach_cfg == recipe.mach_cfg)
             and last_mach and is_empty_machine(last_mach))
     then
@@ -180,6 +183,9 @@ local function craft_one_batch()
         last_mach_cfg = recipe.mach_cfg
     else
         machine = last_mach
+    end
+    if last_mach and last_mach ~= machine then
+        hwif.reset_machine(last_mach)
     end
     local inv = hwc.read_cchest()
     if not craft_batch(inv, machine, recipe.batch, false) then
