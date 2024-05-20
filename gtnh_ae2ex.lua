@@ -168,7 +168,7 @@ local function craft_one_batch()
 
     local machine
     if not ((last_mach_id == recipe.mach_id) and (last_mach_cfg == recipe.mach_cfg)
-            and machine and is_empty_machine(machine))
+            and last_mach and is_empty_machine(last_mach))
     then
         machine = hwc.prepare_machine(recipe.mach_id, recipe.mach_cfg, false)
         last_mach = machine
