@@ -57,4 +57,12 @@ function item_helper.count(item)
 	return item.size
 end
 
+function item_helper.get_msz_of_liq(liq)
+    if ih.get_name(liq) == "water_cell" then
+        return 1000
+    else
+        return liq.amount
+    end
+end
+
 return item_helper

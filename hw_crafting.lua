@@ -214,7 +214,7 @@ end
 -- cchest_out -> slot to store empty cells to
 function hwc.transfer_cell2liq(cchest_in, cchest_out, target_mach, cell_cnt)
     local mcann = hwif.machines.canner
-    local expetect_liq = cell_cnt * hwif.cchest_get(cchest_in).amount
+    local expetect_liq = cell_cnt * ih.get_msz_of_liq(hwif.cchest_get(cchest_in)).amount
     if mcann.trans.transferItem(mcann.cside, mcann.side, cell_cnt,
             cchest_in, hwif.machine_io[mcann.id].inputs[1]) ~= cell_cnt
     then
