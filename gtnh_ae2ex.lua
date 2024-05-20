@@ -107,6 +107,9 @@ local function move_recipe_items(recipe)
     for k, v in pairs(recipe.batch.inputs) do
         required[k] = v.cnt
     end
+    if recipe.extra_cells then
+        required["empty_cell"] = recipe.extra_cells
+    end
 
     local inv = hwif.me_in_chest_get_all()
     for i=0, #inv - 1 do
@@ -373,7 +376,9 @@ local function read_recipe()
     end
 
     for i, v in ipairs(pattern.inputs) do
-        if v.name and (ih.name_format(v.name) == liqin_cell_name) then
+        if i == 8 and v.name and (ih.name_format(v.name) == "empty_cell") then
+            recipe.extra_cells = v.count
+        elseif v.name and (ih.name_format(v.name) == liqin_cell_name) then
             -- this is the input liquid
             recipe.batch.inputs[liqin_cell_name] = {
                 msz = liqin_msz,
