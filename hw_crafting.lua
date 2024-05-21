@@ -442,9 +442,9 @@ function hwc.prepare_machine(mach_id, mach_cfg, sim_mode)
         local cfg_slot = hwif.craft_info[mach_id].cfg
         local mach_io = hwif.machine_io[machine.id]
 
+        hwif.reset_machine(machine)
+        os.sleep(1)
         if cfg_slot and mach_cfg then
-            hwif.reset_machine(machine)
-            os.sleep(1)
             if not mach_io.cfg then
                 critical_message("machine config required where no config possible")
             end

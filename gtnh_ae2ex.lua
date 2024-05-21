@@ -372,12 +372,13 @@ local function read_recipe()
             liq_cnt = liq_cnt,
             as_liq = true
         })
-        th.tprint("OUT liqname: " .. liqout_cell_name .. " cnt " .. liq_cnt .. " msz " .. liqout_msz)
+        th.tprint("OUT liqname: " .. liqout_cell_name .. " cnt " .. liqout_cnt .. " msz " .. liqout_msz)
     end
 
     for i, v in ipairs(pattern.inputs) do
         if i == 8 and v.name and (ih.name_format(v.name) == "empty_cell") then
             recipe.extra_cells = v.count
+            th.tprint("Extra cells: " .. v.count)
         elseif v.name and (ih.name_format(v.name) == liqin_cell_name) then
             -- this is the input liquid
             recipe.batch.inputs[liqin_cell_name] = {
