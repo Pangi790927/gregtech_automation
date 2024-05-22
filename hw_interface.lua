@@ -63,10 +63,14 @@ t3.liq_in = { s = s.south, n = 4 }
 hwif.cchest_free_slots = 12*6
 
 hwif.cchest_lens_slot = 73
-hwif.cchest_pannels_slot = 77
+hwif.cchest_titank_slot = 77
 hwif.cchest_cells_slot = 78
 hwif.cchest_circuits_slot = 81
 hwif.cchest_solidif_slot = 97
+
+hwif.me_trans = t5
+hwif.titank_side = s.up
+hwif.titank_cside = s.west
 
 hwif.craft_info = {
     { mach_name="distillery",   cfg=hwif.cchest_circuits_slot, cfg_num=16 },

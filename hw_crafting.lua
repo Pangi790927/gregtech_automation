@@ -14,7 +14,7 @@ function critical_message(msg)
     hwif.rs_set(hwif.alarm)
     print("You must manually close the pc to repair the crafter")
     while true do
-        os.sleep(1)
+        os.sleep(0.1)
     end
 end
 
@@ -206,7 +206,7 @@ function wait_ammount(mach, slot, ammount)
         elseif item and item.size > ammount then
             critical_message("wait_ammount: too many results")
         end
-        os.sleep(1)
+        os.sleep(0.1)
     end
 end
 
@@ -220,17 +220,22 @@ function hwc.transfer_cell2liq(cchest_in, cchest_out, target_mach, cell_cnt)
     then
         critical_message("Failed machine cell transfer 1")
     end
-    hwif.rs_set(target_mach.trans.liq_in)
+    -- hwif.rs_set(target_mach.trans.liq_in)
     while true do
+        mcann.trans.transferFluid(mcann.side, s.down)
+        mcann.trans.transferFluidFromTankToContainer(
+                s.down, mcann.cside. hwif.cchest_titank_slot)
+        target_mach.trans.transferFluidFromContainerToTank(
+                target_mach.cside, hwif.cchest_titank_slot, s.down)
         local liq_cnt = target_mach.trans.getTankLevel(s.down)
         if liq_cnt == expetect_liq then
             break
         elseif liq_cnt > expetect_liq then
             critical_message("More liquid than expected from cells")
         end
-        os.sleep(1)
+        os.sleep(0.1)
     end
-    hwif.rs_reset(target_mach.trans.liq_in)
+    -- hwif.rs_reset(target_mach.trans.liq_in)
     target_mach.trans.transferFluid(s.down, target_mach.side, expetect_liq)
     if mcann.trans.transferItem(mcann.side, mcann.cside, cell_cnt,
             hwif.machine_io[mcann.id].outs[1], cchest_out) ~= cell_cnt
@@ -239,22 +244,36 @@ function hwc.transfer_cell2liq(cchest_in, cchest_out, target_mach, cell_cnt)
     end
 end
 
-function hwc.transfer_liq2cell(source_mach, cchest_in, cell_cnt)
+function hwc.transfer_liq2cell(source_mach, cchest_in, cell_cnt, liq_msz)
     local mcann = hwif.machines.canner
     if mcann.trans.transferItem(mcann.cside, mcann.side, cell_cnt,
             cchest_in, hwif.machine_io[mcann.id].inputs[1]) ~= cell_cnt
     then
         critical_message("Failed machine empty cell transfer")
     end
-    source_mach.trans.transferFluid(source_mach.side, s.down, max_machine_liters)
-    hwif.rs_set(source_mach.trans.liq_out)
+
+    -- trabsfer the required ammount to canner
+    source_mach.trans.transferFluid(source_mach.side, s.down, max_machine_liters)       -- to source tank
+    source_mach.trans.transferFluidFromTankToContainer(
+            s.down, source_mach.cside, hwif.cchest_titank_slot, cell_cnt * liq_msz)     -- from target tank to container
+    mcann.trans.transferFluidFromContainerToTank(
+            s.down, hwif.cchest_titank_slot, mcann.side, cell_cnt * liq_msz)            -- from container to mcann tank
+    mcann.trans.transferFluid(s.down, mcann.side, max_machine_liters)                   -- to mcann
+
+    -- transfer the additional ammount out
+    source_mach.trans.transferFluidFromTankToContainer(
+            s.down, source_mach.cside, hwif.cchest_titank_slot)                         -- from source tank to container
+    hwif.me_trans.transferFluidFromContainerToTank(
+            hwif.titank_cside, hwif.cchest_titank_slot, hwif.titank_side)               -- from container to ME
+
+    -- hwif.rs_set(source_mach.trans.liq_out)
     wait_ammount(mcann, hwif.machine_io[mcann.id].outs[1], cell_cnt)
     if mcann.trans.transferItem(mcann.side, mcann.cside, cell_cnt,
             hwif.machine_io[mcann.id].outs[1]) ~= cell_cnt
     then
         critical_message("Failed machine filled cell transfer 1")
     end
-    hwif.rs_reset(source_mach.trans.liq_out)
+    -- hwif.rs_reset(source_mach.trans.liq_out)
 end
 
 function hwc.transfer_item2mach(cchest_slot, target_mach, item_cnt)
@@ -372,7 +391,7 @@ function wait_batch(inv, machine, batch, sim_mode)
                 end
             end
         end
-        os.sleep(1)
+        os.sleep(0.1)
     end
     return true
 end
@@ -427,7 +446,7 @@ function collect_batch(inv, machine, batch, sim_mode)
             end
             inv[cell_src].size = inv[cell_src].size - cell_cnt
             if not sim_mode then
-                hwc.transfer_liq2cell(machine, cell_src, cell_cnt)
+                hwc.transfer_liq2cell(machine, cell_src, cell_cnt, item.msz)
             end
         end
     end
@@ -443,7 +462,7 @@ function hwc.prepare_machine(mach_id, mach_cfg, sim_mode)
         local mach_io = hwif.machine_io[machine.id]
 
         hwif.reset_machine(machine)
-        os.sleep(1)
+        os.sleep(0.1)
         if cfg_slot and mach_cfg then
             if not mach_io.cfg then
                 critical_message("machine config required where no config possible")
@@ -454,7 +473,7 @@ function hwc.prepare_machine(mach_id, mach_cfg, sim_mode)
                 critical_message("Failed machine cfg")
             end
         end
-        os.sleep(1)
+        os.sleep(0.1)
     end
     return machine
 end
