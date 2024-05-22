@@ -257,7 +257,7 @@ function hwc.transfer_liq2cell(source_mach, cchest_in, cell_cnt, liq_msz)
     source_mach.trans.transferFluidFromTankToContainer(
             s.down, source_mach.cside, hwif.cchest_titank_slot, cell_cnt * liq_msz)             -- from target tank to container
     mcann.trans.transferFluidFromContainerToTank(
-            s.down, hwif.cchest_titank_slot, mcann.side, max_machine_liters)                    -- from container to mcann tank
+            mcann.cside, hwif.cchest_titank_slot, s.down, max_machine_liters)                   -- from container to mcann tank
     mcann.trans.transferFluid(s.down, mcann.side, max_machine_liters)                           -- to mcann
 
     -- transfer the additional ammount out
@@ -382,11 +382,9 @@ function wait_batch(inv, machine, batch, sim_mode)
                 local out_slots = hwif.machine_io[machine.id].outs
                 for j = 1, #out_slots do
                     local res = machine.trans.getStackInSlot(machine.side, out_slots[j])
-                    if ih.get_name(res) == item.label and res.size == item.cnt then
+                    if ih.get_name(res) == item.label and res.size >= item.cnt then
                         done = true
                         break
-                    elseif ih.get_name(res) == item.label and res.size > item.cnt then
-                        critical_message("More item than expected in out slot")
                     end
                 end
             end
