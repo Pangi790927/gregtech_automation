@@ -187,7 +187,7 @@ local function craft_one_batch()
     else
         machine = last_mach
     end
-    if last_mach and last_mach ~= machine then
+    if last_mach and last_mach_id ~= recipe.mach_id then
         hwif.reset_machine(last_mach)
     end
     local inv = hwc.read_cchest()
