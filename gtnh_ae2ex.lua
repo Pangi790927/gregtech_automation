@@ -360,7 +360,7 @@ local function read_recipe()
         if machine_id == hwif.machines.fsolidifier.id then
             config_id = solidif_name2id[config.label]
         else
-            config_id = config.damage
+            config_id = circ_dmg2id[config.damage]
         end
         if not config_id then
             th.tprint("You must use a programed_circuit/mold in the config slot")
