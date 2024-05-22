@@ -222,11 +222,11 @@ function hwc.transfer_cell2liq(cchest_in, cchest_out, target_mach, cell_cnt)
     end
     -- hwif.rs_set(target_mach.trans.liq_in)
     while true do
-        mcann.trans.transferFluid(mcann.side, s.down)
+        mcann.trans.transferFluid(mcann.side, s.down, max_machine_liters)
         mcann.trans.transferFluidFromTankToContainer(
-                s.down, mcann.cside. hwif.cchest_titank_slot)
+                s.down, mcann.cside, hwif.cchest_titank_slot, max_machine_liters)
         target_mach.trans.transferFluidFromContainerToTank(
-                target_mach.cside, hwif.cchest_titank_slot, s.down)
+                target_mach.cside, hwif.cchest_titank_slot, s.down, max_machine_liters)
         local liq_cnt = target_mach.trans.getTankLevel(s.down)
         if liq_cnt == expetect_liq then
             break
@@ -253,18 +253,18 @@ function hwc.transfer_liq2cell(source_mach, cchest_in, cell_cnt, liq_msz)
     end
 
     -- trabsfer the required ammount to canner
-    source_mach.trans.transferFluid(source_mach.side, s.down, max_machine_liters)       -- to source tank
+    source_mach.trans.transferFluid(source_mach.side, s.down, max_machine_liters)               -- to source tank
     source_mach.trans.transferFluidFromTankToContainer(
-            s.down, source_mach.cside, hwif.cchest_titank_slot, cell_cnt * liq_msz)     -- from target tank to container
+            s.down, source_mach.cside, hwif.cchest_titank_slot, cell_cnt * liq_msz)             -- from target tank to container
     mcann.trans.transferFluidFromContainerToTank(
-            s.down, hwif.cchest_titank_slot, mcann.side, cell_cnt * liq_msz)            -- from container to mcann tank
-    mcann.trans.transferFluid(s.down, mcann.side, max_machine_liters)                   -- to mcann
+            s.down, hwif.cchest_titank_slot, mcann.side, max_machine_liters)                    -- from container to mcann tank
+    mcann.trans.transferFluid(s.down, mcann.side, max_machine_liters)                           -- to mcann
 
     -- transfer the additional ammount out
     source_mach.trans.transferFluidFromTankToContainer(
-            s.down, source_mach.cside, hwif.cchest_titank_slot)                         -- from source tank to container
+            s.down, source_mach.cside, hwif.cchest_titank_slot, max_machine_liters)             -- from source tank to container
     hwif.me_trans.transferFluidFromContainerToTank(
-            hwif.titank_cside, hwif.cchest_titank_slot, hwif.titank_side)               -- from container to ME
+            hwif.titank_cside, hwif.cchest_titank_slot, hwif.titank_side, max_machine_liters)   -- from container to ME
 
     -- hwif.rs_set(source_mach.trans.liq_out)
     wait_ammount(mcann, hwif.machine_io[mcann.id].outs[1], cell_cnt)
