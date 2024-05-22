@@ -335,6 +335,24 @@ local function read_recipe()
         ["Mold (Ingot)"] = 1,
         ["Mold (Plate)"] = 2,
     }
+    local circ_dmg2id = {
+        [1] = 1,
+        [2] = 2,
+        [3] = 3,
+        [4] = 4,
+        [5] = 5,
+        [6] = 6,
+        [7] = 7,
+        [8] = 8,
+        [9] = 9,
+        [10] = 10,
+        [11] = 11,
+        [12] = 12,
+        [16] = 13,
+        [19] = 14,
+        [21] = 15,
+        [24] = 16,
+    }
     -- read the machine config
     local config_id = nil
     if config then
