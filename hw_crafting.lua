@@ -372,11 +372,9 @@ function wait_batch(inv, machine, batch, sim_mode)
             local item = batch.outs[i]
             if item.as_liq == true then
                 local liq_ammount = machine.trans.getTankLevel(machine.side, 2)
-                if liq_ammount == item.liq_cnt then
+                if liq_ammount >= item.liq_cnt then
                     done = true
                     break
-                elseif liq_ammount > item.liq_cnt then
-                    critical_message("More liquid than expected in out slot")
                 end
             else
                 local out_slots = hwif.machine_io[machine.id].outs
@@ -385,6 +383,8 @@ function wait_batch(inv, machine, batch, sim_mode)
                     if ih.get_name(res) == item.label and res.size >= item.cnt then
                         done = true
                         break
+                    elseif ih.get_name(res) == item.label and res.size > item.cnt then
+                        critical_message("More item than expected in out slot")
                     end
                 end
             end
