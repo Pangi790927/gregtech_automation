@@ -43,7 +43,7 @@ hwif.machine_io = {
     {inputs={6, 7},                           cfg=7,   outs={8, 9, 10, 11, 12, 13}, name="electrolyzer"},
     {inputs={6},                              cfg=nil, outs={7},                    name="canner"},
     {inputs={6},                              cfg=6,   outs={7},                    name="fextractor"},
-    {inputs={6, 7, 8, 9, 10, 11},             cfg=11,  outs={8, 9, 10, 11},         name="mixer"},
+    {inputs={6, 7, 8, 9, 10, 11},             cfg=11,  outs={12, 13, 14, 15},       name="mixer"},
     {inputs={6},                              cfg=6,   outs={7},                    name="fsolidifier"},
 }
 
