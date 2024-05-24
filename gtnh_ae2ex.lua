@@ -56,13 +56,17 @@ local function add_crafting_recipe(registration)
     cf:close()
 end
 
+local function has_recipe_name(str)
+    return (string.sub(str, 1, string.len("recipe_")) == "recipe_")
+end
+
 local function get_recipe_name(item)
-    if item then
+    if item and item.label then
         local label = ih.get_name(item)
         if label and (label == "inscriber_name_press") then
             local outpattern = {}
             deflate.gunzip({
-                input = inv[i].tag,
+                input = item.tag,
                 output = function(byte)
                     outpattern[#outpattern+1] = string.char(byte)
                 end,
@@ -75,8 +79,7 @@ local function get_recipe_name(item)
                 return true, recipe_name
             end
         end
-        if label and (string.sub(label,1,string.len("recipe_")) == "recipe_")
-                and item.name="minecraft:stick"
+        if label and has_recipe_name(label) and item.name == "minecraft:stick"
         then
             return true, label
         end
@@ -284,19 +287,18 @@ local function read_recipe()
     -- Find the uid of the recipe
     local uid = nil
     local outpattern = {}
-    deflate.gunzip({
-        input = pattern.tag,
-        output = function(byte)
-            outpattern[#outpattern+1] = string.char(byte)
-        end,
-        disable_crc = true
-    })
+    deflate.gunzip({input = pattern.tag, output = function(byte) outpattern[#outpattern+1] = string.char(byte) end, disable_crc = true })
     local r = nbt.readFromNBT(outpattern)
     
     for i, v in ipairs(r["in"]) do
         if v.tag then
             if v.tag.InscribeName then
                 uid = v.tag.InscribeName
+                break
+            end
+            if v.tag.display and v.tag.display.Name and has_recipe_name(v.tag.display.Name) then
+                uid = v.tag.display.Name
+                break
             end
         end
     end
