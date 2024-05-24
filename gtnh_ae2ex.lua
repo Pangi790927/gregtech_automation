@@ -56,23 +56,10 @@ local function add_crafting_recipe(registration)
     cf:close()
 end
 
-local function get_one_recipe()
-    -- cchest_get_all
-    -- me_in_chest_get
-    -- me_in_chest_get_all
-    -- me_out_chest_get
-    -- me_out_chest_get_all
-    -- me_c_move
-    -- c_me_move
-
-    local inv = hwif.me_in_chest_get_all()
-    for i=0, #inv - 1 do
-        local name
-        if inv[i] and inv[i].label then
-            name = ih.get_name(inv[i])
-        end
-        if name and (name == "inscriber_name_press") then
-            -- get recipe name
+local function get_recipe_name(item)
+    if item then
+        local label = ih.get_name(item)
+        if label and (label == "inscriber_name_press") then
             local outpattern = {}
             deflate.gunzip({
                 input = inv[i].tag,
@@ -85,13 +72,36 @@ local function get_one_recipe()
             local recipe_name = nil
             if r and r.InscribeName then
                 recipe_name = r.InscribeName
+                return true, recipe_name
             end
-            -- transfer one recipe label at output
+        end
+        if label and (string.sub(label,1,string.len("recipe_")) == "recipe_")
+                and item.name="minecraft:stick"
+        then
+            return true, label
+        end
+    end
+    return false, nil
+end
+
+local function get_one_recipe()
+    -- cchest_get_all
+    -- me_in_chest_get
+    -- me_in_chest_get_all
+    -- me_out_chest_get
+    -- me_out_chest_get_all
+    -- me_c_move
+    -- c_me_move
+
+    local inv = hwif.me_in_chest_get_all()
+    for i=0, #inv - 1 do
+        local is_recipe_name, recipe_name = get_recipe_name(inv[i])
+        if is_recipe_name then
             while hwif.me_me_move(i+1, 1, 1) ~= 1 do
                 th.tprint("Output chest is not empty...")
                 os.sleep(1)
             end
-            -- return recipe:
+
             th.tprint("Found valid recipe: " .. recipe_name)
             return crafts[recipe_name]
         end
@@ -146,13 +156,13 @@ local except_table = {
     ["mold_(ingot)"] = {},
     ["mold_(plate)"] = {}
 }
-local function is_empty_machine(machine)
+local function is_empty_machine(machine, include_circ)
     local all_slots = machine.trans.getAllStacks(machine.side).getAll()
     for i, v in ipairs(all_slots) do
         if v and v.label then
             th.tprint("empty_name: " .. ih.get_name(v))
         end
-        if v and v.label and (not except_table[ih.get_name(v)]) then
+        if v and v.label and ((not except_table[ih.get_name(v)]) or include_circ) then
             return false
         end
     end
@@ -181,14 +191,17 @@ local function craft_one_batch()
             and last_mach and is_empty_machine(last_mach))
     then
         machine = hwc.prepare_machine(recipe.mach_id, recipe.mach_cfg, false)
+        if last_mach and last_mach_id ~= recipe.mach_id then
+            hwif.reset_machine(last_mach)
+        end
         last_mach = machine
         last_mach_id = recipe.mach_id
         last_mach_cfg = recipe.mach_cfg
     else
+        if last_mach and last_mach_id ~= recipe.mach_id then
+            hwif.reset_machine(last_mach)
+        end
         machine = last_mach
-    end
-    if last_mach and last_mach_id ~= recipe.mach_id then
-        hwif.reset_machine(last_mach)
     end
     local inv = hwc.read_cchest()
     if not craft_batch(inv, machine, recipe.batch, false) then
@@ -483,7 +496,7 @@ local function main_reciper()
 end
 
 for k, v in pairs(hwif.machines) do
-    if not is_empty_machine(v) then
+    if not is_empty_machine(v, true) then
         hwif.reset_machine(v)
     end
 end
