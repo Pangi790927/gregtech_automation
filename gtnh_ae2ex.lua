@@ -76,12 +76,12 @@ local function get_recipe_name(item)
             local recipe_name = nil
             if r and r.InscribeName then
                 recipe_name = r.InscribeName
-                return true, recipe_name
+                return true, string.lower(recipe_name)
             end
         end
         if label and has_recipe_name(label) and item.name == "minecraft:stick"
         then
-            return true, label
+            return true, string.lower(label)
         end
     end
     return false, nil
@@ -384,7 +384,7 @@ local function read_recipe()
     end
 
     local recipe = {}
-    recipe.uid = uid
+    recipe.uid = string.lower(item.label)
     recipe.mach_id = machine_id
     recipe.mach_cfg = config_id
     recipe.batch = {}
@@ -420,7 +420,7 @@ local function read_recipe()
                 as_liq = true
             }
             th.tprint("IN  liqname: " .. liqin_cell_name .. " cnt " .. v.count .. " msz " .. liqin_msz)
-        elseif v.name and (ih.name_format(v.name) == "inscriber_name_press") then
+        elseif i == 9 then
             -- this is the label name, it is remembered in the uid, so we ignore it here
         elseif v.name then
             -- this is an item
