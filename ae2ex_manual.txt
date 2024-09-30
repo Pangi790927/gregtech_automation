@@ -1,0 +1,128 @@
+Intro
+-----
+
+This is the user guide for the OpenComputers Extension module to the AE2 system that we have in
+our base. In this manual I will try to explain how to use it, how to debug it and how to configure
+it to craft recipes.
+
+Using it
+--------
+
+To use the Extension you simply request the desired recipe from any AE2 terminal that is connected
+to the main ME Controller, but there is something to keep in mind: the Extension uses some "tokens"
+to know what it should craft and there is a limited number of those in the AE2 system at any time,
+so the system will not be able to craft more recipes then it has tokens. Those tokens are sticks
+labeled with specific names inside the Inscriber Press. The solution to enable the system to craft
+more of one recipe is to search for it's Inscriber Name Press tag and craft more tokens at the
+Inscriber Press.
+
+Debuging it
+-----------
+
+The Extension may have bugs, there are none known at this moment, but you may find yourself in the
+situation in which the crafting of some recipe is stuck. If that is the case you may want to
+know if the recipe takes a lot of time or if it is really bugged, here are some things to check:
+
+    1. Go in front of the monitor of the Extension and see if there are any errors writen on screen.
+    If you find any errors there, the machine is broken in some way.
+
+    2. Read from the screen of the monitor what the Extension is crafting and go find the respective
+    machine inside the Extension. If the machine is not doing anything but has items in it,
+    something went wrong.
+
+    3. If there is no machine doing anything but there are items in the crafting chest something
+    broke.
+
+    4. If there are items and tokens in the ME input chest and the Extension does nothing it means
+    that the Extension does not recognize the recipe or it broke.
+
+If the machine blocked for no reason, you can follow the following steps to restart it:
+    
+    1. Stop the crafting request comming from the ME
+    2. Shut down the Extension's computer
+    3. Clear all the 9 machines, make sure that they have no items or fluids in them
+    4. If not empty, clear the liquid from inside the Large Titanium Fluid Cell inside the crafting
+    chest
+    5. Clean the crafting chest: remove extra items and make sure the circuits and other things are
+    still there
+    6. Move back all items from the ME input chest to the ME system
+    7. Power on the Extension's PC
+    8. type gtnh_ae2ex in the prompt and press enter
+    9. now the system is ready to receive new crafting requests
+
+Configuring it
+--------------
+
+The configuration part refers only to the addition of new crafting recipes to the Extension. The
+Extension must know beforehand how to craft an item and you learn it how to do it by configuring it.
+
+The first step is to find a Cutting Knife and an Iron Ingot. After that you use the knife to create
+an Inscribed Name Press for your recipe. The name must be unique in the system and must begin with
+"recipe_", furthermore you must use only small letters, digits or '_'. For example you would name a
+recipe for circuit boards: recipe_circuit_board.
+
+After creating your Inscribed Name Press you would use it inside an Inscriber Press to name a 
+vanila minecraft stick, this will be your token. You must create as many tokens as you want to be
+able to craft at the same time in the Extension. After creating your token, you would place the
+Inscribed Name Press inside the diamond chest in the Automatic-Stick-Nameinator.
+
+Now with your token (the named stick) you must go to a pattern terminal to set your required items:
+
+         ################################
+         ################################
+         ###     #     #     ####     ###
+         ###  1  #  2  #  3  ####  10 ###
+         ###     #     #     ####     ###
+         ################################
+         ###     #     #     ####     ###
+         ###  4  #  5  #  6  ####  11 ###
+         ###     #     #     ####     ###
+         ################################
+         ###     #     #     ####     ###
+         ###  7  #  8  #  9  ####  12 ###
+         ###     #     #     ####     ###
+         ################################
+         ################################
+
+You must program your recipe based on the required items and the expected outputs:
+    * All the required items for the craft must be included. 
+    * The stick token must be placed in the 9th slot.
+    * Only the desired outputs should be placed in slots 10, 11, 12.
+    * You can't have the same item type twice as an input in two different slots.
+    * If the recipe requires liquids you must put cells in their place, if the number can't be exact
+    you must place more than needed and the excess liquids will be lost.
+    * If the recipe gives more of a liquid than can be stored exactly in cells you put less cells in
+    the output and the excess liquids will be sent to the ME liquid storage.
+    * If cells are needed to move liquid out of the machine then you must place empty cells in the
+    8th slot
+    * The empty cells that are needed by the recipe can't be placed in the 8th slot
+    * You can't put more items or liquids than can fit in the targeted machine
+
+Now that you have your pattern, you must go and program it in the OpenComputers Extension. The chest
+looks like so:
+
+            ###########################
+            ###########################
+            ###     ###     ###     ###
+            ###  1  ###  2  ###  3  ###
+            ###     ###     ###     ###
+            ###########################
+            ###     ###########     ###
+            ###  4  ###########  5  ###
+            ###     ###########     ###
+            ###########################
+            ###########     ###########
+            ###########  X  ###########
+            ###########     ###########
+            ###########################
+            ###########################
+
+You must place your pattern in slot 1.
+The selected machine in slot 2.
+The machine config if required must be placed in slot 3, or left empty if no config is required
+Liquid cells exactly matching the pattern must be placed in slot 4 for inputs.
+Liquid cells exactly matching the pattern must be placed in slot 5 for outputs.
+
+After the chest is configure you must go to the computer and press ENTER once and after the prompt
+press Y once. Following that you can take your pattern from the config chest and place it in one
+of the interfaces in the Extension crafter.
