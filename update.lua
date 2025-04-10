@@ -11,6 +11,7 @@ file_list = {
     "nbt.lua",
     "deflate.lua",
     "gtnh_item_router.lua",
+    "gtnh_asm_router.lua",
     "thread_helper.lua"
 }
 
