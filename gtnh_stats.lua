@@ -220,7 +220,7 @@ while true do
     slider_pages = math.ceil(fluids_state.fluid_cnt / fluid_on_page) + 1
     
     slider_inc = (slider_inc + 1)
-    if (slider_inc > 5 ) then
+    if (slider_inc > 10) then
         slider_inc = 0
         slider = (slider + 1) % slider_pages
     end
