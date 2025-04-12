@@ -1,5 +1,7 @@
 local term      = require("term")
 local sides     = require("sides")
+local event     = require("event")
+local thread    = require("thread")
 local component = require("component")
 
 local gpu = component.gpu
@@ -12,6 +14,7 @@ local easm = component.proxy(component.get("533d"))
 
 -- 10 minute avarage
 local average_cnt = 60*10;
+local fluid_on_page = 20
 
 egen.local_name = "egen"
 eraf.local_name = " raf"
@@ -48,9 +51,6 @@ function update_fluids()
     end
     if fluids_state.fluid_cnt == nil then
         fluids_state.fluid_cnt = 0
-    end
-    if fluids_state.index == nil then
-        fluids_state.index = 0
     end
     for i=1, #fluids do
         label = fluids[i].label
@@ -145,19 +145,16 @@ function fluids_print_val(pos_x, pos_y, val, is_diff)
     term.write(string.format("%11.3f", val))
 end
 
-function fluids_status()
+function fluids_status(page_index)
     -- there are 25 lines
     -- 1 line for splitter
     -- 1 line for header
     -- 1 line for extra info
-    local fluid_on_page = 20
     local pages = math.ceil(fluids_state.fluid_cnt / fluid_on_page)
 
     -- stay for 10 seconds on each page
-    local page = (fluids_state.index // 10) % pages
+    local page = page_index % pages
 
-    term.setCursor(1, 1)
-    term.write(string.format("page: %d/%d", page + 1, pages))
     term.setCursor(1, 2)
     term.write("                          Name  Amount[ML]      ML/60s     ML/600s    ML/3600s ")
     term.setCursor(1, 3)
@@ -165,7 +162,6 @@ function fluids_status()
     term.write("-------------------------------------------------------------------------------")
     gpu.setForeground(0xFFFFFF)
     
-    fluids_state.index = fluids_state.index + 1
     local index = 1
     for name, fluid in pairs(fluids_state.fluids) do
         if fluid.show then
@@ -192,6 +188,25 @@ function fluids_status()
 end
 
 local slider = 0
+local slider_inc = 0
+local slider_pages = 1
+
+local new_th = thread.create(function ()
+    while true do
+        local ev, addr, x, y = event.pull("touch")
+        -- print(ev, addr, x, y)
+        slider_inc = 0
+        if x > 40 then
+            slider = (slider + 1) % slider_pages
+        else
+            slider = slider - 1
+            if slider < 0 then
+                slider = slider_pages - 1
+            end
+        end
+    end
+end)
+
 gpu.setResolution(80, 25)
 gpu.setDepth(8)
 while true do
@@ -201,12 +216,23 @@ while true do
     update_battery(eraf)
     update_battery(void)
     update_fluids()
+
+    slider_pages = math.ceil(fluids_state.fluid_cnt / fluid_on_page) + 1
     
-    slider = (slider + 1) % 40
+    slider_inc = (slider_inc + 1)
+    if (slider_inc > 5 ) then
+        slider_inc = 0
+        slider = (slider + 1) % slider_pages
+    end
+
+    local loc_slider = slider
+
     term.clear()
-    
-    if slider >= 10 then
-        fluids_status()
+    term.setCursor(1, 1)
+    term.write(string.format("slide: %d/%d", loc_slider + 1, slider_pages))
+
+    if loc_slider < slider_pages - 1 then
+        fluids_status(loc_slider)
     else
         incrementer_status(2)
         battery_status(egen, 4)
