@@ -71,8 +71,13 @@ while true do
         end
     end
 
+    print("slot: " .. to_string(slot + 1))
     -- wait for the recipe to finish
     while get_label(t_up, sides.up, 0) ~= nil do
+        os.sleep(0.1)
+    end
+
+    while get_label(route_outs[1].trans, route_outs[1].dst, 0) ~= nil do
         os.sleep(0.1)
     end
 
@@ -80,10 +85,7 @@ while true do
     push_items(label, route_outs[1], slot + 1)
 
     -- wait for the stick to be gone
-    while true do
-        if get_label(route_outs[1].trans, route_outs[1].dst, 0) == nil then
-            break
-        end
+    while get_label(route_outs[1].trans, route_outs[1].dst, 0) ~= nil do
         os.sleep(0.1)
     end
 
