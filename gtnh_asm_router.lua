@@ -1,11 +1,11 @@
 sides = require("sides")
 component = require("component")
 
-local t_sw = component.proxy(component.get("00ef"))
-local t_nw = component.proxy(component.get("e080"))
-local t_ne = component.proxy(component.get("cb31"))
-local t_se = component.proxy(component.get("82cf"))
-local t_up = component.proxy(component.get("d3f6"))
+local t_sw = component.proxy(component.get("8b59"))
+local t_nw = component.proxy(component.get("486c"))
+local t_ne = component.proxy(component.get("9a78"))
+local t_se = component.proxy(component.get("35fc"))
+local t_up = component.proxy(component.get("ce68"))
 
 print(t_sw ,t_nw ,t_ne ,t_se, t_up)
 
