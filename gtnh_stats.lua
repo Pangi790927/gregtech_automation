@@ -6,32 +6,61 @@ local component = require("component")
 
 local gpu = component.gpu
 
-local egen = component.proxy(component.get("6133"))
-local eraf = component.proxy(component.get("cad2"))
-local void = component.proxy(component.get("a0de"))
+local egen = nil
+local eraf = nil
+local void = nil
 local me   = component.me_interface
-local easm = component.proxy(component.get("533d"))
+local easm = nil
+local aqua = nil
 
 -- 10 minute avarage
 local average_cnt = 60*10;
 local fluid_on_page = 20
 
-egen.local_name = "egen"
-eraf.local_name = " raf"
-void.local_name = "void"
-easm.local_name = " asm"
-
-egen.lta_in = 0
-eraf.lta_in = 0
-void.lta_in = 0
-easm.lta_in = 0
-
-egen.lta_out = 0
-eraf.lta_out = 0
-void.lta_out = 0
-easm.lta_out = 0
-
 -- term.getViewport() -> WxH = 160/50
+
+local egen_loc = { x=  663, y=  69, z= -170}
+local eraf_loc = { x=  243, y=  22, z=  120}
+local void_loc = { x=    6, y= 146, z=    8}
+local easm_loc = { x= -662, y=  59, z= -296}
+local aqua_loc = { x=-1434, y=  26, z= 1080}
+
+function match_loc(x, y, z, loc)
+    return x == loc.x and y == loc.y and z == loc.z
+end
+
+function find_components()
+    me = component.me_interface
+    for k, v in component.list() do
+        local comp = component.proxy(component.get(k))
+        if comp.type == "gt_machine" then
+            local x, y, z = comp.getCoordinates()
+            print(x, y, z)
+            if match_loc(x, y, z, egen_loc) then egen = comp end
+            if match_loc(x, y, z, eraf_loc) then eraf = comp end
+            if match_loc(x, y, z, void_loc) then void = comp end
+            if match_loc(x, y, z, easm_loc) then easm = comp end
+            if match_loc(x, y, z, aqua_loc) then aqua = comp end
+        end
+    end
+    egen.local_name = "egen"
+    eraf.local_name = " raf"
+    void.local_name = "void"
+    easm.local_name = " asm"
+    aqua.local_name = "aqua"
+
+    egen.lta_in = 0
+    eraf.lta_in = 0
+    void.lta_in = 0
+    easm.lta_in = 0
+    aqua.lta_in = 0
+
+    egen.lta_out = 0
+    eraf.lta_out = 0
+    void.lta_out = 0
+    easm.lta_out = 0
+    aqua.lta_out = 0
+end
 
 local incrementer_cnt = 0
 function update_incrementer()
@@ -207,6 +236,8 @@ local new_th = thread.create(function ()
     end
 end)
 
+find_components()
+
 gpu.setResolution(80, 25)
 gpu.setDepth(8)
 while true do
@@ -215,6 +246,7 @@ while true do
     update_battery(easm)
     update_battery(eraf)
     update_battery(void)
+    update_battery(aqua)
     update_fluids()
 
     slider_pages = math.ceil(fluids_state.fluid_cnt / fluid_on_page) + 1
@@ -239,6 +271,7 @@ while true do
         battery_status(easm, 8)
         battery_status(eraf, 12)
         battery_status(void, 16)
+        battery_status(aqua, 20)
     end
     
     os.sleep(1)
