@@ -66,6 +66,9 @@ enum cell_kind_e : int {
     CELL_KIND_CHEST = 8,    /*!< A chest. Holds items; not part of the component network. */
     CELL_KIND_TRANSPOSER = 9,  /*!< A transposer. Moves items between the inventories beside it. */
     CELL_KIND_REDSTONE = 10,   /*!< A redstone I/O block. Reads and emits a signal per side. */
+    CELL_KIND_TANK = 11,       /*!< A liquid tank. Holds one fluid; read through a transposer. */
+    CELL_KIND_IMPORT_BUS = 12, /*!< An ME import bus. Scenery: it has no behaviour yet. */
+    CELL_KIND_EXPORT_BUS = 13, /*!< An ME export bus. Scenery: it has no behaviour yet. */
 };
 
 /*! Does this kind sit on the component network?
@@ -97,9 +100,15 @@ inline bool kind_is_flat(int kind) {
  * one. The difference decides whether a neighbour may stop drawing the face they share: a face
  * hidden behind a solid cube is genuinely invisible, but a face behind a cable is mostly open air,
  * and skipping it leaves a hole straight through the block.
+ *
+ * A TANK IS NOT ONE EITHER. Both look like cubes and neither fills its cell: a cable is a thin run
+ * through the middle, and a tank is a metal frame around a window you can see straight through.
+ * Counting either as solid punches a hole in whatever stands next to it - which the cable did once
+ * and the tank did the moment it existed.
  * @date 2026-09-17 */
 inline bool kind_is_full_cube(int kind) {
-    return kind != CELL_KIND_NONE && kind != CELL_KIND_CABLE && !kind_is_flat(kind);
+    return kind != CELL_KIND_NONE && kind != CELL_KIND_CABLE && kind != CELL_KIND_TANK
+            && !kind_is_flat(kind);
 }
 
 
@@ -133,6 +142,64 @@ constexpr int FACE_DIR[FACE_COUNT][3] = {
 
 struct world_t;
 
+/*! One stack of items in one slot. An empty slot is a count of zero. @date 2026-09-17 */
+struct item_stack_t {
+    std::string name;
+    int count = 0;
+
+    /*! Which variant of that name this is, and what the game calls it.
+     *
+     * A MOD'S ITEMS ARE OFTEN ONE REGISTRY NAME AND A DAMAGE VALUE. Every GregTech dust, cell and
+     * pipe is `gregtech:gt.metaitem.01` with a number after it; without the number they are all
+     * the same item and none of them can be told apart. OpenComputers reports it - `damage` is one
+     * of the fields its ConverterItemStack puts on a stack, beside `name`, `label`, `size`,
+     * `maxSize`, `maxDamage` and `hasTag` - so a program can already read it.
+     *
+     * The label is carried rather than looked up for the same reason the fluid's is: the component
+     * that answers with it runs inside a guest machine and cannot reach the asset layer.
+     * @date 2026-09-17 */
+    int damage = 0;
+    std::string label;
+};
+
+/*! How many slots a chest has. A single vanilla chest, which is what every program that moves items
+ * already expects to find. @date 2026-09-17 */
+constexpr int CHEST_SLOTS = 27;
+
+/*! What a liquid tank holds, in litres.
+ *
+ * THE MOD'S OWN NUMBER. The author asked for a Super Tank IV's interface on 2026-09-17, and a
+ * Super Tank IV is tier 4 of GregTech's digital tank: GT_MetaTileEntity_DigitalTankBase's
+ * commonSizeCompute answers 4000000, 8000000, 16000000, 32000000 ... for tiers one upward, so tier
+ * four is thirty-two million. Not 32,768,000 - the quest book rounds these to powers of two in its
+ * prose and the code does not.
+ *
+ * Litres because that is the unit GregTech itself displays: the tank's tooltip is getCapacity()
+ * followed by " L".
+ * @date 2026-09-17 */
+constexpr double TANK_CAPACITY_L = 32000000.0;
+
+/*! Translates an OpenComputers side number into one of this file's face indices.
+ *
+ * THE TWO ORDERINGS ARE NOT THE SAME and must not be confused. The mod's own sides library, which
+ * every program is written against, says in as many words: negy = 0, posy = 1, negz = 2, posz = 3,
+ * negx = 4, posx = 5. This file orders its faces by axis instead, so that `face ^ 1` is the
+ * opposite face. Anything crossing from a component call into the world passes through here.
+ *
+ * Returns -1 for a side that is not one of the six.
+ * @date 2026-09-17 */
+inline int face_from_oc_side(int side) {
+    switch (side) {
+        case 0: return FACE_YNEG;
+        case 1: return FACE_YPOS;
+        case 2: return FACE_ZNEG;
+        case 3: return FACE_ZPOS;
+        case 4: return FACE_XNEG;
+        case 5: return FACE_XPOS;
+        default: return -1;
+    }
+}
+
 /*! One block of the map - what Lua builds and drops into a slot.
  *
  * Core: a kind, a state, a facing, and where it sits. `u` is the free slot Lua keeps its own
@@ -161,6 +228,41 @@ struct cell_t : public vc::object_t {
 
     world_t *owner = nullptr;
 
+    /*! What this cell is holding, for the kinds that hold anything.
+     *
+     * In C++ rather than in Lua's `u`, and that is the whole point: a transposer is a component
+     * running inside a guest machine, and a component cannot reach a Lua table belonging to the
+     * simulator's own scripts. Items are simulation state that both sides need, so they live where
+     * both sides can get at them.
+     * @date 2026-09-17 */
+    std::vector<item_stack_t> inventory;
+
+    /*! What a redstone block is emitting on each of its six faces, indexed by face_e.
+     * @date 2026-09-17 */
+    int rs_out[FACE_COUNT] = {};
+
+    /*! The fluid a tank holds: its internal name, such as "chlorine", and how many litres of it.
+     *
+     * In C++ for the same reason the inventory is - a transposer is a component inside a guest
+     * machine and cannot reach a Lua table belonging to the simulator's own scripts, so anything
+     * both sides need lives where both sides can get at it.
+     *
+     * An empty name means an empty tank. A tank with no fluid has no capacity to report either, in
+     * the sense that getFluidInTank answers nothing - but the capacity itself is fixed, so it is a
+     * constant rather than a field.
+     * @date 2026-09-17 */
+    std::string fluid;
+    double fluid_amount = 0.0;
+
+    /*! The fluid's name as the game shows it - "Chlorine" for "chlorine".
+     *
+     * Carried on the cell rather than looked up when asked, because the lookup is GregTech's lang
+     * file and the transposer's getFluidInTank runs inside a guest machine that has no business
+     * reaching the asset layer. The script layer knows the label when it sets the fluid, so it
+     * passes it in then.
+     * @date 2026-09-17 */
+    std::string fluid_label;
+
     cell_t(vc::object_t::Private priv) : vc::object_t(priv) {}
 
     static vc::object_type_e type_id_static() { return vc::SIM_TYPE_CELL; }
@@ -188,6 +290,86 @@ struct cell_t : public vc::object_t {
     /*! Marks the owning world as changed, so the renderer rebuilds. Defined after world_t, which it
      * needs the body of. Safe on an unplaced cell, where it does nothing. @date 2026-09-16 */
     void touch();
+
+    /*! How many slots this cell has. Zero for anything that holds nothing. @date 2026-09-17 */
+    int inv_size() const { return (int)inventory.size(); }
+
+    /*! Gives this cell an inventory of `n` slots, keeping whatever already fits. @date 2026-09-17 */
+    void inv_resize(int n) {
+        if (n < 0)
+            n = 0;
+        inventory.resize((size_t)n);
+    }
+
+    /*! One slot, counted from one, as `{name, count}`. An empty slot answers an empty name and a
+     * zero, so a caller never has to guard. @date 2026-09-17 */
+    std::tuple<std::string, int, int, std::string> inv_get(int slot) const {
+        if (slot < 1 || slot > (int)inventory.size())
+            return {std::string(), 0, 0, std::string()};
+        const item_stack_t &st = inventory[(size_t)slot - 1];
+        return {st.name, st.count, st.damage, st.label};
+    }
+
+    /*! Puts a stack in a slot, or empties it when the count is not positive. @date 2026-09-17 */
+    bool inv_set(int slot, const char *name, int count, int damage, const char *label) {
+        if (slot < 1 || slot > (int)inventory.size())
+            return false;
+        item_stack_t &st = inventory[(size_t)slot - 1];
+        if (count <= 0 || !name || !*name) {
+            st.name.clear();
+            st.label.clear();
+            st.count = 0;
+            st.damage = 0;
+        }
+        else {
+            st.name = name;
+            st.count = count;
+            st.damage = damage;
+            st.label = (label && *label) ? label : name;
+        }
+        touch();
+        return true;
+    }
+
+    /*! What this cell is emitting on one face. @date 2026-09-17 */
+    int rs_get(int face) const {
+        return (face >= 0 && face < FACE_COUNT) ? rs_out[face] : 0;
+    }
+
+    /*! What this tank holds, as `{name, litres}`. An empty tank answers an empty name and a zero.
+     * @date 2026-09-17 */
+    std::tuple<std::string, double, std::string> fluid_get() const {
+        return {fluid, fluid_amount, fluid_label};
+    }
+
+    /*! Puts a fluid in this tank, clamped to what a tank can hold.
+     *
+     * A name that is empty, or an amount that is not positive, empties it - there is no such thing
+     * as nought litres of chlorine, only an empty tank, which is how the mod stores it too: a
+     * drained tank has a null FluidStack rather than one with a zero.
+     *
+     * @return the litres actually held afterwards
+     * @date 2026-09-17 */
+    double fluid_set(const char *name, double litres, const char *label) {
+        if (!name || !*name || litres <= 0.0) {
+            fluid.clear();
+            fluid_label.clear();
+            fluid_amount = 0.0;
+        }
+        else {
+            fluid = name;
+            fluid_label = (label && *label) ? label : name;
+            fluid_amount = (litres > TANK_CAPACITY_L) ? TANK_CAPACITY_L : litres;
+        }
+        touch();
+        return fluid_amount;
+    }
+
+    /*! What a tank can hold, in litres. A cell that is not a tank holds nothing.
+     * @date 2026-09-17 */
+    double fluid_capacity() const {
+        return (kind == CELL_KIND_TANK) ? TANK_CAPACITY_L : 0.0;
+    }
 };
 
 using cell_p = vc::ref_t<cell_t>;
@@ -784,6 +966,16 @@ inline int register_meta(vc::virt_state_t *vs) {
     VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, pos);
     VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, placed);
     VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, touch);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, fluid_get);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, fluid_set, const char *, double,
+            const char *);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, fluid_capacity);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, inv_size);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, inv_resize, int);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, inv_get, int);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, inv_set, int, const char *, int, int,
+            const char *);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, rs_get, int);
 
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, get, int, int, int);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, set, int, int, int, cell_p);

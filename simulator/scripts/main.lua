@@ -13,9 +13,8 @@
 -- |                     error is on screen.
 -- |     test_shutdown() writes the world and the settings back out.
 -- |
--- | It also owns the SAVE PATHS. settings.save and world.save are resolved
--- | beside the executable through vc.path_resolve, so the simulator finds
--- | them whatever directory it was launched from.
+-- | WHERE a save lives is saves.lua's business, not this file's; this
+-- | one only decides when to read and when to write.
 -- |
 -- | --- internal, not on the module table ---------------------------------------------------------
 -- |     state, last_time, fps, handle_tools
@@ -33,16 +32,11 @@ local camera = require("camera")
 local world = require("world")
 local ui = require("ui")
 local machines = require("machines")
+local saves = require("saves")
 
---[[ Both files sit beside the executable rather than in the working directory, which is what
-vc.path_resolve answers. Launching the simulator from a different directory should not quietly start
-a second, empty world. @date 2026-09-16 ]]
-local SETTINGS_PATH = vc.path_resolve("settings.save")
-local WORLD_PATH = vc.path_resolve("world.save")
---[[ The contents of every machine's hard disk, beside the world rather than inside it: the world
-file is a readable list of blocks, and a hundred and eighty files of operating system would drown
-it. @date 2026-09-17 10:00 ]]
-local DISKS_PATH = vc.path_resolve("disks.save")
+--[[ A SAVE IS A DIRECTORY. saves.lua owns its shape - the map in one file, the settings in
+another, and every hard disk as a folder of real files under `opencomputers`, the way the mod keeps
+them. This file only says which of them it wants and when. @date 2026-09-17 14:00 ]]
 
 local state = nil
 local last_time = 0
@@ -72,6 +66,12 @@ local TOOLS = {
             place = function(st) return world.place(st, blocks.make_transposer) end},
     {name = "redstone i/o", kind = blocks.KIND.REDSTONE,
             place = function(st) return world.place(st, blocks.make_redstone) end},
+    {name = "liquid tank", kind = blocks.KIND.TANK,
+            place = function(st) return world.place(st, blocks.make_tank) end},
+    {name = "ME import bus", kind = blocks.KIND.IMPORT_BUS,
+            place = function(st) return world.place(st, blocks.make_import_bus) end},
+    {name = "ME export bus", kind = blocks.KIND.EXPORT_BUS,
+            place = function(st) return world.place(st, blocks.make_export_bus) end},
 }
 local selected = 1
 
@@ -84,6 +84,11 @@ local focus = nil
 is an ordinary window rather than a terminal, so ImGui handles the typing itself.
 @date 2026-09-17 06:30 ]]
 local chest = nil
+
+--[[ The tank being configured, or nil. Opened the same way a chest is, and for the same reason it
+is a window rather than a terminal: there is a fluid to pick and an amount to type.
+@date 2026-09-17 16:00 ]]
+local tank = nil
 
 --[[ The key codes OpenComputers uses, taken from the mod's own lib/keyboard.lua and
 lib/core/full_keyboard.lua rather than remembered - a wrong code is a key that silently does the
@@ -132,8 +137,9 @@ local OC_MODIFIER = {
 
 --[[ @brief The place and break tools, and the one key that changes a cell in place.
 -- |
--- | Core: left click breaks what the crosshair is on and right click places a computer case against
--- | it, which is the pair the milestone asked for. `f` is the third, and it is here to make the
+-- | Core: left click breaks what the crosshair is on. Right click OPENS what it is on when that
+-- | is something with anything to open, and otherwise places the selected thing; holding shift
+-- | places either way, which is how the game does it. `f` is the third, and it is here to make the
 -- | reacting-cell mechanism visible: it writes `cell.state`, and the block is redrawn with its lit
 -- | textures on the next frame without this function telling the renderer anything at all.
 -- |
@@ -144,38 +150,59 @@ local OC_MODIFIER = {
 -- |
 -- | @date 2026-09-16 16:00
 --]]
+--[[ @brief Opens whatever was right clicked.
+-- |
+-- | Core: a computer starts or stops, a screen is stepped into, a chest opens. Split out of the
+-- | click handling because the same three kinds are named by blocks.is_interactive and shown in the
+-- | hint on the screen - a click that did something a fourth kind was not advertised for would be
+-- | a bug nobody sees until they try it.
+-- |
+-- | Stepping into a screen and opening a chest both give the pointer back, because both are things
+-- | to be read and pointed at rather than looked at: a focused screen is a terminal with a cursor
+-- | to place, and a chest has slots to click.
+-- |
+-- | @param st    state
+-- | @param cell  cell - the thing under the crosshair
+-- |
+-- | @date 2026-09-17 16:00
+--]]
+local function interact_with(st, cell)
+    if cell.kind == blocks.KIND.CASE then
+        machines.toggle(cell, st.world, settings.get("minecraft_path") or "")
+    elseif cell.kind == blocks.KIND.SCREEN then
+        focus = cell
+        vc.mouse_capture(false)
+    elseif cell.kind == blocks.KIND.CHEST then
+        chest = cell
+        vc.mouse_capture(false)
+    elseif cell.kind == blocks.KIND.TANK then
+        tank = cell
+        vc.mouse_capture(false)
+    end
+end
+
 local function handle_tools(st)
     if vc.ImGui_WantCaptureMouse() then
         return
     end
 
-    local ctrl = vc.ImGui_IsKeyDown("ImGuiKey_LeftCtrl") or vc.ImGui_IsKeyDown("ImGuiKey_RightCtrl")
     local t = st.target
-
-    -- Ctrl turns the two buttons from building tools into ways of touching what is already there.
-    -- The author reserved the modifier for exactly this on 2026-09-16.
-    if ctrl then
-        if vc.ImGui_IsMouseClicked("ImGuiMouseButton_Right", false) and t and t.cell then
-            if t.cell.kind == blocks.KIND.CASE then
-                machines.toggle(t.cell, st.world, settings.get("minecraft_path") or "")
-            elseif t.cell.kind == blocks.KIND.SCREEN then
-                focus = t.cell
-                -- The pointer comes back, because a focused screen is a terminal rather than a
-                -- view: there is a cursor to place and text to select.
-                vc.mouse_capture(false)
-            elseif t.cell.kind == blocks.KIND.CHEST then
-                chest = t.cell
-                vc.mouse_capture(false)
-            end
-        end
-        return
-    end
 
     if vc.ImGui_IsMouseClicked("ImGuiMouseButton_Left", false) then
         world.break_at(st)
     end
+
+    -- THE GAME'S OWN RULE, asked for by the author on 2026-09-17: a right click on something you
+    -- can open, opens it; sneaking - shift - puts a block against it instead. A block with nothing
+    -- to open takes the plain right click for placing, so building in empty space is unchanged.
     if vc.ImGui_IsMouseClicked("ImGuiMouseButton_Right", false) then
-        TOOLS[selected].place(st)
+        local sneak = vc.ImGui_IsKeyDown("ImGuiKey_LeftShift")
+                or vc.ImGui_IsKeyDown("ImGuiKey_RightShift")
+        if not sneak and t and t.cell and blocks.is_interactive(t.cell.kind) then
+            interact_with(st, t.cell)
+        else
+            TOOLS[selected].place(st)
+        end
     end
 
     if not vc.ImGui_WantCaptureKeyboard() and vc.ImGui_IsKeyPressed("ImGuiKey_F", false) then
@@ -305,7 +332,8 @@ end
 -- | @date 2026-09-16 16:00
 --]]
 function test_init()
-    settings.load(SETTINGS_PATH)
+    saves.prepare()
+    settings.load(saves.readable(saves.settings_path(), "settings.save"))
 
     vc.render_init(settings.get("minecraft_path") or "",
             settings.get("minecraft_jar") or "")
@@ -314,10 +342,10 @@ function test_init()
     -- The camera goes first, so a saved one replaces it rather than the other way round: load()
     -- sets the camera when the file carried one and says so through `camera_restored`.
     camera.init(settings)
-    world.load(state, WORLD_PATH)
+    world.load(state, saves.readable(saves.level_path(), "world.save"))
     -- After the world, because a disk is restored onto the machine of the case it belongs to and
     -- the cases have to exist first.
-    machines.load_disks(state, DISKS_PATH)
+    machines.load_disks(state)
     -- The author asked on 2026-09-16 for the simulator to open already looking around, rather than
     -- with a loose cursor waiting for a tab.
     vc.mouse_capture(true)
@@ -395,9 +423,15 @@ function test_draw()
             vc.mouse_capture(true)
         end
     end
+    if tank then
+        if not tank:placed() or vc.ImGui_IsKeyPressed("ImGuiKey_Escape", false) then
+            tank = nil
+            vc.mouse_capture(true)
+        end
+    end
 
     -- A focused screen swallows the frame's input: no flying, no aiming, no building.
-    local focused = handle_focus(state) or chest ~= nil
+    local focused = handle_focus(state) or chest ~= nil or tank ~= nil
     if not focused then
         camera.update(settings, dt)
         world.aim(state)
@@ -433,6 +467,8 @@ function test_draw()
 
     if chest then
         ui.chest(chest)
+    elseif tank then
+        ui.tank(tank)
     elseif focused then
         ui.screen_focus(state.world, focus)
     else
@@ -441,6 +477,10 @@ function test_draw()
         -- The console view follows the crosshair: aiming at a screen opens it, looking away shuts
         -- it again.
         ui.miniscreen(state.world, t and t.cell or nil)
+        -- And the same for the two things that hold something. Only one of the three can match,
+        -- since each checks the kind of the cell under the crosshair.
+        ui.minichest(t and t.cell or nil)
+        ui.minitank(t and t.cell or nil)
 
         -- The settings window is deliberately NOT drawn while a screen is focused. It carries a
         -- text box, and an ImGui text box that has been clicked stays active and EATS the character
@@ -465,11 +505,13 @@ end
 --]]
 function test_shutdown()
     if state and settings.get("autosave") then
-        world.save(state, WORLD_PATH)
-        machines.save_disks(state, DISKS_PATH)
+        saves.prepare()
+        world.save(state, saves.level_path())
+        machines.save_disks(state)
     end
     if settings.dirty() then
-        settings.save(SETTINGS_PATH)
+        saves.prepare()
+        settings.save(saves.settings_path())
     end
     return 0
 end

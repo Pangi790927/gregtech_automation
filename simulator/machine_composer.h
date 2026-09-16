@@ -148,9 +148,15 @@ struct component_t {
      * @date 2026-09-17 */
     std::shared_ptr<ocsc::buffer_t> screen;
 
-    /*! A redstone block's emitted level per side, indexed by face. Kept on the component because
-     * that is what `setOutput` writes and `getOutput` reads. @date 2026-09-17 */
-    int rs_output[6] = {};
+    /*! Where in the world this component's block stands, and the world it stands in.
+     *
+     * A transposer reaches into the inventories beside it and a redstone block drives the lamp next
+     * to it, so both have to be able to find their neighbours. Held as a raw pointer and a
+     * coordinate rather than a cell reference: the block may be broken while the machine runs, and
+     * looking it up each time is what makes that answer "nothing there" instead of dangling.
+     * @date 2026-09-17 */
+    worldc::world_t *world = nullptr;
+    int wx = 0, wy = 0, wz = 0;
 
     /*! What a gpu is bound to, and what a keyboard is attached to - an address either way, empty
      * when nothing. @date 2026-09-17 */
@@ -204,6 +210,10 @@ struct machine_t : public vc::object_t {
      * So the tree is held here and re-attached, rather than made fresh at boot.
      * @date 2026-09-16 */
     std::shared_ptr<ocfs::filesystem_t> hdd;
+    /*!< the hard disk's address. Kept on the machine rather than made when a component is,
+     * because the save names this disk's folder with it and a computer that has been
+     * loaded but never started still has to know which folder is its own. */
+    std::string hdd_address;
     std::string mc_path;
 
     /*! The screen the interface shows. One machine may drive several, but the panel has to pick
@@ -1516,47 +1526,112 @@ inline component_t make_keyboard(const std::string &screen_address, uint64_t see
 
 /* --- the transposer and the redstone block --------------------------------------------------- */
 
-/*! The side argument, numbered the way OpenComputers' own `sides` library does.
+/*! The block this component stands in, or null when it has been broken. @date 2026-09-17 */
+inline worldc::cell_p own_cell(component_t &c) {
+    return c.world ? c.world->get(c.wx, c.wy, c.wz) : nullptr;
+}
+
+/*! The block on one of this component's sides, by OpenComputers side number. @date 2026-09-17 */
+inline worldc::cell_p side_cell(component_t &c, int oc_side) {
+    int face = worldc::face_from_oc_side(oc_side);
+    if (!c.world || face < 0)
+        return nullptr;
+    return c.world->get(c.wx + worldc::FACE_DIR[face][0],
+            c.wy + worldc::FACE_DIR[face][1], c.wz + worldc::FACE_DIR[face][2]);
+}
+
+/*! Brings a lamp's lit state in line with whatever is driving it.
+ *
+ * A lamp is lit when a redstone block beside it is emitting on the face that points at it. That is
+ * the whole of the rule for now - there is no wire propagation yet, so a lamp has to touch what
+ * lights it.
  * @date 2026-09-17 */
-inline int side_arg(lua_State *L, int i) {
-    int v = (int)lua_tointeger(L, i);
-    return (v >= 0 && v < 6) ? v : 0;
+inline void refresh_lamp(worldc::world_t &w, int x, int y, int z) {
+    worldc::cell_p lamp = w.get(x, y, z);
+    if (!lamp || lamp->kind != worldc::CELL_KIND_LAMP)
+        return;
+
+    int level = 0;
+    for (int f = 0; f < worldc::FACE_COUNT; f++) {
+        worldc::cell_p n = w.get(x + worldc::FACE_DIR[f][0], y + worldc::FACE_DIR[f][1],
+                z + worldc::FACE_DIR[f][2]);
+        if (n && n->kind == worldc::CELL_KIND_REDSTONE) {
+            /* The face of the neighbour that points back at the lamp is the opposite of the one
+            the lamp looked along to find it. */
+            level = std::max(level, n->rs_get(f ^ 1));
+        }
+    }
+
+    int want = level > 0 ? worldc::CELL_STATE_ON : worldc::CELL_STATE_OFF;
+    if (lamp->state != want) {
+        lamp->state = want;
+        lamp->touch();
+    }
+}
+
+/*! Re-examines every lamp around a block that has just changed what it emits. @date 2026-09-17 */
+inline void refresh_lamps_around(component_t &c) {
+    if (!c.world)
+        return;
+    for (int f = 0; f < worldc::FACE_COUNT; f++)
+        refresh_lamp(*c.world, c.wx + worldc::FACE_DIR[f][0], c.wy + worldc::FACE_DIR[f][1],
+                c.wz + worldc::FACE_DIR[f][2]);
 }
 
 inline int rs_get_input(machine_t &, component_t &, lua_State *L) {
-    /* Nothing in the world emits into a block yet, so what comes in is nothing. This answers
-    honestly rather than inventing a level. */
+    /* Nothing in the world emits into a block yet, so what comes in is nothing. Answered honestly
+    rather than invented. */
     lua_pushinteger(L, 0);
     return 1;
 }
 
 inline int rs_get_output(machine_t &, component_t &c, lua_State *L) {
-    lua_pushinteger(L, c.rs_output[side_arg(L, 3)]);
+    worldc::cell_p cell = own_cell(c);
+    int face = worldc::face_from_oc_side((int)lua_tointeger(L, 3));
+    lua_pushinteger(L, (cell && face >= 0) ? cell->rs_get(face) : 0);
     return 1;
 }
 
+/*! Sets the level emitted on a side, and lights or darkens whatever that reaches.
+ *
+ * Both shapes the real component takes are accepted: a side and a level, or a table of six levels
+ * at once. This repository's own hw_interface.lua uses the first.
+ * @date 2026-09-17 */
 inline int rs_set_output(machine_t &, component_t &c, lua_State *L) {
-    /* Two shapes are accepted, as the real component does: a side and a level, or a table of six
-    levels at once. This repository's own hw_interface.lua uses the first. */
+    worldc::cell_p cell = own_cell(c);
+    if (!cell) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
     if (lua_istable(L, 3)) {
-        for (int i = 0; i < 6; i++) {
-            lua_rawgeti(L, 3, i);
-            if (lua_isnumber(L, -1))
-                c.rs_output[i] = (int)lua_tointeger(L, -1);
+        for (int side = 0; side < 6; side++) {
+            lua_rawgeti(L, 3, side);
+            int face = worldc::face_from_oc_side(side);
+            if (face >= 0 && lua_isnumber(L, -1))
+                cell->rs_out[face] = (int)lua_tointeger(L, -1);
             lua_pop(L, 1);
         }
+        cell->touch();
+        refresh_lamps_around(c);
         lua_pushboolean(L, 1);
         return 1;
     }
 
-    int side = side_arg(L, 3);
-    int was = c.rs_output[side];
-    c.rs_output[side] = (int)lua_tointeger(L, 4);
+    int face = worldc::face_from_oc_side((int)lua_tointeger(L, 3));
+    if (face < 0) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+    int was = cell->rs_out[face];
+    cell->rs_out[face] = (int)lua_tointeger(L, 4);
+    cell->touch();
+    refresh_lamps_around(c);
+
     lua_pushinteger(L, was);
     return 1;
 }
 
-/*! Builds the redstone I/O block's component. @date 2026-09-17 */
 inline component_t make_redstone(uint64_t seed) {
     component_t c;
     c.address = make_address(seed);
@@ -1568,23 +1643,335 @@ inline component_t make_redstone(uint64_t seed) {
     return c;
 }
 
-/*! A transposer's methods, answering for the inventories beside it.
+/*! The inventory on one side of a transposer, or null when there is nothing with one there.
+ * @date 2026-09-17 */
+inline worldc::cell_p side_inventory(component_t &c, lua_State *L, int arg) {
+    worldc::cell_p n = side_cell(c, (int)lua_tointeger(L, arg));
+    return (n && n->inv_size() > 0) ? n : nullptr;
+}
+
+inline int tr_inventory_size(machine_t &, component_t &c, lua_State *L) {
+    worldc::cell_p inv = side_inventory(c, L, 3);
+    if (!inv) {
+        lua_pushnil(L);
+        lua_pushstring(L, "no inventory");
+        return 2;
+    }
+    lua_pushinteger(L, inv->inv_size());
+    return 1;
+}
+
+inline int tr_inventory_name(machine_t &, component_t &c, lua_State *L) {
+    worldc::cell_p inv = side_inventory(c, L, 3);
+    if (!inv) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushstring(L, "minecraft:chest");
+    return 1;
+}
+
+/*! One slot of the inventory on a side, as the table a program expects.
  *
- * Registered so a program can SEE the transposer and ask what it can do - which is what
- * `components` lists and what `component.methods` reports. Moving items is not here yet: an
- * inventory is script-layer state today, and reaching it from a component means the item model
- * moving into C++ first. Each of these says so plainly rather than pretending to succeed, because
- * a transfer that silently does nothing is far worse to debug than one that refuses.
+ * An empty slot answers nil, which is what `getStackInSlot` does - a program tests the result
+ * rather than reading a count of zero.
+ * @date 2026-09-17 */
+inline int tr_stack_in_slot(machine_t &, component_t &c, lua_State *L) {
+    worldc::cell_p inv = side_inventory(c, L, 3);
+    int slot = (int)lua_tointeger(L, 4);
+    if (!inv) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    auto [name, count, damage, label] = inv->inv_get(slot);
+    if (count <= 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_newtable(L);
+    lua_pushstring(L, name.c_str());
+    lua_setfield(L, -2, "name");
+    lua_pushstring(L, label.empty() ? name.c_str() : label.c_str());
+    lua_setfield(L, -2, "label");
+    lua_pushnumber(L, count);
+    lua_setfield(L, -2, "size");
+    lua_pushnumber(L, 64);
+    lua_setfield(L, -2, "maxSize");
+    /* The variant, which for a mod that packs thousands of items behind one registry name is the
+    only thing telling them apart. `maxDamage` is nought for such an item - it is a variant, not a
+    tool wearing out - which is what the mod reports too. */
+    lua_pushnumber(L, damage);
+    lua_setfield(L, -2, "damage");
+    lua_pushnumber(L, 0);
+    lua_setfield(L, -2, "maxDamage");
+    lua_pushboolean(L, 0);
+    lua_setfield(L, -2, "hasTag");
+    return 1;
+}
+
+/*! How many items are in one slot on a side. @date 2026-09-17 */
+inline int tr_slot_stack_size(machine_t &, component_t &c, lua_State *L) {
+    worldc::cell_p inv = side_inventory(c, L, 3);
+    if (!inv) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto [name, count, dmg4, lbl4] = inv->inv_get((int)lua_tointeger(L, 4));
+    (void)name;
+    lua_pushinteger(L, count);
+    return 1;
+}
+
+/*! Moves items from the inventory on one side to the one on another.
+ *
+ * Answers how many were actually moved, which is what the real component answers and what a caller
+ * has to check - a transfer that could only move part of a stack moves part of it.
+ *
+ * Params: source side, sink side, an optional count, an optional source slot and sink slot. With no
+ * source slot, the first slot holding anything is taken; with no sink slot, the first that will
+ * accept it.
+ * @date 2026-09-17 */
+inline int tr_transfer_item(machine_t &, component_t &c, lua_State *L) {
+    worldc::cell_p src = side_inventory(c, L, 3);
+    worldc::cell_p dst = side_inventory(c, L, 4);
+    if (!src || !dst) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    int want = lua_isnoneornil(L, 5) ? 64 : (int)lua_tointeger(L, 5);
+    int src_slot = lua_isnoneornil(L, 6) ? 0 : (int)lua_tointeger(L, 6);
+    int dst_slot = lua_isnoneornil(L, 7) ? 0 : (int)lua_tointeger(L, 7);
+    if (want <= 0) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    /* With no source slot named, the first one holding anything. */
+    if (src_slot <= 0) {
+        for (int i = 1; i <= src->inv_size(); i++) {
+            auto [n, cnt, dn, dl] = src->inv_get(i);
+            (void)n;
+            if (cnt > 0) {
+                src_slot = i;
+                break;
+            }
+        }
+    }
+    if (src_slot <= 0) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    auto [name, have, s_dmg, s_label] = src->inv_get(src_slot);
+    if (have <= 0) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+    int moving = std::min(want, have);
+
+    /* With no sink slot named, the first that already holds the same thing, else the first empty. */
+    if (dst_slot <= 0) {
+        for (int i = 1; i <= dst->inv_size() && dst_slot <= 0; i++) {
+            auto [n, cnt, dn2, dl2] = dst->inv_get(i);
+            if (cnt > 0 && n == name && cnt < 64)
+                dst_slot = i;
+        }
+        for (int i = 1; i <= dst->inv_size() && dst_slot <= 0; i++) {
+            auto [n, cnt, dn2, dl2] = dst->inv_get(i);
+            (void)n;
+            if (cnt <= 0)
+                dst_slot = i;
+        }
+    }
+    if (dst_slot <= 0) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    auto [dst_name, dst_count, d_dmg, d_label] = dst->inv_get(dst_slot);
+    if (dst_count > 0 && dst_name != name) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+    moving = std::min(moving, 64 - dst_count);
+    if (moving <= 0) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    /* The variant travels with the item: moving a stack must not turn one GregTech
+    dust into another by dropping the number that told them apart. */
+    dst->inv_set(dst_slot, name.c_str(), dst_count + moving, s_dmg, s_label.c_str());
+    src->inv_set(src_slot, name.c_str(), have - moving, s_dmg, s_label.c_str());
+    lua_pushinteger(L, moving);
+    return 1;
+}
+
+/*! Not implemented, and it says so rather than pretending.
+ *
+ * `getAllStacks` answers an iterator userdata in the real component, with `getAll` and `next` on
+ * it, and there is nothing to gain from a plain array that behaves differently under the same name.
  * @date 2026-09-17 */
 inline int tr_unimplemented(machine_t &, component_t &, lua_State *L) {
     lua_pushnil(L);
-    lua_pushstring(L, "the simulator has no item model yet");
+    lua_pushstring(L, "not implemented in the simulator yet");
     return 2;
 }
 
-inline int tr_inventory_size(machine_t &, component_t &, lua_State *L) {
-    lua_pushnil(L);
-    lua_pushstring(L, "no inventory");
+/*! The tank on one side of a transposer, or null when there is nothing with one there.
+ * @date 2026-09-17 */
+inline worldc::cell_p side_tank(component_t &c, lua_State *L, int arg) {
+    worldc::cell_p n = side_cell(c, (int)lua_tointeger(L, arg));
+    return (n && n->kind == worldc::CELL_KIND_TANK) ? n : nullptr;
+}
+
+/*! How many tanks the block on that side has.
+ *
+ * Zero rather than an error for a block that is not a tank at all: `getTankCount` is how a program
+ * ASKS whether there is a tank there, so answering nought is the answer, not a failure.
+ * @date 2026-09-17 */
+inline int tr_tank_count(machine_t &, component_t &c, lua_State *L) {
+    lua_pushinteger(L, side_tank(c, L, 3) ? 1 : 0);
+    return 1;
+}
+
+/*! How much is in the tank on that side, in litres.
+ *
+ * The mod's signature is getTankLevel(side[, tank]); the second argument is accepted and ignored
+ * beyond its range, because a tank here has exactly one tank in it.
+ * @date 2026-09-17 */
+inline int tr_tank_level(machine_t &, component_t &c, lua_State *L) {
+    worldc::cell_p t = side_tank(c, L, 3);
+    if (!t) {
+        lua_pushnil(L);
+        lua_pushstring(L, "no tank");
+        return 2;
+    }
+    auto [name, litres, label] = t->fluid_get();
+    lua_pushnumber(L, litres);
+    return 1;
+}
+
+/*! What the tank on that side can hold, in litres. @date 2026-09-17 */
+inline int tr_tank_capacity(machine_t &, component_t &c, lua_State *L) {
+    worldc::cell_p t = side_tank(c, L, 3);
+    if (!t) {
+        lua_pushnil(L);
+        lua_pushstring(L, "no tank");
+        return 2;
+    }
+    lua_pushnumber(L, t->fluid_capacity());
+    return 1;
+}
+
+/*! A description of what is in the tank on that side.
+ *
+ * THE TABLE IS THE MOD'S. OpenComputers converts a FluidStack with ConverterFluidStack, which puts
+ * exactly `name`, `label`, `amount` and `hasTag` on it - the internal name, the localised one, the
+ * amount in litres, and whether it carries NBT. Nothing else is on it, so nothing else is put here.
+ *
+ * An empty tank answers nil, the same way an empty slot does for getStackInSlot: a program tests
+ * the result rather than reading an amount of zero.
+ * @date 2026-09-17 */
+inline int tr_fluid_in_tank(machine_t &, component_t &c, lua_State *L) {
+    worldc::cell_p t = side_tank(c, L, 3);
+    if (!t) {
+        lua_pushnil(L);
+        lua_pushstring(L, "no tank");
+        return 2;
+    }
+
+    auto [name, litres, label] = t->fluid_get();
+    if (name.empty() || litres <= 0.0) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_newtable(L);
+    lua_pushstring(L, name.c_str());
+    lua_setfield(L, -2, "name");
+    lua_pushstring(L, label.empty() ? name.c_str() : label.c_str());
+    lua_setfield(L, -2, "label");
+    lua_pushnumber(L, litres);
+    lua_setfield(L, -2, "amount");
+    lua_pushboolean(L, 0);
+    lua_setfield(L, -2, "hasTag");
+    return 1;
+}
+
+/*! Whether two tanks hold the same fluid. The mod's compareFluid(side[, tank]).
+ *
+ * There is no "selected tank" on a transposer, so this compares the two sides a program names -
+ * which is what the only sensible reading of it on a transposer is.
+ * @date 2026-09-17 */
+inline int tr_compare_fluid(machine_t &, component_t &c, lua_State *L) {
+    worldc::cell_p a = side_tank(c, L, 3);
+    worldc::cell_p b = side_tank(c, L, 4);
+    if (!a || !b) {
+        lua_pushnil(L);
+        lua_pushstring(L, "no tank");
+        return 2;
+    }
+    auto [na, la, laba] = a->fluid_get();
+    auto [nb, lb, labb] = b->fluid_get();
+    lua_pushboolean(L, na == nb ? 1 : 0);
+    return 1;
+}
+
+/*! Moves fluid from the tank on one side to the tank on another.
+ *
+ * transferFluid(sourceSide, sinkSide[, count[, sourceTank]]) - and it answers TWO values, a
+ * boolean and the amount moved, which is what the mod's own doc string says: "Transfer some fluid
+ * between two tanks. Returns operation result and filled amount". A program that only reads the
+ * first still works.
+ *
+ * `count` defaults to 1000, which is the mod's default everywhere it takes an amount of fluid -
+ * one bucket.
+ *
+ * Refuses to mix: a sink holding something else takes nothing, the way a real tank does.
+ * @date 2026-09-17 */
+inline int tr_transfer_fluid(machine_t &, component_t &c, lua_State *L) {
+    worldc::cell_p src = side_tank(c, L, 3);
+    worldc::cell_p dst = side_tank(c, L, 4);
+    double want = lua_isnoneornil(L, 5) ? 1000.0 : lua_tonumber(L, 5);
+
+    if (!src || !dst) {
+        lua_pushboolean(L, 0);
+        lua_pushinteger(L, 0);
+        return 2;
+    }
+
+    auto [sname, samount, slabel] = src->fluid_get();
+    auto [dname, damount, dlabel] = dst->fluid_get();
+    if (sname.empty() || samount <= 0.0 || want <= 0.0) {
+        lua_pushboolean(L, 0);
+        lua_pushinteger(L, 0);
+        return 2;
+    }
+    if (!dname.empty() && dname != sname) {
+        lua_pushboolean(L, 0);
+        lua_pushinteger(L, 0);
+        return 2;
+    }
+
+    double room = dst->fluid_capacity() - damount;
+    double moved = want;
+    if (moved > samount) moved = samount;
+    if (moved > room)    moved = room;
+    if (moved <= 0.0) {
+        lua_pushboolean(L, 0);
+        lua_pushinteger(L, 0);
+        return 2;
+    }
+
+    src->fluid_set(sname.c_str(), samount - moved, slabel.c_str());
+    dst->fluid_set(sname.c_str(), damount + moved, slabel.c_str());
+
+    lua_pushboolean(L, 1);
+    lua_pushnumber(L, moved);
     return 2;
 }
 
@@ -1595,18 +1982,37 @@ inline component_t make_transposer(uint64_t seed) {
     c.label = "Transposer";
     c.methods["getInventorySize"] = {true, tr_inventory_size,
             "getInventorySize(side:number):number"};
-    c.methods["getInventoryName"] = {true, tr_inventory_size,
+    c.methods["getInventoryName"] = {true, tr_inventory_name,
             "getInventoryName(side:number):string"};
-    c.methods["getStackInSlot"]   = {true, tr_unimplemented,
+    c.methods["getStackInSlot"]   = {true, tr_stack_in_slot,
             "getStackInSlot(side:number,slot:number):table"};
-    c.methods["getAllStacks"]     = {true, tr_unimplemented,
-            "getAllStacks(side:number):table"};
-    c.methods["transferItem"]     = {true, tr_unimplemented,
-            "transferItem(source:number,sink:number[,count[,sourceSlot[,sinkSlot]]])"};
-    c.methods["getTankLevel"]     = {true, tr_unimplemented,
+
+    /* The fluid half, named and shaped exactly as OpenComputers' own transposer has them -
+    li/cil/oc/server/component/Transposer$Common lists getTankCount, getTankLevel,
+    getTankCapacity, getFluidInTank and transferFluid, and TankWorldControl adds compareFluid. */
+    c.methods["getTankCount"]    = {true, tr_tank_count,
+            "getTankCount(side:number):number"};
+    c.methods["getTankLevel"]    = {true, tr_tank_level,
             "getTankLevel(side:number[,tank:number]):number"};
-    c.methods["transferFluid"]    = {true, tr_unimplemented,
-            "transferFluid(source:number,sink:number[,count]):boolean"};
+    c.methods["getTankCapacity"] = {true, tr_tank_capacity,
+            "getTankCapacity(side:number[,tank:number]):number"};
+    c.methods["getFluidInTank"]  = {true, tr_fluid_in_tank,
+            "getFluidInTank(side:number[,tank:number]):table"};
+    c.methods["compareFluid"]    = {true, tr_compare_fluid,
+            "compareFluid(side:number[,tank:number]):boolean"};
+    c.methods["transferFluid"]   = {true, tr_transfer_fluid,
+            "transferFluid(sourceSide:number,sinkSide:number[,count:number]):boolean,number"};
+    c.methods["getSlotStackSize"] = {true, tr_slot_stack_size,
+            "getSlotStackSize(side:number,slot:number):number"};
+    c.methods["transferItem"]     = {true, tr_transfer_item,
+            "transferItem(source:number,sink:number[,count[,sourceSlot[,sinkSlot]]]):number"};
+    /* getAllStacks still is not: the real one answers an iterator userdata with getAll and next on
+    it, and a plain array behaving differently under the same name would be worse than nothing.
+    THE FLUID METHODS USED TO BE STUBBED HERE TOO, and because a later assignment wins, those stubs
+    silently replaced the working ones above - a tank answered "not implemented" while the method
+    right beside it read the same tank perfectly well. */
+    c.methods["getAllStacks"]     = {true, tr_unimplemented,
+            "getAllStacks(side:number):userdata"};
     return c;
 }
 
@@ -1854,11 +2260,38 @@ inline bool machine_remove_component(machine_p mp, const char *address) {
     return false;
 }
 
+/*! The address of this machine's hard disk, making one the first time it is asked for.
+ *
+ * Core: THE SAVE NAMES A DISK'S FOLDER WITH THIS, so it has to exist for a computer that was loaded
+ * out of a map and never started - machine_add_hdd only runs when a machine boots, and a save
+ * written before that would have had no folder to write into. That is exactly what happened to a
+ * map from the older format: every computer in it saved zero files.
+ *
+ * `wanted` is the address read back out of a save, and is adopted when the machine has none yet;
+ * pass nothing for a disk that has never been saved.
+ * @date 2026-09-17 */
+inline std::string machine_hdd_address(machine_p mp, const char *wanted) {
+    if (!mp)
+        return {};
+    if (mp->hdd_address.empty()) {
+        static uint64_t seed = 3000;
+        mp->hdd_address = (wanted && *wanted) ? std::string(wanted) : make_address(seed++);
+    }
+    return mp->hdd_address;
+}
+
 /*! Attaches the machine's own hard disk - empty the first time, and whatever it has become after.
  *
  * Returns its address, so a caller can tell one filesystem from another.
+ *
+ * `address` MAY BE GIVEN, and the save is why. In the mod a disk's address lives in the item's NBT,
+ * so it survives the world being closed and is what names the folder the files are kept in on disk.
+ * Here the address is likewise stored with the computer - in the cell's `u`, written out beside it -
+ * and handed back in on the next load, so the same hard disk keeps the same folder. Pass nothing
+ * and a fresh one is made, which is what a newly placed computer gets.
+ *
  * @date 2026-09-16 */
-inline std::string machine_add_hdd(machine_p mp, const char *label) {
+inline std::string machine_add_hdd(machine_p mp, const char *label, const char *address) {
     if (!mp)
         return {};
     machine_t &m = *mp;
@@ -1869,8 +2302,21 @@ inline std::string machine_add_hdd(machine_p mp, const char *label) {
     }
     static uint64_t seed = 2000;
     component_t c = make_filesystem(m.hdd, seed++);
+    c.address = machine_hdd_address(mp, address);
     m.components.push_back(c);
     return c.address;
+}
+
+/*! Deletes one path off the machine's hard disk, and answers whether anything went.
+ *
+ * The counterpart of machine_hdd_write, which the script layer had no way to undo: a file could be
+ * put on a disk from outside the guest but never taken off, so a test could not check that a
+ * removal is carried through to the save.
+ * @date 2026-09-17 */
+inline bool machine_hdd_remove(machine_p mp, const char *path) {
+    if (!mp || !mp->hdd || !path)
+        return false;
+    return mp->hdd->remove(path);
 }
 
 /*! Every file on the machine's hard disk, as paths.
@@ -2065,22 +2511,28 @@ inline bool machine_key(machine_p mp, const char *kb_address, double ch, double 
 }
 
 /*! Attaches a transposer to the machine. Returns its address. @date 2026-09-17 */
-inline std::string machine_add_transposer(machine_p mp) {
+inline std::string machine_add_transposer(machine_p mp, vc::ref_t<worldc::world_t> w,
+        int x, int y, int z) {
     if (!mp)
         return {};
     static uint64_t seed = 6000;
     component_t c = make_transposer(seed++);
+    c.world = w.get();
+    c.wx = x; c.wy = y; c.wz = z;
     mp->components.push_back(c);
     announce(*mp, c.address, "transposer", true);
     return c.address;
 }
 
 /*! Attaches a redstone I/O block to the machine. Returns its address. @date 2026-09-17 */
-inline std::string machine_add_redstone(machine_p mp) {
+inline std::string machine_add_redstone(machine_p mp, vc::ref_t<worldc::world_t> w,
+        int x, int y, int z) {
     if (!mp)
         return {};
     static uint64_t seed = 7000;
     component_t c = make_redstone(seed++);
+    c.world = w.get();
+    c.wx = x; c.wy = y; c.wz = z;
     mp->components.push_back(c);
     announce(*mp, c.address, "redstone", true);
     return c.address;
@@ -2092,7 +2544,10 @@ inline int machine_redstone_output(machine_p mp, const char *address, int side) 
     if (!mp || !address || side < 0 || side > 5)
         return 0;
     component_t *c = mp->find(address);
-    return (c && c->type == "redstone") ? c->rs_output[side] : 0;
+    if (!c || c->type != "redstone")
+        return 0;
+    worldc::cell_p cell = own_cell(*c);
+    return cell ? cell->rs_get(side) : 0;
 }
 
 /*! Builds the guest state and starts machine.lua running.
@@ -2341,6 +2796,10 @@ inline int register_meta(vc::virt_state_t *vs) {
         >},
         {"machine_add_hdd", vc::luaw_function_wrapper<
                /* FN:    */ machc::machine_add_hdd,
+               /* PARAMS:*/ machine_p, const char *, const char *
+        >},
+        {"machine_hdd_address", vc::luaw_function_wrapper<
+               /* FN:    */ machc::machine_hdd_address,
                /* PARAMS:*/ machine_p, const char *
         >},
         {"machine_hdd_files", vc::luaw_function_wrapper<
@@ -2354,6 +2813,10 @@ inline int register_meta(vc::virt_state_t *vs) {
         {"machine_hdd_write", vc::luaw_function_wrapper<
                /* FN:    */ machc::machine_hdd_write,
                /* PARAMS:*/ machine_p, const char *, const char *
+        >},
+        {"machine_hdd_remove", vc::luaw_function_wrapper<
+               /* FN:    */ machc::machine_hdd_remove,
+               /* PARAMS:*/ machine_p, const char *
         >},
         {"machine_hdd_used", vc::luaw_function_wrapper<
                /* FN:    */ machc::machine_hdd_used,
@@ -2373,11 +2836,11 @@ inline int register_meta(vc::virt_state_t *vs) {
         >},
         {"machine_add_transposer", vc::luaw_function_wrapper<
                /* FN:    */ machc::machine_add_transposer,
-               /* PARAMS:*/ machine_p
+               /* PARAMS:*/ machine_p, vc::ref_t<worldc::world_t>, int, int, int
         >},
         {"machine_add_redstone", vc::luaw_function_wrapper<
                /* FN:    */ machc::machine_add_redstone,
-               /* PARAMS:*/ machine_p
+               /* PARAMS:*/ machine_p, vc::ref_t<worldc::world_t>, int, int, int
         >},
         {"machine_redstone_output", vc::luaw_function_wrapper<
                /* FN:    */ machc::machine_redstone_output,

@@ -46,6 +46,7 @@
 
 local vc = require("virt_composer")
 local blocks = require("blocks")
+local saves = require("saves")
 local world = require("world")
 
 local machines = {}
@@ -76,6 +77,12 @@ function machines.of(cell)
     local u = blocks.u(cell)
     if not u.machine then
         u.machine = vc.machine_create()
+        -- THE DISK'S ADDRESS IS SETTLED HERE, the moment the machine exists, and not later when
+        -- the disk is booted or written out. It names the folder the files are saved into and it
+        -- is written into the map beside the computer, so anything that settled it later would
+        -- depend on the map being saved after the disks - and the first save after loading an
+        -- older world wrote a map with no address in it, for exactly that reason.
+        u.hdd_address = vc.machine_hdd_address(u.machine, u.hdd_address or "")
         -- The cell goes on the registry beside its machine, because keeping a machine's components
         -- level with the world means knowing which block it belongs to, every frame.
         live[#live + 1] = {cell = cell, machine = u.machine, seen_version = -1}
@@ -143,14 +150,16 @@ function machines.reconcile(w, case)
         elseif n.kind == blocks.KIND.TRANSPOSER then
             want[key] = true
             if not u.attached[key] then
-                local addr = vc.machine_add_transposer(m)
+                local p = n:pos()
+                local addr = vc.machine_add_transposer(m, w, p[1], p[2], p[3])
                 blocks.u(n).address = addr
                 u.attached[key] = {addr}
             end
         elseif n.kind == blocks.KIND.REDSTONE then
             want[key] = true
             if not u.attached[key] then
-                local addr = vc.machine_add_redstone(m)
+                local p = n:pos()
+                local addr = vc.machine_add_redstone(m, w, p[1], p[2], p[3])
                 blocks.u(n).address = addr
                 u.attached[key] = {addr}
             end
@@ -232,7 +241,11 @@ function machines.start(cell, w, mc_path)
     u.keyboard = nil
 
     -- The case's own hard disk, out of the parts it was crafted with.
-    vc.machine_add_hdd(m, "hdd")
+    -- THE ADDRESS IS REMEMBERED, not made fresh each time. It names the folder this disk
+    -- was saved into, the way the mod keeps a filesystem's address in the item's NBT, and
+    -- world.lua writes it out beside the computer. A case that has never run has none yet
+    -- and is given one here.
+    vc.machine_add_hdd(m, "hdd", machines.hdd_address(cell))
 
     -- Everything the world says is attached. The same call keeps it level from now on.
     machines.reconcile(w, cell)
@@ -387,55 +400,160 @@ function machines.screen_output(w, screen)
     return machines.output(host), host, false, nil, nil
 end
 
---[[ @brief Writes every machine's hard disk out.
+--[[ @brief Every file on a hard disk's folder, as paths relative to it.
 -- |
--- | Core: an installed operating system has to survive closing the simulator, or `install` is a
--- | thing you do once per session rather than once per computer. The world file holds blocks; this
--- | holds what is on their disks, which is a different kind of thing and a great deal larger - a
--- | fresh OpenOS install is about a hundred and eighty files.
+-- | A directory on the host is a directory here, so `home/prog.lua` on the guest is a real `home`
+-- | folder with a real `prog.lua` inside it - being able to open a program in a text editor is the
+-- | whole point of keeping a disk as a folder rather than as a packed file.
 -- |
--- | The format is length prefixed rather than line based, because the contents are file data and a
--- | Lua source file is full of newlines. Each entry is a header line naming the machine, the path
--- | and the exact byte count, then that many bytes verbatim.
+-- | @param dir     string - the folder to walk
+-- | @param prefix  string - what has been walked into so far, "" at the top
+-- | @param out     table - collected paths, appended to
 -- |
--- | A machine is named by where its case is, which is what ties a disk back to a computer when the
--- | world is read again.
+-- | @date 2026-09-17 14:00
+--]]
+local function walk_disk(dir, prefix, out)
+    for _, name in ipairs(vc.path_list_dir(dir)) do
+        local full = dir .. "/" .. name
+        local rel = (prefix == "") and name or (prefix .. "/" .. name)
+        if vc.path_is_dir(full) then
+            walk_disk(full, rel, out)
+        else
+            out[#out + 1] = rel
+        end
+    end
+end
+
+--[[ @brief Writes out what is on every machine's hard disk, one folder per disk.
+-- |
+-- | Core: a disk is a directory of real files, named by its address, under the save's
+-- | `opencomputers` folder - which is how the mod stores filesystems, and means a program can be
+-- | read and edited from outside the simulator.
+-- |
+-- | THE FOLDER IS CLEARED FIRST. Writing over it would leave a file the guest had deleted lying on
+-- | the host, and it would come back on the next load; a save would end up being the union of every
+-- | state the disk had ever been in rather than the state it is in.
+-- |
+-- | Separate from the map because it is a different kind of thing, and a great deal larger: a fresh
+-- | OpenOS install is about a hundred and eighty files, against a map of a dozen lines.
 -- |
 -- | @param state  state
--- | @param path   string
--- | @return boolean - false when the file could not be opened for writing
+-- | @return number - how many files were written
 -- |
--- | @date 2026-09-17 10:00
+-- | @date 2026-09-17 14:00
 --]]
-function machines.save_disks(state, path)
-    local file = io.open(path, "wb")
-    if not file then
-        return false
+--[[ @brief The address of a case's hard disk, making one if it has never had one.
+-- |
+-- | Core: what names the disk's folder in the save, and the field world.lua writes out beside the
+-- | computer so the two find each other again. The work is in machines.of, which settles the
+-- | address as soon as a machine exists; this makes sure there IS a machine first, for a case that
+-- | was loaded out of a map and never switched on.
+-- |
+-- | @param cell  cell - a case
+-- | @return string
+-- |
+-- | @date 2026-09-17 14:00
+--]]
+function machines.hdd_address(cell)
+    machines.of(cell)
+    return blocks.u(cell).hdd_address
+end
+
+function machines.save_disks(state)
+    if not vc.path_make_dirs(saves.disks_dir()) then
+        return 0
     end
 
-    file:write("# gregtech_automation simulator disks\n")
-    file:write("# f <x> <y> <z> <bytes> <path>, then that many bytes\n")
-
+    local count = 0
     for _, cell in ipairs(state.world:occupied()) do
-        if cell.kind == blocks.KIND.CASE then
-            local m = blocks.u(cell).machine
-            if m then
-                local p = cell:pos()
-                for _, name in ipairs(vc.machine_hdd_files(m)) do
-                    local data = vc.machine_hdd_read(m, name)
-                    file:write(string.format("f %d %d %d %d %s\n",
-                            p[1], p[2], p[3], #data, name))
-                    file:write(data)
-                    file:write("\n")
+        local u = (cell.kind == blocks.KIND.CASE) and blocks.u(cell) or nil
+        if u and u.machine then
+            local dir = saves.disk_dir(machines.hdd_address(cell))
+            vc.path_remove_all(dir)
+            vc.path_make_dirs(dir)
+
+            for _, name in ipairs(vc.machine_hdd_files(u.machine)) do
+                -- The directories are implied by the paths, so they are made on the way past.
+                local parent = name:match("^(.*)/[^/]*$")
+                if parent then
+                    vc.path_make_dirs(dir .. "/" .. parent)
+                end
+                local file = io.open(dir .. "/" .. name, "wb")
+                if file then
+                    file:write(vc.machine_hdd_read(u.machine, name))
+                    file:close()
+                    count = count + 1
                 end
             end
         end
     end
-    file:close()
-    return true
+    return count
 end
 
 --[[ @brief Reads the disks back, onto the machines of the cases they belong to.
+-- |
+-- | Called after the world is loaded, so the cases exist and each already knows its disk's address -
+-- | that is the field world.lua reads off the end of a cell line. A machine is made for every case
+-- | that has files, which is why a computer can be started and find its system already installed
+-- | without having been booted first.
+-- |
+-- | A folder naming a case that is no longer there is simply never looked at. A world where
+-- | somebody broke a computer is an ordinary world, and the files stay on disk rather than being
+-- | tidied away by a load.
+-- |
+-- | Falls back to the single packed file the earlier version wrote when the directory holds nothing
+-- | - see machines.load_disks_legacy.
+-- |
+-- | @param state  state
+-- | @return number - how many files were restored
+-- |
+-- | @date 2026-09-17 14:00
+--]]
+function machines.load_disks(state)
+    local count = 0
+    for _, cell in ipairs(state.world:occupied()) do
+        local u = (cell.kind == blocks.KIND.CASE) and blocks.u(cell) or nil
+        if u and u.hdd_address then
+            local dir = saves.disk_dir(u.hdd_address)
+            if vc.path_is_dir(dir) then
+                local names = {}
+                walk_disk(dir, "", names)
+                if #names > 0 then
+                    local m = machines.of(cell)
+                    for _, name in ipairs(names) do
+                        local file = io.open(dir .. "/" .. name, "rb")
+                        if file then
+                            local data = file:read("a") or ""
+                            file:close()
+                            if vc.machine_hdd_write(m, name, data) then
+                                count = count + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if count == 0 then
+        count = machines.load_disks_legacy(state, saves.legacy("disks.save"))
+    end
+    return count
+end
+
+--[[ @brief Reads a PRE-DIRECTORY save's disks back, out of the one packed file they used
+-- | to live in.
+-- |
+-- | Kept because that file exists on any machine that ran the earlier version, and on at
+-- | least one of them it holds a whole installed operating system. Nothing writes this
+-- | format any more: machines.load_disks falls back to it when the save directory has
+-- | nothing, and the next save writes the directory layout instead. The old file is left
+-- | where it is, as its own backup.
+-- |
+-- | A machine is named by where its case is, which is what tied a disk to a computer
+-- | before the address was written down beside it.
+-- |
+-- | Originally: reads the disks back, onto the machines of the cases they belong to.
 -- |
 -- | Called after the world is loaded, so the cases exist to attach them to. A machine is made for
 -- | each case that has files, which is why a computer can be started and find its system already
@@ -450,7 +568,7 @@ end
 -- |
 -- | @date 2026-09-17 10:00
 --]]
-function machines.load_disks(state, path)
+function machines.load_disks_legacy(state, path)
     local file = io.open(path, "rb")
     if not file then
         return 0

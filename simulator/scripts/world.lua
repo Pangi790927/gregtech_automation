@@ -183,9 +183,20 @@ function world.place(state, make)
     end
 
     local cell = make()
-    local c = vc.cam_get()
-    -- From the block towards the camera, so the front ends up looking back at the placer.
-    cell.facing = blocks.facing_towards(c[1] - (px + 0.5), c[3] - (pz + 0.5))
+    if blocks.faces_the_click(cell.kind) and t.face then
+        -- POINTING AT WHAT IT WAS STUCK TO. The ray struck face `t.face` of the block behind, and
+        -- the new cell sits on the far side of it, so the way back is the opposite face - which is
+        -- face_e's whole reason for pairing opposites as n and n ~ 1.
+        --
+        -- A bus in AE2 is a part bolted to the side of the machine it serves, so the face it is on
+        -- is what it means. Turning it to face the placer, the way everything else here does, would
+        -- lose that.
+        cell.facing = t.face ~ 1
+    else
+        local c = vc.cam_get()
+        -- From the block towards the camera, so the front ends up looking back at the placer.
+        cell.facing = blocks.facing_towards(c[1] - (px + 0.5), c[3] - (pz + 0.5))
+    end
 
     if not state.world:set(px, py, pz, cell) then
         return nil
@@ -418,8 +429,9 @@ function world.save(state, path)
 
     file:write("# gregtech_automation simulator world\n")
     file:write("# k x y z yaw pitch           - where the camera was left\n")
-    file:write("# c x y z kind state facing   - a cell filling a slot\n")
+    file:write("# c x y z kind state facing [disk] - a cell; a case also names its disk\n")
     file:write("# w x y z face kind state     - a flat thing clinging to a face\n")
+    file:write("# t x y z litres name|label   - what a tank holds\n")
 
     -- The camera is part of what a saved world is: coming back to a machine and being put down
     -- looking at it is the difference between a save and a list of coordinates.
@@ -429,9 +441,29 @@ function world.save(state, path)
 
     for _, cell in ipairs(state.world:occupied()) do
         local p = cell:pos()
-        file:write(string.format("c %d %d %d %d %d %d\n",
-                p[1], p[2], p[3], cell.kind, cell.state, cell.facing))
+        -- A COMPUTER CARRIES ITS DISK'S ADDRESS, the way the mod keeps it in the item's NBT.
+        -- It is what names the folder its files were written to (see saves.lua), so without
+        -- it a hard disk and its computer would find each other only by luck on a reload.
+        local disk = (cell.kind == blocks.KIND.CASE) and blocks.u(cell).hdd_address or nil
+        file:write(string.format("c %d %d %d %d %d %d%s\n",
+                p[1], p[2], p[3], cell.kind, cell.state, cell.facing,
+                disk and (" " .. disk) or ""))
     end
+    -- What each tank holds. On its own line rather than appended to the cell, because a fluid has
+    -- three fields of its own and a name that may have spaces in it - "Heavy Fuel" - which a
+    -- space-separated cell line could not carry. The litres are written whole; GregTech counts
+    -- them in whole litres too.
+    for _, cell in ipairs(state.world:occupied()) do
+        if cell.kind == blocks.KIND.TANK then
+            local held = cell:fluid_get()
+            if held[1] ~= "" and held[2] > 0 then
+                local p = cell:pos()
+                file:write(string.format("t %d %d %d %d %s|%s\n",
+                        p[1], p[2], p[3], math.floor(held[2] + 0.5), held[1], held[3]))
+            end
+        end
+    end
+
     -- The wires go after the cells, and the order is load-bearing: a wire needs the face it clings
     -- to to be exposed, which means the block under it has to exist by the time it is read back.
     for _, entry in ipairs(state.world:occupied_faces()) do
@@ -478,6 +510,20 @@ function world.load(state, path)
                 state.camera_restored = true
             end
 
+            -- A tank's contents. Read before the cell lines are tried, because the letter would
+            -- otherwise be taken for part of a coordinate; and applied to a tank that must already
+            -- be there, which it is - the cells are written first.
+            local tx, ty, tz, tl, trest =
+                    trimmed:match("^t (-?%d+) (-?%d+) (-?%d+) (%d+) (.*)$")
+            if tx then
+                local fname, flabel = trest:match("^([^|]*)|(.*)$")
+                fname = fname or trest
+                local at = state.world:get(tonumber(tx), tonumber(ty), tonumber(tz))
+                if at and at.kind == blocks.KIND.TANK then
+                    at:fluid_set(fname, tonumber(tl), flabel or fname)
+                end
+            end
+
             -- The six field form carries the kind. The five field one predates it and only ever
             -- held wires, so that is what it reads back as.
             local wx, wy, wz, wface, wkind, wst =
@@ -498,14 +544,20 @@ function world.load(state, path)
                 -- A cell line. The `c` prefix is optional, so a file written before wires existed
                 -- still loads unchanged.
                 local body = trimmed:match("^c (.*)$") or trimmed
-                local x, y, z, kind, st, facing =
-                        body:match("^(-?%d+) (-?%d+) (-?%d+) (%d+) (%d+) (%d+)$")
+                local x, y, z, kind, st, facing, disk =
+                        body:match("^(-?%d+) (-?%d+) (-?%d+) (%d+) (%d+) (%d+)%s*(%S*)$")
                 if x then
                     -- Through the kind's own creator, so a drive comes back with its floppy and a
                     -- case with its parts. `blocks.make` would set the number and nothing else.
                     local cell = blocks.make_kind(tonumber(kind))
                     cell.state = tonumber(st)
                     cell.facing = tonumber(facing)
+                    -- The trailing field is optional: a save written before disks had their
+                    -- own folders has none, and the computer is given a fresh address the
+                    -- first time it is started.
+                    if disk ~= "" then
+                        blocks.u(cell).hdd_address = disk
+                    end
                     if state.world:set(tonumber(x), tonumber(y), tonumber(z), cell) then
                         count = count + 1
                     end

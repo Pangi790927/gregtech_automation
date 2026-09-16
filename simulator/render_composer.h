@@ -27,6 +27,7 @@
 #include "world_composer.h"
 
 #include <cmath>
+#include <map>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -154,8 +155,44 @@ struct renderer_t {
     int tile_cable = 0;
     int tile_cable_cap = 0;
 
+    /*! The fluids GregTech ships, in the order they are offered, and where each one's picture
+     * landed in the atlas.
+     *
+     * A CATALOGUE READ OUT OF THE GAME, not a list written here: build_atlas asks the archive which
+     * fluids it has textures for, so the simulator offers whatever the installed GregTech actually
+     * contains. The labels come from GregTech's own generated lang file, so a tank says "Sulfuric
+     * Acid" rather than "sulfuricacid".
+     * @date 2026-09-17 */
+    std::vector<std::string> fluid_names;
+    std::vector<std::string> fluid_labels;
+    std::map<std::string, int> fluid_tile;
+
+    /*! The items a chest can be stocked with, and a texture of their own to draw them from.
+     *
+     * A SECOND ATLAS, and a grid rather than a row. The world atlas is one tile tall so that a
+     * tile's index is its u coordinate and nothing has to divide; five hundred odd items would
+     * make it nine thousand pixels wide, which is past what a GL 3.0 implementation is obliged to
+     * accept. This one is only ever sampled by the interface, so it can be shaped for size.
+     * @date 2026-09-17 */
+    glu::texture_t item_atlas;
+    int item_cols = 0;
+    int item_rows = 0;
+    std::vector<std::string> item_ids;
+    std::vector<std::string> item_labels;
+    /*! The variant of each id, which for a mod packing thousands of items behind one registry name
+     * is the only thing telling them apart. Zero for an item that has no variants.
+     * @date 2026-09-17 */
+    std::vector<int> item_damage;
+    std::map<std::string, int> item_index;
+    /*! Whether the names above are the modpack's real registry names, or the texture names the
+     * catalogue falls back to when there is no save to read a registry out of. The panel says
+     * which, because the two are not the same kind of thing. @date 2026-09-17 */
+    bool items_from_registry = false;
+
     bool mc_loaded = false;
     bool vanilla_loaded = false;
+    bool irontank_loaded = false;
+    bool gregtech_loaded = false;
     std::string mc_path;
     std::string vanilla_path;
 
@@ -195,10 +232,173 @@ inline renderer_t g_rend;
  * which, which would be a guess that quietly rots when the mod updates.
  *
  * @date 2026-09-16 */
+/*! Builds the list of items a chest can be stocked with, and the pictures for the ones that have
+ * one.
+ *
+ * Core: THE NAMES COME FROM THE MODPACK'S OWN REGISTRY, read out of a save's level.dat - the same
+ * list NEI shows, ten thousand items and three thousand blocks on the author's install. That is
+ * the only place on disk the real registry names live; a texture is called `apple_golden.png`
+ * while the item is `minecraft:golden_apple`, and a lang key is neither.
+ *
+ * THE PICTURES COME FROM EVERY JAR, not just vanilla's. A mod's art lives at
+ * `assets/<namespace>/textures/items/<name>.png` and its items register as `<namespace>:<name>`,
+ * so the two are joined on exactly that pair. Vanilla is looked up by bare file name as well,
+ * since its jar is not under mods/ and its registry names mostly match its texture names.
+ *
+ * GregTech's own generated items are the exception, and they are drawn the way GregTech draws
+ * them: it has no picture on disk for a naquadah dust, only a greyscale shape and a material
+ * colour, so mc_assets.h reads its material list out of the compiled code and tints the shape.
+ * What still has no picture lists with an empty square, because its NAME is what a program
+ * compares and is worth offering either way.
+ *
+ * When there is no save to read, the list falls back to the textures themselves, named the way
+ * they used to be. It is worse - those are texture names, not registry names - but it is better
+ * than an empty picker on a machine that has the jars and no world.
+ *
+ * @date 2026-09-17 */
+inline void build_item_atlas(renderer_t &r, const mca::mc_source_t &src) {
+    r.item_ids.clear();
+    r.item_labels.clear();
+    r.item_damage.clear();
+    r.item_index.clear();
+
+    /* What the registry says exists. That is the list; the pictures come after. */
+    std::vector<std::string> ids = src.registry_names(r.mc_path);
+    bool from_registry = !ids.empty();
+    r.items_from_registry = from_registry;
+
+    /* Vanilla's own pictures, which are the fallback catalogue when there is no save to read and
+    also the art for `minecraft:` ids, whose jar is not under mods/. */
+    std::map<std::string, mca::tile_t> vanilla_pics;
+    for (const std::string &rel : src.vanilla_texture_names()) {
+        mca::tile_t t;
+        if (src.vanilla_texture_tile(rel, t))
+            vanilla_pics.emplace(rel.substr(rel.find('/') + 1), t);
+    }
+
+    if (!from_registry) {
+        for (const auto &kv : vanilla_pics)
+            ids.push_back("minecraft:" + kv.first);
+        std::sort(ids.begin(), ids.end());
+    }
+
+    /* Ask the mods for a picture for every id at once. Keys are lower cased because a registry
+    spells a namespace `Botania` while the asset folder spells it `botania`. */
+    std::unordered_set<std::string> wanted;
+    for (const std::string &id : ids) {
+        std::string key = id;
+        for (char &ch : key)
+            ch = (char)tolower((unsigned char)ch);
+        wanted.insert(key);
+    }
+    std::map<std::string, mca::tile_t> mod_pics = src.mod_textures(r.mc_path, wanted);
+
+    std::vector<mca::tile_t> tiles;
+    for (const std::string &id : ids) {
+        if (r.item_index.count(id + "#0"))
+            continue;
+
+        size_t colon = id.find(':');
+        std::string bare = id.substr(colon + 1);
+        std::string label = bare;
+        for (char &ch : label)
+            if (ch == '_')
+                ch = ' ';
+
+        std::string key = id;
+        for (char &ch : key)
+            ch = (char)tolower((unsigned char)ch);
+
+        const mca::tile_t *pic = nullptr;
+        auto m = mod_pics.find(key);
+        if (m != mod_pics.end()) {
+            pic = &m->second;
+        }
+        else {
+            auto v = vanilla_pics.find(bare);
+            if (v != vanilla_pics.end())
+                pic = &v->second;
+        }
+
+        /* NOTHING WITHOUT A PICTURE IS OFFERED. The author, 2026-09-17: "filter out the
+        non-items, I don't think you render them correctly anyway" - and that was right, a listing
+        of seven thousand blank squares is a listing of nothing. What has no picture here is
+        mostly what cannot have one: GregTech and its kin draw thousands of items off a single
+        sheet indexed by damage value, which a registry name cannot index into.
+
+        The names are not lost - the panel's text box takes any id typed into it, so an item with
+        no picture can still be put in a chest by name. */
+        if (!pic)
+            continue;
+
+        r.item_index[id + "#0"] = (int)tiles.size();
+        tiles.push_back(*pic);
+
+        r.item_ids.push_back(id);
+        r.item_labels.push_back(label);
+        r.item_damage.push_back(0);
+    }
+
+    /* And the items a mod packs behind one registry name, which the registry cannot list: every
+    GregTech dust, cell and pipe is one of three names with a damage value after it. These have no
+    picture - GregTech builds theirs at runtime by tinting a greyscale texture set with the
+    material's colour, which no file holds - so they list with a blank square and their real name.
+    Leaving them out is what made searching for a naquadah dust find nothing. */
+    for (const auto &mi : src.gt_meta_items()) {
+        std::string key = mi.id + "#" + std::to_string(mi.damage);
+        if (r.item_index.count(key))
+            continue;
+
+        if (mi.has_tile) {
+            r.item_index[key] = (int)tiles.size();
+            tiles.push_back(mi.tile);
+        }
+        r.item_ids.push_back(mi.id);
+        r.item_labels.push_back(mi.label);
+        r.item_damage.push_back(mi.damage);
+    }
+
+    if (tiles.empty()) {
+        r.item_cols = r.item_rows = 0;
+        DBG("render: %zu items, no pictures - is the vanilla jar set?", r.item_ids.size());
+        return;
+    }
+
+    r.item_cols = 32;
+    r.item_rows = ((int)tiles.size() + r.item_cols - 1) / r.item_cols;
+
+    int w = r.item_cols * mca::TILE_PX;
+    int h = r.item_rows * mca::TILE_PX;
+    std::vector<uint8_t> pixels((size_t)w * h * 4, 0);
+    for (int i = 0; i < (int)tiles.size(); i++) {
+        int col = i % r.item_cols;
+        int row = i / r.item_cols;
+        for (int y = 0; y < mca::TILE_PX; y++)
+            for (int x = 0; x < mca::TILE_PX; x++) {
+                const uint8_t *sp = tiles[(size_t)i].at(x, y);
+                uint8_t *dp = &pixels[(((size_t)row * mca::TILE_PX + y) * w
+                        + col * mca::TILE_PX + x) * 4];
+                dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2]; dp[3] = sp[3];
+            }
+    }
+
+    r.item_atlas.upload(w, h, pixels.data());
+    DBG("render: %zu items offered (%s), atlas %dx%d",
+            r.item_ids.size(), from_registry ? "from the save's registry" : "from texture names",
+            w, h);
+}
+
 inline void build_atlas(renderer_t &r) {
     mca::mc_source_t src;
     r.mc_loaded = src.open(r.mc_path);
     r.vanilla_loaded = src.open_vanilla(r.vanilla_path);
+    src.open_extras(r.mc_path);
+    r.irontank_loaded = src.irontank_open();
+    r.gregtech_loaded = src.gregtech_open();
+
+    r.fluid_names.clear();
+    r.fluid_labels.clear();
+    r.fluid_tile.clear();
 
     std::vector<mca::tile_t> tiles;
 
@@ -459,6 +659,67 @@ inline void build_atlas(renderer_t &r) {
         }
     }
 
+    /* The liquid tank. The author asked on 2026-09-17 for Iron Tanks' model, and that mod draws a
+    tank as a metal frame with a hole in the middle - its side.png has one fully transparent palette
+    entry - so the fluid inside is simply drawn as a smaller box behind it rather than being
+    composited into the frame. The iron tier is the one used; the others are the same shape. */
+    {
+        mca::tile_t side, top;
+        if (!src.tank_tile("ironTank", "side", side))
+            side = mca::fallback_panel(150, 152, 156, 131);
+        if (!src.tank_tile("ironTank", "topbottom", top))
+            top = mca::fallback_panel(130, 132, 136, 137);
+
+        for (int st = 0; st < 4; st++) {
+            r.tile_cell[worldc::CELL_KIND_TANK][st][ROLE_FRONT] = push(side);
+            r.tile_cell[worldc::CELL_KIND_TANK][st][ROLE_BACK]  = push(side);
+            r.tile_cell[worldc::CELL_KIND_TANK][st][ROLE_TOP]   = push(top);
+            r.tile_cell[worldc::CELL_KIND_TANK][st][ROLE_SIDE]  = push(side);
+        }
+    }
+
+    /* The ME import and export buses. Scenery - the author asked on 2026-09-17 for the blocks and
+    not the behaviour - so there is one look per kind and no lit variant. Applied Energistics draws
+    these as cable parts rather than as blocks, so what it ships is the part's item picture.
+
+    IT GOES ON EVERY FACE BUT THE FRONT. The front is the one pointing at the machine the bus was
+    stuck to, which means it is flush against a solid block and culled - putting the picture there
+    would hide the only thing that tells an import bus from an export bus. So the front is plain
+    casing and the picture is on the faces somebody can actually see. */
+    {
+        mca::tile_t casing = load_or("MEChest", mca::fallback_panel(86, 92, 104, 151));
+        mca::tile_t imp, exp;
+        if (!src.ae2_tile("ItemPart.ImportBus", imp))
+            imp = mca::fallback_panel(80, 130, 90, 153);
+        if (!src.ae2_tile("ItemPart.ExportBus", exp))
+            exp = mca::fallback_panel(150, 110, 70, 155);
+
+        for (int st = 0; st < 4; st++) {
+            r.tile_cell[worldc::CELL_KIND_IMPORT_BUS][st][ROLE_FRONT] = push(casing);
+            r.tile_cell[worldc::CELL_KIND_IMPORT_BUS][st][ROLE_BACK]  = push(imp);
+            r.tile_cell[worldc::CELL_KIND_IMPORT_BUS][st][ROLE_TOP]   = push(imp);
+            r.tile_cell[worldc::CELL_KIND_IMPORT_BUS][st][ROLE_SIDE]  = push(imp);
+
+            r.tile_cell[worldc::CELL_KIND_EXPORT_BUS][st][ROLE_FRONT] = push(casing);
+            r.tile_cell[worldc::CELL_KIND_EXPORT_BUS][st][ROLE_BACK]  = push(exp);
+            r.tile_cell[worldc::CELL_KIND_EXPORT_BUS][st][ROLE_TOP]   = push(exp);
+            r.tile_cell[worldc::CELL_KIND_EXPORT_BUS][st][ROLE_SIDE]  = push(exp);
+        }
+    }
+
+    /* Every fluid GregTech has a picture for, so a tank can show what is in it and the panel that
+    configures one can show what it is offering. Reading the archive rather than naming fluids here
+    is what keeps this honest when the modpack changes underneath it. */
+    for (const std::string &name : src.fluid_names()) {
+        mca::tile_t t;
+        if (!src.fluid_tile(name, t))
+            continue;
+        r.fluid_tile[name] = push(t);
+        r.fluid_names.push_back(name);
+        r.fluid_labels.push_back(src.fluid_label(name));
+    }
+    DBG("render: %zu fluids from gregtech", r.fluid_names.size());
+
     /* One row, so a tile's atlas coordinate is its index and nothing has to divide. */
     r.tile_count = (int)tiles.size();
     r.atlas_w = r.tile_count * mca::TILE_PX;
@@ -473,6 +734,8 @@ inline void build_atlas(renderer_t &r) {
             }
 
     r.atlas.upload(r.atlas_w, mca::TILE_PX, pixels.data());
+
+    build_item_atlas(r, src);
     DBG("render: atlas %dx%d, %d tiles, minecraft textures %s",
             r.atlas_w, mca::TILE_PX, r.tile_count, r.mc_loaded ? "loaded" : "not found");
 }
@@ -746,6 +1009,25 @@ inline void rebuild_world_mesh(renderer_t &r, const worldc::world_t &w) {
             int tile = r.tile_cell[kind][state][face_role(c->facing, f)];
             emit_face(verts, indices, c->x, c->y, c->z, f, tile, r.tile_count, FACE_SHADE[f], 0.0f);
         }
+
+        /* What is in a tank, drawn as a smaller box standing inside the shell. It is visible
+        because the shell's own texture has a transparent middle and the fragment shader discards
+        fully transparent texels - the same arrangement Iron Tanks itself uses. The box is as tall
+        as the tank is full, so a glance says roughly how much is in there. */
+        if (kind == worldc::CELL_KIND_TANK && !c->fluid.empty() && c->fluid_amount > 0.0) {
+            auto it = r.fluid_tile.find(c->fluid);
+            if (it != r.fluid_tile.end()) {
+                double full = c->fluid_amount / worldc::TANK_CAPACITY_L;
+                if (full > 1.0) full = 1.0;
+                /* Never quite nothing: a tank holding a single litre of something should still
+                show a film of it rather than looking empty. */
+                float height = (float)(0.04 + full * 0.88);
+                float lo[3] = {(float)c->x + 0.08f, (float)c->y + 0.04f, (float)c->z + 0.08f};
+                float hi[3] = {(float)c->x + 0.92f, (float)c->y + 0.04f + height,
+                        (float)c->z + 0.92f};
+                emit_box(verts, indices, lo, hi, it->second, r.tile_count);
+            }
+        }
     }
 
     /* The wires, which live on faces rather than in slots and so are walked separately. Their
@@ -966,6 +1248,108 @@ inline std::tuple<double, double, double, double> render_tile_uv(int kind, int s
 inline bool render_mc_ok() { return renderc::g_rend.mc_loaded; }
 
 /*! Which jar the textures came from, or an empty string when none did. @date 2026-09-16 */
+/*! Every fluid the installed GregTech has a picture for, by internal name.
+ *
+ * What a tank can be configured to hold. Empty when GregTech is not there, which the panel shows
+ * as "no fluids found" rather than pretending to a list of its own.
+ * @date 2026-09-17 */
+inline std::vector<std::string> render_fluid_names() {
+    return renderc::g_rend.fluid_names;
+}
+
+/*! The same fluids, as the game writes them - "Sulfuric Acid" for "sulfuricacid".
+ *
+ * A second list rather than a table of pairs, because it is handed to Lua as a plain array and
+ * the two are always the same length and the same order.
+ * @date 2026-09-17 */
+inline std::vector<std::string> render_fluid_labels() {
+    return renderc::g_rend.fluid_labels;
+}
+
+/*! Where one fluid's picture sits in the atlas, or -1 when it has none.
+ *
+ * For drawing a fluid in the interface: hand it to render_tile_uv's companion the same way a
+ * cell's face tile is used.
+ * @date 2026-09-17 */
+inline double render_fluid_tile(const char *name) {
+    if (!name)
+        return -1.0;
+    auto it = renderc::g_rend.fluid_tile.find(name);
+    return (it == renderc::g_rend.fluid_tile.end()) ? -1.0 : (double)it->second;
+}
+
+/*! Where a tile sits in the atlas, as `{u0, v0, u1, v1}`.
+ *
+ * The same answer render_tile_uv gives for a cell's face, but for a tile index that was not found
+ * through a cell - a fluid's, which belongs to no kind.
+ * @date 2026-09-17 */
+inline std::vector<double> render_tile_uv_at(int tile) {
+    const renderer_t &r = renderc::g_rend;
+    if (tile < 0 || tile >= r.tile_count || r.tile_count <= 0)
+        return {0.0, 0.0, 1.0, 1.0};
+    double du = 1.0 / (double)r.tile_count;
+    return {(double)tile * du, 0.0, (double)(tile + 1) * du, 1.0};
+}
+
+/*! What a liquid tank holds when it is full, in litres. GregTech's Super Tank IV.
+ * @date 2026-09-17 */
+inline double render_tank_capacity() {
+    return worldc::TANK_CAPACITY_L;
+}
+
+/*! Every item the panel can stock a chest with, as ids.
+ *
+ * Real registry names when there is a save to read them out of - see build_item_atlas.
+ * @date 2026-09-17 */
+inline std::vector<std::string> render_item_ids() {
+    return renderc::g_rend.item_ids;
+}
+
+/*! The same, tidied for reading - "apple golden" rather than "apple_golden". @date 2026-09-17 */
+inline std::vector<std::string> render_item_labels() {
+    return renderc::g_rend.item_labels;
+}
+
+/*! The GL texture the item pictures live in. A different one from the world's atlas.
+ * @date 2026-09-17 */
+/*! The variant of each offered item, matching render_item_ids one for one. @date 2026-09-17 */
+inline std::vector<double> render_item_damage() {
+    std::vector<double> out;
+    out.reserve(renderc::g_rend.item_damage.size());
+    for (int d : renderc::g_rend.item_damage)
+        out.push_back((double)d);
+    return out;
+}
+
+inline bool render_item_from_registry() {
+    return renderc::g_rend.items_from_registry;
+}
+
+/*! The GL texture the item pictures live in. A different one from the world's atlas.
+ * @date 2026-09-17 */
+inline double render_item_atlas_id() {
+    return (double)renderc::g_rend.item_atlas.tex;
+}
+
+/*! Where one item sits in the item atlas, as `{u0, v0, u1, v1}`.
+ *
+ * A whole tile of a blank texture when the item is not in the catalogue, so a caller drawing an
+ * unknown name gets nothing rather than a wrong picture.
+ * @date 2026-09-17 */
+inline std::vector<double> render_item_uv(const char *id, int damage) {
+    const renderer_t &r = renderc::g_rend;
+    if (!id || r.item_cols <= 0 || r.item_rows <= 0)
+        return {0.0, 0.0, 0.0, 0.0};
+    auto it = r.item_index.find(std::string(id) + "#" + std::to_string(damage));
+    if (it == r.item_index.end())
+        return {0.0, 0.0, 0.0, 0.0};
+
+    int col = it->second % r.item_cols;
+    int row = it->second / r.item_cols;
+    return {(double)col / r.item_cols, (double)row / r.item_rows,
+            (double)(col + 1) / r.item_cols, (double)(row + 1) / r.item_rows};
+}
+
 inline std::string render_mc_source() {
     return renderc::g_rend.mc_loaded ? renderc::g_rend.mc_path : std::string();
 }
@@ -1142,6 +1526,42 @@ inline int register_meta(vc::virt_state_t *vs) {
         >},
         {"render_mc_ok", vc::luaw_function_wrapper<
                /* FN:    */ renderc::render_mc_ok
+        >},
+        {"render_fluid_names", vc::luaw_function_wrapper<
+               /* FN:    */ renderc::render_fluid_names
+        >},
+        {"render_fluid_labels", vc::luaw_function_wrapper<
+               /* FN:    */ renderc::render_fluid_labels
+        >},
+        {"render_fluid_tile", vc::luaw_function_wrapper<
+               /* FN:    */ renderc::render_fluid_tile,
+               /* PARAMS:*/ const char *
+        >},
+        {"render_tile_uv_at", vc::luaw_function_wrapper<
+               /* FN:    */ renderc::render_tile_uv_at,
+               /* PARAMS:*/ int
+        >},
+        {"render_tank_capacity", vc::luaw_function_wrapper<
+               /* FN:    */ renderc::render_tank_capacity
+        >},
+        {"render_item_ids", vc::luaw_function_wrapper<
+               /* FN:    */ renderc::render_item_ids
+        >},
+        {"render_item_labels", vc::luaw_function_wrapper<
+               /* FN:    */ renderc::render_item_labels
+        >},
+        {"render_item_from_registry", vc::luaw_function_wrapper<
+               /* FN:    */ renderc::render_item_from_registry
+        >},
+        {"render_item_atlas_id", vc::luaw_function_wrapper<
+               /* FN:    */ renderc::render_item_atlas_id
+        >},
+        {"render_item_uv", vc::luaw_function_wrapper<
+               /* FN:    */ renderc::render_item_uv,
+               /* PARAMS:*/ const char *, int
+        >},
+        {"render_item_damage", vc::luaw_function_wrapper<
+               /* FN:    */ renderc::render_item_damage
         >},
         {"render_mc_source", vc::luaw_function_wrapper<
                /* FN:    */ renderc::render_mc_source

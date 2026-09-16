@@ -107,19 +107,19 @@ so.
     w a s d          move along the heading and across it, always level
     e / q            rise and descend
     shift            move at the faster speed
-    wheel, or 1..4   choose what a right click places
+    wheel, or 1..9   choose what a right click places
     left click       break what the crosshair is on - a flat thing first,
                      then the block it clings to
-    right click      place the selected thing
+    right click      open a case, a screen or a chest; place the selected thing
+                     on anything else
+    shift+rclick     place against one of those three instead of opening it
     f                toggle the aimed case between off and running
-    ctrl+right click a case to start or stop its machine; a screen to step
-                     inside it, where typing reaches the machine
     esc              step back out of a focused screen, straight back into
                      looking around
     ctrl+q           quit, saving the world on the way out
 
-Space is deliberately unbound. Ctrl with a click interacts with the world rather than building in
-it, which is what starts a machine and what opens a screen.
+Space and ctrl are deliberately unbound. A right click follows the game: it opens whatever has
+anything to open, and sneaking past it with shift places against it instead.
 
 What can be placed, in selector order: a computer case, a screen, a disk drive and a redstone lamp,
 which are cubes; a keyboard, which is flat and bolts onto the side of a case or a screen; and a
@@ -136,6 +136,20 @@ Aiming at a screen opens a console view on the right of the window. It names the
 attached to - adjacency is the whole of the network until there are cables - and shows the screen's
 own `u.lines`, which is empty until there is a machine to write to it.
 
+A save is a directory, laid out the way the game's is:
+
+    save/level.save                       the map and the camera
+    save/settings.save                    where Minecraft is, autosave
+    save/opencomputers/<address>/         one hard disk, as real files - home/prog.lua and the rest
+
+The address is written beside the computer in `level.save`, the way the mod keeps it in the item's
+NBT. The flat `world.save` and `disks.save` the first version wrote are still read when the
+directory has nothing yet, and are never written to again.
+
+There are two instances of the program. `main.exe` is the simulator. `main.exe --test` is the
+testing instance: its own entry script, every file under `test_run/`, no window, no frame loop, and
+an exit code - 42 cases in under six seconds.
+
 The world file remembers the camera as well as the map, so a saved world reopens looking at what
 was being worked on.
 
@@ -151,7 +165,9 @@ was being worked on.
     imvec_marshal.h       how an ImVec2 crosses the boundary
     path_composer.h       app-local paths - copied from math_writer unchanged
 
-    scripts/main.lua      test_init / test_draw / test_shutdown, and the save paths
+    scripts/main.lua      test_init / test_draw / test_shutdown
+    scripts/saves.lua     the shape of a save directory; nothing else builds a path
+    scripts/tests.lua     the testing instance's entry point, run by --test only
     scripts/settings.lua  the settings file
     scripts/blocks.lua    kind, state and face names; the one cell creator; the `u` table
     scripts/camera.lua    the flying camera

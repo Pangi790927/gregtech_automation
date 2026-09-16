@@ -284,6 +284,19 @@ inline ImVec2 calc_text_size(const char *text) {
     return ImGui::CalcTextSize(text ? text : "");
 }
 
+/*! Pushes ImGui's item spacing, and pops it again.
+ *
+ * Only that one style value is exposed, and deliberately: a script that could push any of them
+ * could leave the stack unbalanced in a way that shows up as a corrupted interface three windows
+ * later. @date 2026-09-17 */
+inline void push_item_spacing(const ImVec2 &spacing) {
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, spacing);
+}
+
+inline void pop_item_spacing() {
+    ImGui::PopStyleVar();
+}
+
 inline int register_meta(vc::virt_state_t *vs) {
     DBG_SCOPE();
 
@@ -393,6 +406,34 @@ inline int register_meta(vc::virt_state_t *vs) {
          * Dummy() afterwards". */
         {"ImGui_Dummy", vc::luaw_function_wrapper<
                ImGui::Dummy, ImVec2
+        >},
+        /* The spacing between items, pushed and popped around a list.
+         *
+         * Added 2026-09-17 for the item picker, which draws only the rows in view out of ten
+         * thousand. Clipping like that needs the pitch of a row to be EXACTLY known - the spacers
+         * standing in for the rows above and below are computed from it - and ImGui's default
+         * spacing is a style value a script has no way to read. Setting it to nothing makes the
+         * pitch the row's own height and the arithmetic exact. */
+        {"ImGui_PushItemSpacing", vc::luaw_function_wrapper<
+               /* FN:    */ imgc::push_item_spacing,
+               /* PARAMS:*/ ImVec2
+        >},
+        {"ImGui_PopItemSpacing", vc::luaw_function_wrapper<
+               /* FN:    */ imgc::pop_item_spacing
+        >},
+        /* The spacing between items, pushed and popped around a list.
+         *
+         * Added 2026-09-17 for the item picker, which draws only the rows in view out of ten
+         * thousand. Clipping like that needs the pitch of a row to be EXACTLY known - the spacers
+         * standing in for the rows above and below are computed from it - and ImGui's default
+         * spacing is a style value a script has no way to read. Setting it to nothing makes the
+         * pitch the row's own height and the arithmetic exact. */
+        {"ImGui_PushItemSpacing", vc::luaw_function_wrapper<
+               /* FN:    */ imgc::push_item_spacing,
+               /* PARAMS:*/ ImVec2
+        >},
+        {"ImGui_PopItemSpacing", vc::luaw_function_wrapper<
+               /* FN:    */ imgc::pop_item_spacing
         >},
         /* Scroll state of the CURRENT window (so, inside a BeginChild, that child's). Added
          * 2026-09-07 so the help page's arrows can scroll the page first and only change chapter

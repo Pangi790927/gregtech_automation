@@ -1,0 +1,16 @@
+# gregtech_automation simulator world
+# k x y z yaw pitch           - where the camera was left
+# c x y z kind state facing   - a cell filling a slot
+# w x y z face kind state     - a flat thing clinging to a face
+k 31.804 1.718 31.954 0.02240 -0.18440
+c 27 0 28 5 0 1
+c 27 0 29 10 0 5
+c 27 0 30 7 0 1
+c 28 0 30 7 0 5
+c 29 0 30 7 0 5
+c 30 0 30 7 0 5
+c 31 0 30 1 1 5
+c 31 1 30 3 0 5
+c 27 0 31 9 0 5
+c 27 0 32 8 0 1
+w 31 1 30 1 4 0

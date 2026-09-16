@@ -5,6 +5,8 @@
 #include "path_utils.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <system_error>
 #include <string>
 #include <vector>
 
@@ -102,8 +104,56 @@ inline std::string resolve(const char *path) {
     return path ? path_get_relative(path) : path_get_module_dir();
 }
 
-/*! Registers the three calls above on the vc table as path_list_dir, path_module_dir and
- * path_resolve. Named with a prefix rather than nested, because that is how every other composer
+/*! Is there a directory at this path?
+ *
+ * Core: the one thing a caller walking a saved directory cannot work out for itself. list_dir()
+ * answers with bare names and says nothing about what they are, so restoring a tree of files needs
+ * to be able to ask which entries to descend into.
+ * @date 2026-09-17 */
+inline bool is_dir(const char *path) {
+    if (!path)
+        return false;
+    std::error_code ec;
+    return std::filesystem::is_directory(path_get_relative(path), ec);
+}
+
+/*! Creates a directory and every missing parent of it, and answers whether it is there afterwards.
+ *
+ * Core: exposed because Lua's standard library cannot make a directory at all - io.open will not
+ * create the folder a file is asked to live in, so a save laid out as a tree cannot be written
+ * from Lua without this. os.execute could shell out, but that spawns a console window, which this
+ * application has already been burned by once (see this file's header).
+ *
+ * An existing directory is a success, not an error: saving happens repeatedly over the same tree.
+ * @date 2026-09-17 */
+inline bool make_dirs(const char *path) {
+    if (!path)
+        return false;
+    std::error_code ec;
+    std::string full = path_get_relative(path);
+    std::filesystem::create_directories(full, ec);
+    return std::filesystem::is_directory(full, ec);
+}
+
+/*! Deletes a file or a whole directory tree, and answers how many entries went.
+ *
+ * Core: needed by saving, not by any user-facing feature. A hard disk is written out as real files
+ * in a real folder, so a file the guest DELETED has to stop existing on the host too - otherwise
+ * every save is a union of every state the disk has ever been in, and a removed file comes back on
+ * the next load. The tree is cleared and rewritten, which is the simplest thing that cannot leave a
+ * ghost behind.
+ *
+ * Errors are swallowed the way list_dir's are, and a missing path is zero rather than a failure.
+ * @date 2026-09-17 */
+inline double remove_all(const char *path) {
+    if (!path)
+        return 0.0;
+    std::error_code ec;
+    auto n = std::filesystem::remove_all(path_get_relative(path), ec);
+    return ec ? 0.0 : (double)n;
+}
+
+/*! Registers the calls above on the vc table, each with a path_ prefix. Named with a prefix rather than nested, because that is how every other composer
  * here puts its functions on the one shared table.
  * @date 2026-09-12 01:40 */
 inline int register_meta(vc::virt_state_t *vs) {
@@ -119,6 +169,18 @@ inline int register_meta(vc::virt_state_t *vs) {
         >},
         {"path_resolve", vc::luaw_function_wrapper<
                /* FN:    */ pathc::resolve,
+               /* PARAMS:*/ const char *
+        >},
+        {"path_is_dir", vc::luaw_function_wrapper<
+               /* FN:    */ pathc::is_dir,
+               /* PARAMS:*/ const char *
+        >},
+        {"path_make_dirs", vc::luaw_function_wrapper<
+               /* FN:    */ pathc::make_dirs,
+               /* PARAMS:*/ const char *
+        >},
+        {"path_remove_all", vc::luaw_function_wrapper<
+               /* FN:    */ pathc::remove_all,
                /* PARAMS:*/ const char *
         >},
     };

@@ -25,6 +25,7 @@ functions. Defined before anything includes GLFW, which imgui_helpers.h does. */
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 
 #include "imgui.h"
@@ -35,6 +36,7 @@ functions. Defined before anything includes GLFW, which imgui_helpers.h does. */
 /* composer plugins: */
 #include "imgui_composer.h"
 #include "app_composer.h"
+#include "app_mode.h"
 #include "path_composer.h"
 #include "world_composer.h"
 #include "machine_composer.h"
@@ -46,22 +48,43 @@ functions. Defined before anything includes GLFW, which imgui_helpers.h does. */
 namespace vc = virt_composer;
 namespace imgc = imgui_composer;
 namespace appc = app_composer;
+namespace appm = app_mode;
 namespace pathc = path_composer;
 namespace worldc = world_composer;
 namespace machc = machine_composer;
 namespace renderc = render_composer;
 
 int main(int argc, char const *argv[]) {
-    for (int i = 1; i < argc; i++)
-        printf("ignoring unknown argument: %s\n", argv[i]);
+    /*! --test picks the testing instance: its own files, its own script, and no frame loop.
+     *
+     * Read before anything else, because the logger and the window both want to know. */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--test") == 0)
+            appm::set_testing(true);
+        else
+            printf("ignoring unknown argument: %s\n", argv[i]);
+    }
 
-    logger_init("logfile");
+    if (appm::app_is_testing()) {
+        std::error_code ec;
+        std::filesystem::create_directories(appm::TESTING_PREFIX, ec);
+        /* A test instance must never appear on screen. The env vars are what imgui_helpers.h
+        reads; setting them here means a test cannot flash a window because a launcher forgot. */
+#if defined(_WIN32)
+        if (!getenv("VC_WINDOW_START_HIDDEN")) _putenv_s("VC_WINDOW_START_HIDDEN", "1");
+#else
+        setenv("VC_WINDOW_START_HIDDEN", "1", 0);
+#endif
+    }
+
+    logger_init((appm::app_data_prefix() + "logfile").c_str());
 
     if (imgui_init() < 0) {
         DBG("could not open a window");
         return -1;
     }
-    ImGui::GetIO().IniFilename = "imgui.ini";
+    static std::string ini_path = appm::app_data_prefix() + "imgui.ini";
+    ImGui::GetIO().IniFilename = ini_path.c_str();
     glfwSetWindowTitle(imgui_window, "gregtech_automation - opencomputers simulator");
 
     /* The Lua state is built after the window, because render_init() below reaches straight into GL
@@ -75,11 +98,29 @@ int main(int argc, char const *argv[]) {
 
     ASSERT_FN(imgc::register_meta(vs.get()));
     ASSERT_FN(appc::register_meta(vs.get()));
+    ASSERT_FN(appm::register_meta(vs.get()));
     ASSERT_FN(pathc::register_meta(vs.get()));
     ASSERT_FN(worldc::register_meta(vs.get()));
     ASSERT_FN(machc::register_meta(vs.get()));
     ASSERT_FN(renderc::register_meta(vs.get()));
-    ASSERT_FN(vc::parse_config(vs.get(), "simulator.yaml"));
+    /* The testing instance loads its own entry script, so the real one is never even parsed under
+    --test - a test cannot accidentally run the application. */
+    ASSERT_FN(vc::parse_config(vs.get(),
+            appm::app_is_testing() ? "simulator_test.yaml" : "simulator.yaml"));
+
+    /*! The testing instance runs `sim_test()` and stops. It never calls test_init, so it cannot
+     *  load the real world by accident, and it never enters the frame loop, so it cannot sit there
+     *  afterwards waiting to be closed. */
+    if (appm::app_is_testing()) {
+        auto [ret, err] = vc::call_lua<int>(vs.get(), "sim_test");
+        bool ok = (err == vc::VC_ERROR_OK && ret == 0);
+        if (!ok)
+            DBG("sim_test failed: ret %d err %d", ret, (int)err);
+        printf(ok ? "TEST PASSED\n" : "TEST FAILED (see test_run/logfile.log)\n");
+        vs.reset();
+        imgui_uninit();
+        return ok ? 0 : 1;
+    }
 
     {
         auto [ret, err] = vc::call_lua<int>(vs.get(), "test_init");

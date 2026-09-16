@@ -7,3 +7,8 @@
 *.save
 imgui.ini
 disks.save
+
+# a save is a directory now, and the testing instance keeps its own
+save/
+test_run/
+ocelot-desktop-v1.11.1.jar

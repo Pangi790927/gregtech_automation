@@ -23,8 +23,16 @@
 -- |     A screen's grid, all of it, sized to fit the room given, with the
 -- |     cursor drawn as a caret where the terminal put it.
 -- |
+-- | minichest(cell) / minitank(cell)         -> nothing
+-- |     The same idea as miniscreen, for the two things that hold
+-- |     something: look at a chest or a tank and it says what is in it.
+-- |
 -- | chest(cell: cell | nil)                  -> boolean
 -- |     The chest window: its slots, and a way to put items in by hand.
+-- |
+-- | tank(cell: cell | nil)                   -> boolean
+-- |     The liquid tank window: which GregTech fluid it holds, and how
+-- |     many litres of it. The fluids offered are read out of the game.
 -- |
 -- | panel(state: state, settings: table, info: table) -> nothing
 -- |     The one window: what the crosshair is on, where the textures came
@@ -276,7 +284,7 @@ function ui.terminal_panel(w, screen, x0, y0, x1, y1, hint)
     local line_h = vc.ImGui_GetFontSize() + 3
     if #lines == 0 then
         vc.ImGui_AddText({x = x0 + 12, y = y0 + 34}, 0xff707070,
-                host and "the machine is not running - ctrl+right click the case to start it"
+                host and "the machine is not running - right click the case to start it"
                 or "nothing to show")
     elseif is_grid then
         ui.draw_grid(lines, x0 + 10, y0 + 32, (x1 - x0) - 20, (y1 - y0) - 44, cursor, runs)
@@ -425,7 +433,7 @@ end
 
 --[[ @brief The focused screen: the whole window given over to one machine's console.
 -- |
--- | Core: ctrl and a right click on a screen brings the player inside it, and this is what that
+-- | Core: a right click on a screen brings the player inside it, and this is what that
 -- | looks like - the same terminal panel the crosshair view draws, at the size of the window, with
 -- | the world dimmed behind it. Escape leaves.
 -- |
@@ -448,96 +456,631 @@ function ui.screen_focus(w, screen)
     vc.ImGui_SetDrawForeground(false)
 end
 
---[[ The item being typed into the chest window, held across frames because an ImGui text box
-hands back the whole string every frame and has nowhere of its own to keep it.
-@date 2026-09-17 06:30 ]]
-local chest_name_buf = "minecraft:cobblestone"
-local chest_count_buf = "64"
+--[[ The item catalogue, asked for once, and which slot of which chest is being edited.
+-- |
+-- | The same arrangement the tank panel uses and for the same reasons: the boxes hold TEXT while
+-- | they are being typed in, so they are seeded when a different chest or slot is opened and own
+-- | themselves after that. @date 2026-09-17 18:00 ]]
+local item_ids = nil
+local item_labels = nil
+local item_damage = nil
+local item_filter = ""
 
---[[ @brief The chest window: what is inside, and a way to put something in.
+--[[ The filter's answer, kept until the filter changes.
 -- |
--- | Core: a real ImGui window rather than a heads-up panel, because this one is worked with rather
--- | than glanced at - it has a text box and buttons, and it is opened deliberately with ctrl and a
--- | right click. Nothing is being typed at a machine while it is open, so there is no keyboard to
--- | compete for.
+-- | Ten thousand names lower-cased and searched EVERY FRAME is what made the picker crawl. The
+-- | search only changes when somebody types in it, so the answer is worked out then and reused
+-- | until they do. @date 2026-09-17 20:00 ]]
+local item_hits = nil
+local item_hits_for = nil
+local chest_at = nil
+local chest_slot = 1
+local chest_name_buf = ""
+local chest_count_buf = "1"
+--[[ The variant and the game's name for what is being put in a slot. Typed names have neither,
+which is right: an id typed by hand is whatever was typed. @date 2026-09-17 21:00 ]]
+local chest_damage = 0
+local chest_label = ""
+
+--[[ @brief Forgets the item catalogue, so the next window rebuilds it. @date 2026-09-17 18:00 ]]
+function ui.forget_items()
+    item_ids = nil
+    item_labels = nil
+    item_damage = nil
+end
+
+--[[ @brief Draws one item's picture at the cursor, and leaves the cursor past it.
 -- |
--- | Putting items in by hand is the point. This is a test bench: a program that moves items around
--- | needs something to move, and until a transposer exists there is nothing else to fill a chest
--- | with. Clicking a full slot empties it again.
+-- | Out of the interface's own atlas rather than the world's - see build_item_atlas in
+-- | render_composer.h for why the items have a texture of their own.
 -- |
--- | @param cell  cell | nil - the chest; anything else draws nothing
--- | @return boolean - whether the window is still wanted
+-- | @param id    string - the item id
+-- | @param size  number - pixels on a side
 -- |
--- | @date 2026-09-17 06:30
+-- | @date 2026-09-17 18:00
+--]]
+local function item_icon_at(id, damage, x, y, size)
+    local uv = vc.render_item_uv(id or "", damage or 0)
+    if uv[3] > uv[1] then
+        vc.ImGui_AddImageQuad(vc.render_item_atlas_id(),
+                {x = x, y = y}, {x = x + size, y = y},
+                {x = x + size, y = y + size}, {x = x, y = y + size},
+                {x = uv[1], y = uv[2]}, {x = uv[3], y = uv[2]},
+                {x = uv[3], y = uv[4]}, {x = uv[1], y = uv[4]}, 0xffffffff)
+        return true
+    end
+    return false
+end
+
+--[[ @brief The same, at the cursor, which it then steps past. For a list. @date 2026-09-17 18:00 ]]
+local function item_icon(id, damage, size)
+    local at = vc.ImGui_GetCursorScreenPos()
+    if not item_icon_at(id, damage, at.x, at.y, size) then
+        vc.ImGui_AddQuadFilled({x = at.x, y = at.y}, {x = at.x + size, y = at.y},
+                {x = at.x + size, y = at.y + size}, {x = at.x, y = at.y + size}, 0xff383838)
+    end
+    vc.ImGui_Dummy({x = size, y = size})
+end
+
+--[[ @brief The frame every mini view is drawn in: the panel, its border and its title.
+-- |
+-- | One function so a chest, a tank and a screen all look like the same kind of thing when the
+-- | crosshair finds them. Answers where the contents may be drawn.
+-- |
+-- | @param title   string - the line across the top
+-- | @param height  number - how tall the panel should be
+-- | @return number, number, number, number - the left, top, right and bottom of the room inside
+-- |
+-- | @date 2026-09-17 19:00
+--]]
+local function mini_frame(title, height)
+    local disp = vc.ImGui_GetDisplaySize()
+    local panel_w = math.floor(disp.x * 3 / 7)
+    local x0, y0 = disp.x - panel_w - 16, 16
+    local x1, y1 = x0 + panel_w, y0 + height
+
+    vc.ImGui_AddRectFilled({x = x0, y = y0}, {x = x1, y = y1}, 0xf00a0a0a, 6)
+    vc.ImGui_AddRect({x = x0, y = y0}, {x = x1, y = y1}, 0xff5f9fd0, 6, 2)
+    vc.ImGui_AddText({x = x0 + 12, y = y0 + 8}, 0xff9ad8ff, title)
+    vc.ImGui_AddLine({x = x0 + 8, y = y0 + 26}, {x = x1 - 8, y = y0 + 26}, 0xff3a3a3a, 1)
+
+    return x0 + 12, y0 + 34, x1 - 12, y1 - 10
+end
+
+--[[ @brief What is in the chest the crosshair is on, without opening it.
+-- |
+-- | Core: the same idea as the console view - look at a thing and it tells you about itself. A
+-- | chest read through a transposer is usually being watched rather than edited, and opening it
+-- | every time to see whether a program has moved anything is a poor way to watch.
+-- |
+-- | Read-only on purpose. The window a right click opens is where a chest is changed; this one
+-- | takes no input at all, so walking past a chest cannot disturb it.
+-- |
+-- | @param cell  cell | nil - whatever is under the crosshair
+-- |
+-- | @date 2026-09-17 19:00
+--]]
+function ui.minichest(cell)
+    if not cell or cell.kind ~= blocks.KIND.CHEST or not cell:placed() then
+        return
+    end
+
+    local n = cell:inv_size()
+    local used = 0
+    for i = 1, n do
+        if cell:inv_get(i)[2] > 0 then
+            used = used + 1
+        end
+    end
+
+    vc.ImGui_SetDrawForeground(true)
+
+    local p = cell:pos()
+    local rows = math.max(1, math.ceil(n / 9))
+    local x0, y0, x1, y1 = mini_frame(string.format(
+            "chest %d, %d, %d  -  %d of %d slots used", p[1], p[2], p[3], used, n),
+            34 + rows * 38 + 12)
+
+    -- Nine across, sized to whatever room the panel has, so the grid reads the way the big one
+    -- does rather than being a different shape at a different size.
+    local cellw = math.min(36, math.floor((x1 - x0) / 9) - 4)
+    for i = 1, n do
+        local slot = cell:inv_get(i)
+        local col, row = (i - 1) % 9, math.floor((i - 1) / 9)
+        local x = x0 + col * (cellw + 4)
+        local y = y0 + row * (cellw + 2)
+
+        vc.ImGui_AddRectFilled({x = x, y = y}, {x = x + cellw, y = y + cellw}, 0x30ffffff, 3)
+        if slot[2] > 0 then
+            item_icon_at(slot[1], slot[3], x + 2, y + 2, cellw - 4)
+            local txt = tostring(slot[2])
+            local sz = vc.ImGui_CalcTextSize(txt)
+            vc.ImGui_AddText({x = x + cellw - 2 - sz.x, y = y + cellw - 2 - sz.y},
+                    0xffffffff, txt)
+        end
+    end
+
+    vc.ImGui_SetDrawForeground(false)
+end
+
+--[[ @brief What is in the tank the crosshair is on, without opening it.
+-- |
+-- | Shows the fluid, how many litres of it and how full that leaves the tank - the same three
+-- | things the configuring window leads with, because they are what you look at a tank to find out.
+-- |
+-- | @param cell  cell | nil - whatever is under the crosshair
+-- |
+-- | @date 2026-09-17 19:00
+--]]
+function ui.minitank(cell)
+    if not cell or cell.kind ~= blocks.KIND.TANK or not cell:placed() then
+        return
+    end
+
+    local held = cell:fluid_get()
+    local name, amount, label = held[1], held[2], held[3]
+    local cap = cell:fluid_capacity()
+
+    vc.ImGui_SetDrawForeground(true)
+
+    local p = cell:pos()
+    local x0, y0, x1, y1 = mini_frame(string.format("liquid tank %d, %d, %d", p[1], p[2], p[3]), 122)
+
+    if name == "" then
+        vc.ImGui_AddText({x = x0, y = y0 + 6}, 0xff909090,
+                string.format("empty  -  room for %s L", ui.commas(cap)))
+        vc.ImGui_SetDrawForeground(false)
+        return
+    end
+
+    -- The fluid's own picture, at the size the big window uses it.
+    local tile = vc.render_fluid_tile(name)
+    if tile >= 0 then
+        local uv = vc.render_tile_uv_at(math.floor(tile))
+        vc.ImGui_AddImageQuad(vc.render_atlas_id(),
+                {x = x0, y = y0}, {x = x0 + 40, y = y0},
+                {x = x0 + 40, y = y0 + 40}, {x = x0, y = y0 + 40},
+                {x = uv[1], y = uv[2]}, {x = uv[3], y = uv[2]},
+                {x = uv[3], y = uv[4]}, {x = uv[1], y = uv[4]}, 0xffffffff)
+    end
+
+    local full = (cap > 0) and (amount / cap) or 0.0
+    vc.ImGui_AddText({x = x0 + 50, y = y0}, 0xffffffff, label ~= "" and label or name)
+    vc.ImGui_AddText({x = x0 + 50, y = y0 + 18}, 0xffb0b0b0,
+            string.format("%s L of %s L", ui.commas(amount), ui.commas(cap)))
+
+    -- A bar, because a percentage of thirty-two million is a number nobody can picture. It is
+    -- never quite empty while there is anything in there at all, for the same reason the fluid
+    -- drawn inside the block never is: a tank with a litre in it is not an empty tank.
+    local bx0, bx1 = x0, x1
+    local by0 = y0 + 52
+    vc.ImGui_AddRectFilled({x = bx0, y = by0}, {x = bx1, y = by0 + 18}, 0xff202020, 3)
+    local filled = bx0 + math.max(2.0, (bx1 - bx0) * full)
+    vc.ImGui_AddRectFilled({x = bx0, y = by0}, {x = filled, y = by0 + 18}, 0xff3f7fbf, 3)
+    vc.ImGui_AddRect({x = bx0, y = by0}, {x = bx1, y = by0 + 18}, 0xff4a4a4a, 3, 1)
+
+    local pct = string.format("%.3f%% full", full * 100.0)
+    vc.ImGui_AddText({x = bx0 + 6, y = by0 + 1}, 0xffffffff, pct)
+
+    vc.ImGui_SetDrawForeground(false)
+end
+
+--[[ @brief The chest window: its slots, which one is selected, and what goes in it.
+-- |
+-- | Core: a slot is CHOSEN by clicking it and then filled by the two boxes, rather than items being
+-- | dropped into whichever slot happened to be free. The author asked for both on 2026-09-17: a
+-- | button that selects a position, and an item menu like the fluid one.
+-- |
+-- | The slots are read off the C++ cell, which is what a transposer reaches into. Reading them from
+-- | `u` would show a different chest from the one a program sees.
+-- |
+-- | WHERE THE ITEM NAMES COME FROM, and why the box stays editable: the catalogue is built from the
+-- | vanilla jar's texture files, so an id here is a texture name with a namespace on the front.
+-- | That is not always the registry name - a golden apple's texture is apple_golden while the item
+-- | is minecraft:golden_apple - and there is no item registry in the instance to check against. So
+-- | the panel says so and lets the name be typed over.
+-- |
+-- | @param cell  cell | nil - the chest being looked into
+-- | @return boolean - whether the window was drawn
+-- |
+-- | @date 2026-09-17 18:00
 --]]
 function ui.chest(cell)
-    if not cell or cell.kind ~= blocks.KIND.CHEST then
-        return false
-    end
-    if not cell:placed() then
+    if not cell or cell.kind ~= blocks.KIND.CHEST or not cell:placed() then
         return false
     end
 
-    local inv = blocks.u(cell).inventory
-    if not inv then
-        inv = {}
-        blocks.u(cell).inventory = inv
+    if cell:inv_size() == 0 then
+        cell:inv_resize(blocks.CHEST_SLOTS)
+    end
+    if not item_ids then
+        item_ids = vc.render_item_ids()
+        item_labels = vc.render_item_labels()
+        item_damage = vc.render_item_damage()
     end
 
     local p = cell:pos()
+    local key = string.format("%d,%d,%d", p[1], p[2], p[3])
+    if chest_at ~= key then
+        chest_at = key
+        chest_slot = 1
+    end
+    if chest_slot < 1 or chest_slot > cell:inv_size() then
+        chest_slot = 1
+    end
+
     vc.ImGui_Begin(string.format("chest %d, %d, %d", p[1], p[2], p[3]), 0)
 
     local used = 0
-    for _ in pairs(inv) do
-        used = used + 1
+    for i = 1, cell:inv_size() do
+        if cell:inv_get(i)[2] > 0 then
+            used = used + 1
+        end
     end
-    vc.ImGui_Text(string.format("%d of %d slots used", used, blocks.CHEST_SLOTS))
+    vc.ImGui_Text(string.format("%d of %d slots used", used, cell:inv_size()))
     vc.ImGui_Separator()
 
-    -- Nine across, the way a chest is laid out, so a slot number here means the same thing it
-    -- would mean to a program counting slots.
-    for i = 1, blocks.CHEST_SLOTS do
-        local slot = inv[i]
-        local label
-        if slot then
-            label = string.format("%s x%d##%d", slot.name, slot.count, i)
-        else
-            label = string.format("-##%d", i)
+    -- Nine across, the way a chest is laid out, so a slot number here means what it would mean to
+    -- a program counting slots. A click SELECTS rather than clears - clearing is what an empty name
+    -- box does, and a slot that emptied itself on a misclick lost whatever was in it.
+    --
+    -- Drawn as a real slot rather than as a row of text: a square big enough to see the picture in,
+    -- with its number and its count written over the top, the way an inventory reads in the game.
+    -- The author asked for this on 2026-09-17.
+    --
+    -- The square is an empty Selectable and everything is painted over it afterwards, because the
+    -- window's draw list is emptied after the widgets are: drawing first would put the picture
+    -- underneath the selection highlight instead of on it.
+    local SLOT = 72
+    local before = chest_slot
+    for i = 1, cell:inv_size() do
+        local slot = cell:inv_get(i)
+        local at = vc.ImGui_GetCursorScreenPos()
+
+        if vc.ImGui_Selectable(string.format("##s%d", i), i == chest_slot, 0,
+                {x = SLOT, y = SLOT}) then
+            chest_slot = i
         end
-        if vc.ImGui_Button(label, {x = 118, y = 0}) and slot then
-            inv[i] = nil
+
+        -- Inset, so the selection shows as a border around the picture rather than behind it.
+        if not item_icon_at(slot[1], slot[3], at.x + 6, at.y + 6, SLOT - 12) then
+            vc.ImGui_AddQuadFilled({x = at.x + 6, y = at.y + 6}, {x = at.x + SLOT - 6, y = at.y + 6},
+                    {x = at.x + SLOT - 6, y = at.y + SLOT - 6},
+                    {x = at.x + 6, y = at.y + SLOT - 6}, 0x18ffffff)
         end
+
+        -- The number in the corner, dim, so it reads as a label on the slot and not as contents.
+        vc.ImGui_AddText({x = at.x + 4, y = at.y + 2}, 0xff8c8c8c, tostring(i))
+
+        -- How many, bottom right and bright, which is where a stack size sits in the game.
+        if slot[2] > 0 then
+            local txt = tostring(slot[2])
+            local sz = vc.ImGui_CalcTextSize(txt)
+            vc.ImGui_AddText({x = at.x + SLOT - 5 - sz.x, y = at.y + SLOT - 3 - sz.y},
+                    0xffffffff, txt)
+        end
+
         if i % 9 ~= 0 then
-            vc.ImGui_SameLine(0, -1)
+            vc.ImGui_SameLine(0, 6)
         end
+    end
+
+    -- A newly chosen slot seeds the boxes from what is in it, so editing starts from the truth.
+    local held = cell:inv_get(chest_slot)
+    if before ~= chest_slot then
+        chest_name_buf = held[1]
+        chest_count_buf = string.format("%d", held[2] > 0 and held[2] or 1)
+        chest_damage = held[3]
+        chest_label = held[4]
+    end
+
+    vc.ImGui_Separator()
+    vc.ImGui_Text(string.format("slot %d", chest_slot))
+
+    -- The boxes decide what is in the chosen slot, the way the tank's litres box does. Clearing
+    -- the name empties the slot.
+    local typed = vc.ImGui_InputText("item", chest_name_buf, 64)
+    if typed[1] then
+        chest_name_buf = typed[2]
+        -- A name typed by hand is its own item: whatever variant was there belonged to the item
+        -- that was there, and carrying it over would label the new one with the old one's name.
+        chest_damage, chest_label = 0, chest_name_buf
+        cell:inv_set(chest_slot, chest_name_buf, tonumber(chest_count_buf) or 1,
+                chest_damage, chest_label)
+    end
+    local cnt = vc.ImGui_InputText("count", chest_count_buf, 8)
+    if cnt[1] then
+        chest_count_buf = cnt[2]
+        cell:inv_set(chest_slot, chest_name_buf, tonumber(chest_count_buf) or 0,
+                chest_damage, chest_label)
+    end
+
+    if vc.ImGui_Button("empty the whole chest", {x = 0, y = 0}) then
+        for i = 1, cell:inv_size() do
+            cell:inv_set(i, "", 0, 0, "")
+        end
+        chest_name_buf = ""
+        chest_damage, chest_label = 0, ""
     end
 
     vc.ImGui_Separator()
 
-    local name = vc.ImGui_InputText("item", chest_name_buf, 64)
-    if name[1] then
-        chest_name_buf = name[2]
-    end
-    local count = vc.ImGui_InputText("count", chest_count_buf, 8)
-    if count[1] then
-        chest_count_buf = count[2]
+    if #item_ids == 0 then
+        vc.ImGui_Text("no items found - is the minecraft jar set in the settings?")
+        vc.ImGui_Separator()
+        vc.ImGui_Text("esc to close")
+        vc.ImGui_End()
+        return true
     end
 
-    if vc.ImGui_Button("put in the first free slot", {x = 0, y = 0}) then
-        for i = 1, blocks.CHEST_SLOTS do
-            if not inv[i] then
-                local n = math.max(1, tonumber(chest_count_buf) or 1)
-                inv[i] = {name = chest_name_buf, count = n}
-                break
+    local f = vc.ImGui_InputText("search", item_filter, 64)
+    if f[1] then
+        item_filter = f[2]
+    end
+
+    -- Worked out when the search changes and not before. See item_hits.
+    if item_hits_for ~= item_filter then
+        item_hits_for = item_filter
+        item_hits = {}
+        local needle = item_filter:lower()
+        for i = 1, #item_ids do
+            if needle == "" or item_ids[i]:lower():find(needle, 1, true)
+                    or (item_labels[i] or ""):lower():find(needle, 1, true) then
+                item_hits[#item_hits + 1] = i
             end
         end
     end
-    vc.ImGui_SameLine(0, -1)
-    if vc.ImGui_Button("empty it", {x = 0, y = 0}) then
-        for i = 1, blocks.CHEST_SLOTS do
-            inv[i] = nil
+
+    -- Which list this is matters: a registry name is the item's real id, a texture name only
+    -- looks like one. The panel says which it is showing rather than letting them be confused.
+    vc.ImGui_Text(string.format("%d of %d  -  %s", #item_hits, #item_ids,
+            vc.render_item_from_registry()
+                    and "the modpack's registry, the ones with a picture"
+                    or "TEXTURE names - no save found, so these are not real item ids"))
+    vc.ImGui_Text("anything else goes in by typing its id in the box above")
+
+    -- ONLY THE ROWS IN VIEW ARE DRAWN. Ten thousand Selectables a frame is more than ImGui will
+    -- do at a sensible rate, and all but a dozen of them are off-screen anyway. The rows above and
+    -- below are stood in for by one empty box each, which is what keeps the scrollbar honest.
+    --
+    -- The arithmetic only works if a row's height is exactly known, so the spacing between items
+    -- is pushed to nothing and every row is given a fixed height.
+    local ROW, VIEW = 18, 260
+    vc.ImGui_BeginChild("items", {x = 0, y = VIEW}, 1, 0)
+    vc.ImGui_PushItemSpacing({x = 6, y = 0})
+
+    local total = #item_hits
+    local scroll = vc.ImGui_GetScrollY()
+    local first = math.max(1, math.floor(scroll / ROW) - 1)
+    local last = math.min(total, first + math.ceil(VIEW / ROW) + 2)
+
+    if first > 1 then
+        vc.ImGui_Dummy({x = 1, y = (first - 1) * ROW})
+    end
+    for k = first, last do
+        local i = item_hits[k]
+        local id = item_ids[i]
+        item_icon(id, item_damage[i] or 0, ROW)
+        vc.ImGui_SameLine(0, 6)
+        if vc.ImGui_Selectable(string.format("%s##i%d", item_labels[i] or id, i),
+                id == chest_name_buf and (item_damage[i] or 0) == chest_damage,
+                0, {x = 0, y = ROW}) then
+            chest_name_buf = id
+            chest_damage = item_damage[i] or 0
+            chest_label = item_labels[i] or id
+            local n = math.max(1, tonumber(chest_count_buf) or 1)
+            cell:inv_set(chest_slot, id, n, chest_damage, chest_label)
+            chest_count_buf = string.format("%d", n)
         end
     end
+    if last < total then
+        vc.ImGui_Dummy({x = 1, y = (total - last) * ROW})
+    end
+
+    vc.ImGui_PopItemSpacing()
+    vc.ImGui_EndChild()
+
+    vc.ImGui_Separator()
+    vc.ImGui_Text("esc to close")
+    vc.ImGui_End()
+    return true
+end
+
+--[[ @brief A number with thousands separators - 32000000 reads as 32,000,000.
+-- |
+-- | GregTech does this itself (GT_Utility.formatNumbers, which is what its tank tooltip runs the
+-- | capacity through), and at thirty-two million a run of digits is unreadable without it.
+-- |
+-- | @param n  number
+-- | @return string
+-- |
+-- | @date 2026-09-17 16:00
+--]]
+function ui.commas(n)
+    local whole = string.format("%d", math.floor(n + 0.5))
+    local sign = ""
+    if whole:sub(1, 1) == "-" then
+        sign, whole = "-", whole:sub(2)
+    end
+    local out = whole:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+    out = out:gsub("^,", "")
+    return sign .. out
+end
+
+--[[ The fluid catalogue, asked for once. It comes from the GregTech jar by way of the atlas, so
+it cannot change while the simulator is running unless the Minecraft path does - and when it does,
+the atlas is rebuilt and this is dropped. @date 2026-09-17 16:00 ]]
+local fluid_names = nil
+local fluid_labels = nil
+local fluid_filter = ""
+local tank_amount_buf = "0"
+
+--[[ Which tank the litres box is currently editing, and which fluid was picked for it.
+-- |
+-- | The box holds TEXT while it is being typed in - half a number is not a number - so it cannot be
+-- | read back off the cell every frame or a keystroke would be undone as soon as it was made. It is
+-- | seeded from the tank when a different tank is opened, and owns itself after that.
+-- |
+-- | The picked fluid is remembered here rather than read off the cell because a tank at nought
+-- | litres holds nothing at all - that is the mod's own rule, a drained tank has a null FluidStack
+-- | rather than a zero one - and a panel that forgot which fluid you had chosen the moment you
+-- | typed a zero would be unusable. @date 2026-09-17 17:00 ]]
+local tank_at = nil
+local tank_pick_name = ""
+local tank_pick_label = ""
+
+--[[ @brief Forgets the fluid catalogue, so the next window rebuilds it.
+-- |
+-- | Called when the atlas is rebuilt, which is the only thing that can change what fluids exist.
+-- | @date 2026-09-17 16:00
+--]]
+function ui.forget_fluids()
+    fluid_names = nil
+    fluid_labels = nil
+end
+
+--[[ @brief Draws one fluid's texture at the cursor, and leaves the cursor past it.
+-- |
+-- | The picture comes out of the world atlas, the same GL texture the blocks are drawn from, which
+-- | is why it is an image quad rather than an ImGui image: nothing here has a texture of its own.
+-- |
+-- | @param name  string - the fluid's internal name
+-- | @param size  number - pixels on a side
+-- |
+-- | @date 2026-09-17 16:00
+--]]
+local function fluid_icon(name, size)
+    local at = vc.ImGui_GetCursorScreenPos()
+    local tile = vc.render_fluid_tile(name or "")
+    if tile >= 0 then
+        local uv = vc.render_tile_uv_at(math.floor(tile))
+        vc.ImGui_AddImageQuad(vc.render_atlas_id(),
+                {x = at.x, y = at.y}, {x = at.x + size, y = at.y},
+                {x = at.x + size, y = at.y + size}, {x = at.x, y = at.y + size},
+                {x = uv[1], y = uv[2]}, {x = uv[3], y = uv[2]},
+                {x = uv[3], y = uv[4]}, {x = uv[1], y = uv[4]}, 0xffffffff)
+    else
+        vc.ImGui_AddQuadFilled({x = at.x, y = at.y}, {x = at.x + size, y = at.y},
+                {x = at.x + size, y = at.y + size}, {x = at.x, y = at.y + size}, 0xff404040)
+    end
+    vc.ImGui_Dummy({x = size, y = size})
+end
+
+--[[ @brief The liquid tank window: what it holds, and how much.
+-- |
+-- | Core: the author asked on 2026-09-17 for a tank whose type is configurable, with the texture
+-- | and the name taken from the game. Both are - the list below is every fluid the installed
+-- | GregTech ships a texture for, and each one's name is the one GregTech's own generated lang file
+-- | gives it. Nothing here names a fluid itself.
+-- |
+-- | The amount is in litres, which is the unit GregTech displays: a Super Tank's tooltip is its
+-- | capacity followed by " L". A tank holds one fluid at a time, so choosing a different one while
+-- | there is something in it replaces it rather than mixing.
+-- |
+-- | @param cell  cell | nil - the tank being configured
+-- | @return boolean - whether the window was drawn
+-- |
+-- | @date 2026-09-17 16:00
+--]]
+function ui.tank(cell)
+    if not cell or cell.kind ~= blocks.KIND.TANK or not cell:placed() then
+        return false
+    end
+
+    if not fluid_names then
+        fluid_names = vc.render_fluid_names()
+        fluid_labels = vc.render_fluid_labels()
+    end
+
+    local p = cell:pos()
+    vc.ImGui_Begin(string.format("liquid tank %d, %d, %d", p[1], p[2], p[3]), 0)
+
+    local held = cell:fluid_get()
+    local name, amount, label = held[1], held[2], held[3]
+    local cap = cell:fluid_capacity()
+
+    -- A different tank than last frame: the box and the picked fluid start from what IS in it.
+    local key = string.format("%d,%d,%d", p[1], p[2], p[3])
+    if tank_at ~= key then
+        tank_at = key
+        tank_amount_buf = string.format("%d", math.floor(amount + 0.5))
+        tank_pick_name = name
+        tank_pick_label = label
+    end
+
+    -- What is in it now, with its own picture beside it.
+    if name ~= "" then
+        fluid_icon(name, 32)
+        vc.ImGui_SameLine(0, 8)
+        vc.ImGui_Text(string.format("%s\n%s L of %s L  (%.1f%%)",
+                label ~= "" and label or name,
+                ui.commas(amount), ui.commas(cap), cap > 0 and (amount / cap * 100.0) or 0.0))
+    else
+        vc.ImGui_Text(string.format("empty - room for %s L", ui.commas(cap)))
+    end
+
+    vc.ImGui_Separator()
+
+    -- HOW MUCH IS IN IT IS WHAT THE BOX SAYS. There are no set, add, take, fill or empty buttons:
+    -- the author asked on 2026-09-17 for the box to decide the contents and nothing else to.
+    -- Typing a number puts that many litres in; clearing it or typing a zero empties it.
+    local typed = vc.ImGui_InputText("litres", tank_amount_buf, 16)
+    if typed[1] then
+        tank_amount_buf = typed[2]
+        if tank_pick_name ~= "" then
+            -- An unreadable box - empty, or a minus sign on its own part way through typing - is
+            -- taken as nought rather than left alone, so backspacing to nothing empties the tank
+            -- instead of freezing it at whatever it last read.
+            cell:fluid_set(tank_pick_name, tonumber(tank_amount_buf) or 0, tank_pick_label)
+        end
+    end
+
+    if tank_pick_name == "" then
+        vc.ImGui_Text("pick a fluid below, then say how many litres of it")
+    else
+        vc.ImGui_Text(string.format("full at %s L", ui.commas(cap)))
+    end
+
+    vc.ImGui_Separator()
+
+    if #fluid_names == 0 then
+        vc.ImGui_Text("no fluids found - is the minecraft path set, with gregtech in it?")
+        vc.ImGui_Separator()
+        vc.ImGui_Text("esc to close")
+        vc.ImGui_End()
+        return true
+    end
+
+    local f = vc.ImGui_InputText("search", fluid_filter, 64)
+    if f[1] then
+        fluid_filter = f[2]
+    end
+    vc.ImGui_Text(string.format("%d fluids, from gregtech", #fluid_names))
+
+    -- The picker. A child rather than the window itself, so the part above stays put while a list
+    -- of a couple of hundred fluids scrolls underneath it.
+    vc.ImGui_BeginChild("fluids", {x = 0, y = 320}, 1, 0)
+    local needle = fluid_filter:lower()
+    for i = 1, #fluid_names do
+        local fname = fluid_names[i]
+        local flabel = fluid_labels[i] or fname
+        if needle == "" or fname:lower():find(needle, 1, true)
+                or flabel:lower():find(needle, 1, true) then
+            fluid_icon(fname, 18)
+            vc.ImGui_SameLine(0, 6)
+            -- Keeping whatever was in it: choosing a fluid says what it is, not how much.
+            if vc.ImGui_Selectable(string.format("%s##f%d", flabel, i), fname == tank_pick_name,
+                    0, {x = 0, y = 0}) then
+                -- Choosing a fluid says WHAT is in the tank; the box says how much. The litres
+                -- already typed are kept, so picking a different fluid swaps it over rather than
+                -- emptying the tank.
+                tank_pick_name = fname
+                tank_pick_label = flabel
+                cell:fluid_set(fname, tonumber(tank_amount_buf) or 0, flabel)
+            end
+        end
+    end
+    vc.ImGui_EndChild()
 
     vc.ImGui_Separator()
     vc.ImGui_Text("esc to close")
@@ -623,12 +1166,12 @@ function ui.panel(state, settings, info)
     vc.ImGui_Text(info.captured and "mouse: captured - tab to release"
             or "mouse: free - tab to capture and look around")
     vc.ImGui_Text("wasd moves level, e and q for up and down, shift to go faster")
-    vc.ImGui_Text("left click breaks, right click places the selected thing")
+    vc.ImGui_Text("left click breaks; right click opens a case, screen or chest")
+    vc.ImGui_Text("right click anything else - or shift+right click - places instead")
     vc.ImGui_Text("the mouse wheel, or 1 to 4, changes what is selected")
     vc.ImGui_Text("the orange ball marks where a placed block would go")
     vc.ImGui_Text("a wire cannot be built on, and breaking takes the wire first")
     vc.ImGui_Text("f toggles the aimed case between off and running")
-    vc.ImGui_Text("ctrl+right click a case to start it, a screen to step into it")
     vc.ImGui_Text("ctrl+q quits, saving the world on the way out")
 
     vc.ImGui_End()

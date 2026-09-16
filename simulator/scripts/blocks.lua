@@ -27,6 +27,10 @@
 -- |     A cable, which carries the component network between blocks, and
 -- |     a chest, which holds items in its `u.inventory`.
 -- |
+-- | make_tank()                              -> cell
+-- |     A liquid tank, empty. Iron Tanks' model, a Super Tank IV's
+-- |     interface: one fluid, and tank_capacity() litres of room for it.
+-- |
 -- | make_transposer() / make_redstone()      -> cell
 -- |     A transposer, which moves items between the inventories beside
 -- |     it, and a redstone I/O block, which reads and emits a signal on
@@ -75,6 +79,9 @@ blocks.KIND = {
     CHEST = 8,
     TRANSPOSER = 9,
     REDSTONE = 10,
+    TANK = 11,
+    IMPORT_BUS = 12,
+    EXPORT_BUS = 13,
 }
 
 --[[ @brief What a cell is doing. Mirrors `cell_state_e` in world_composer.h.
@@ -114,6 +121,10 @@ blocks.KIND_NAME = {
     [8] = "chest",
     [9] = "transposer",
     [10] = "redstone i/o",
+    [11] = "liquid tank",
+    -- Applied Energistics' own names, out of its en_US.lang.
+    [12] = "ME Import Bus",
+    [13] = "ME Export Bus",
 }
 
 --[[ @brief Is this kind part of the component network?
@@ -164,6 +175,29 @@ end
 --]]
 function blocks.takes_keyboard(kind)
     return kind == blocks.KIND.CASE or kind == blocks.KIND.SCREEN
+end
+
+--[[ @brief Which kinds do something when they are right clicked.
+-- |
+-- | The game's rule: a block that has something to open or switch on takes the right click, and
+-- | sneaking past it is how you place against one instead. A computer starts and stops, a screen
+-- | is stepped into, a chest opens. Everything else is scenery as far as a click is concerned, and
+-- | a right click on it simply places whatever is selected.
+-- |
+-- | Kept here rather than in C++ because what a click does belongs to the script layer, and kept in
+-- | one function rather than spelled out at each call site so the hint on the screen and the thing
+-- | the click actually does cannot drift apart.
+-- |
+-- | @param kind  number
+-- | @return boolean
+-- |
+-- | @date 2026-09-17 16:00
+--]]
+function blocks.is_interactive(kind)
+    return kind == blocks.KIND.CASE
+            or kind == blocks.KIND.SCREEN
+            or kind == blocks.KIND.CHEST
+            or kind == blocks.KIND.TANK
 end
 
 blocks.FACE_NAME = {
@@ -284,8 +318,77 @@ end
 --]]
 function blocks.make_chest()
     local cell = blocks.make(blocks.KIND.CHEST)
-    blocks.u(cell).inventory = {}
+    -- The slots live on the C++ cell, not in `u`: a transposer is a component inside a guest
+    -- machine and cannot reach a Lua table belonging to the simulator's own scripts.
+    cell:inv_resize(blocks.CHEST_SLOTS)
     return cell
+end
+
+--[[ @brief A liquid tank, empty.
+-- |
+-- | Core: the author asked on 2026-09-17 for Iron Tanks' model with a Super Tank IV's interface.
+-- | That is what it is - the block is drawn as an iron tank, and what a transposer sees when it
+-- | looks at one is GregTech's digital tank: one fluid, thirty-two million litres of room.
+-- |
+-- | The fluid lives on the C++ cell rather than in `u`, for the same reason a chest's slots do: a
+-- | transposer is a component running inside a guest machine and cannot reach a Lua table belonging
+-- | to the simulator's own scripts.
+-- |
+-- | It starts empty. Which fluid it holds is configured by right clicking it, not chosen here -
+-- | there is no sensible default, and a tank that arrived full of something would be a surprise.
+-- |
+-- | @date 2026-09-17 16:00
+--]]
+function blocks.make_tank()
+    return blocks.make(blocks.KIND.TANK)
+end
+
+--[[ @brief How many litres a tank holds when it is full.
+-- |
+-- | GregTech's own number for a Super Tank IV, read out of the mod rather than guessed: tier four
+-- | of GT_MetaTileEntity_DigitalTankBase.commonSizeCompute is 32,000,000. The quest book rounds
+-- | these to powers of two in its prose; the code does not.
+-- |
+-- | @return number
+-- |
+-- | @date 2026-09-17 16:00
+--]]
+function blocks.tank_capacity()
+    return vc.render_tank_capacity()
+end
+
+--[[ @brief An ME import bus, and an ME export bus.
+-- |
+-- | SCENERY. The author asked on 2026-09-17 for "the object/blocks", not the behaviour: these carry
+-- | no component, join no network and move nothing. They are here so an AE2 setup can be laid out
+-- | and looked at.
+-- |
+-- | Both always point at the face they were placed against - see blocks.faces_the_click.
+-- |
+-- | @date 2026-09-17 18:00
+--]]
+function blocks.make_import_bus()
+    return blocks.make(blocks.KIND.IMPORT_BUS)
+end
+
+function blocks.make_export_bus()
+    return blocks.make(blocks.KIND.EXPORT_BUS)
+end
+
+--[[ @brief Does this kind point at the face it was placed against, rather than at the placer?
+-- |
+-- | Core: most blocks here turn to face whoever put them down, which is what you want of a screen
+-- | or a computer. A bus is the other thing entirely - in AE2 it is a part bolted onto the side of
+-- | the machine it works on, so which face it is stuck to is the whole of its meaning. The author,
+-- | 2026-09-17: they "should be allways be placed facing the face I've clicked".
+-- |
+-- | @param kind  number
+-- | @return boolean
+-- |
+-- | @date 2026-09-17 18:00
+--]]
+function blocks.faces_the_click(kind)
+    return kind == blocks.KIND.IMPORT_BUS or kind == blocks.KIND.EXPORT_BUS
 end
 
 --[[ @brief A transposer.
@@ -394,6 +497,9 @@ function blocks.make_kind(kind)
         [blocks.KIND.CHEST]      = blocks.make_chest,
         [blocks.KIND.TRANSPOSER] = blocks.make_transposer,
         [blocks.KIND.REDSTONE]   = blocks.make_redstone,
+        [blocks.KIND.TANK]       = blocks.make_tank,
+        [blocks.KIND.IMPORT_BUS] = blocks.make_import_bus,
+        [blocks.KIND.EXPORT_BUS] = blocks.make_export_bus,
     }
     local make = makers[kind]
     if make then
