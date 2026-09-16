@@ -236,11 +236,7 @@ local new_th = thread.create(function ()
     end
 end)
 
-find_components()
-
-gpu.setResolution(80, 25)
-gpu.setDepth(8)
-while true do
+function do_cycle()
     update_incrementer()
     update_battery(egen)
     update_battery(easm)
@@ -272,6 +268,17 @@ while true do
         battery_status(eraf, 12)
         battery_status(void, 16)
         battery_status(aqua, 20)
+    end
+end
+
+find_components()
+
+gpu.setResolution(80, 25)
+gpu.setDepth(8)
+while true do
+    exec_ok = pcall(do_cycle())
+    if not exec_ok then
+        find_components()
     end
     
     os.sleep(1)

@@ -1,0 +1,9 @@
+*.obj
+*.o
+*.exe
+*.ilk
+*.pdb
+*.log
+*.save
+imgui.ini
+disks.save
