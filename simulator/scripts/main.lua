@@ -37,6 +37,20 @@ local saves = require("saves")
 --[[ The scenario, when one was asked for with --scene. A scene is a save directory with a
 `scene.lua` beside it saying what the map is for; loading it is what turns the simulator from a
 sandbox into a rig that tests a program. Nil when running as a sandbox. @date 2026-09-17 ]]
+--[[ How much faster the scenario runs than real time.
+-- |
+-- | Core: A BALANCER IS SLOW TO WATCH. A fusion recipe takes a second and a bank holds five hundred
+-- | million litres, so a run worth judging is minutes of staring. Winding the clock forward is the
+-- | difference between testing a program and waiting for one.
+-- |
+-- | Only the SCENARIO's clock moves. The computer in the world is a real Lua machine running on the
+-- | real one, and it is the thing being measured - speeding it up as well would leave the program
+-- | exactly as much time per litre as before, which measures nothing.
+-- |
+-- | Minus slows, equals quickens, nought puts it back to one. @date 2026-09-17 ]]
+local sim_speed = 1.0
+local SIM_SPEEDS = {0.25, 0.5, 1, 2, 5, 10, 25, 50, 100, 250, 500}
+
 local scene = nil
 local scene_controller = nil
 local scene_report = {}
@@ -395,6 +409,49 @@ function test_init()
                 scene_report[#scene_report + 1] = "controller.lua would not load: " .. tostring(ctrl)
             end
 
+            -- THE PROGRAM UNDER TEST, copied onto the computer's disk. It lives in the scene
+            -- folder as an ordinary file so it can be edited and kept in version control like any
+            -- other source; the machine gets a copy every time the scene loads, so what runs is
+            -- always what is on disk rather than whatever was installed once and forgotten.
+            local src = io.open(scene_dir .. "balancer.lua", "r")
+            if src then
+                local text = src:read("a")
+                src:close()
+                local n = 0
+                for _, cell in ipairs(state.world:occupied()) do
+                    if cell.kind == blocks.KIND.CASE then
+                        vc.machine_hdd_write(machines.of(cell), "home/balancer.lua", text)
+                        -- AND THE PLAN WITH IT. Which fluid sits in which tank is worked out from
+                        -- the mods' own recipes, and a program inside the machine cannot read
+                        -- those - so the scenario writes it down for it, the way a base would be
+                        -- configured. Both halves then move together when the modpack changes.
+                        if ctrl and ctrl.plan_source then
+                            vc.machine_hdd_write(machines.of(cell), "home/plan.lua",
+                                    ctrl.plan_source())
+                        end
+                        n = n + 1
+                    end
+                end
+                scene_report[#scene_report + 1] = string.format(
+                        "balancer.lua injected onto %d computer%s", n, n == 1 and "" or "s")
+            end
+
+            -- AND IT STARTS BY ITSELF. A scenario that needs a person to switch the computer on
+            -- and type a command is not a rig, it is a demonstration. `.shrc` is OpenOS's own
+            -- doing - etc/profile.lua runs it when the shell opens - so the program starts the way
+            -- it would on a machine somebody had set up properly.
+            local started = 0
+            for _, cell in ipairs(state.world:occupied()) do
+                if cell.kind == blocks.KIND.CASE then
+                    vc.machine_hdd_write(machines.of(cell), "home/.shrc", "balancer\n")
+                    if machines.start(cell, state.world, settings.get("minecraft_path") or "") then
+                        started = started + 1
+                    end
+                end
+            end
+            scene_report[#scene_report + 1] = string.format("%d computer%s started",
+                    started, started == 1 and "" or "s")
+
             local _, missing = scene.discover(state.world)
             for _, m in ipairs(missing or {}) do
                 scene_report[#scene_report + 1] = "missing: " .. m
@@ -457,15 +514,35 @@ function test_draw()
         end
     end
 
-    -- Choosing what to place: the number keys pick a slot outright, the wheel steps through them.
-    if not vc.ImGui_WantCaptureKeyboard() then
+    -- Choosing what to place, and the scenario's clock.
+    --
+    -- NOT WHILE ANYTHING ELSE IS TAKING KEYS. A focused screen is a terminal being typed at, and a
+    -- chest or a tank window has boxes in it; a stray `0` in any of them must not reach the world.
+    -- WantCaptureKeyboard alone is not enough - a focused screen is not an ImGui widget, so it
+    -- reports nothing while swallowing every key the machine is reading.
+    local typing = focus ~= nil or chest ~= nil or tank ~= nil or vc.ImGui_WantCaptureKeyboard()
+    if not typing then
         -- One through nine, then zero for the tenth, the way a row of number keys actually
         -- reads. Building the name from the index alone asked ImGui for a key called
         -- "ImGuiKey_10" as soon as there were ten things to place.
-        for i = 1, math.min(#TOOLS, 10) do
-            local name = (i == 10) and "ImGuiKey_0" or ("ImGuiKey_" .. i)
-            if vc.ImGui_IsKeyPressed(name, false) then selected = i end
+        -- One through nine. Nought used to pick the tenth thing; it winds the clock back to
+        -- normal instead now, which is worth more than one slot of a bar the wheel also scrolls.
+        for i = 1, math.min(#TOOLS, 9) do
+            if vc.ImGui_IsKeyPressed("ImGuiKey_" .. i, false) then selected = i end
         end
+
+        -- The scenario's clock. Stepped through a list rather than multiplied, so the speeds are
+        -- round numbers a person can reason about instead of whatever repeated doubling lands on.
+        local function step_speed(dir)
+            local at = 1
+            for k, v in ipairs(SIM_SPEEDS) do
+                if math.abs(v - sim_speed) < 1e-6 then at = k end
+            end
+            sim_speed = SIM_SPEEDS[math.max(1, math.min(#SIM_SPEEDS, at + dir))]
+        end
+        if vc.ImGui_IsKeyPressed("ImGuiKey_Minus", false) then step_speed(-1) end
+        if vc.ImGui_IsKeyPressed("ImGuiKey_Equal", false) then step_speed(1) end
+        if vc.ImGui_IsKeyPressed("ImGuiKey_0", false) then sim_speed = 1.0 end
     end
     if not vc.ImGui_WantCaptureMouse() then
         local wheel = vc.ImGui_GetMouseWheel()
@@ -508,9 +585,14 @@ function test_draw()
         handle_tools(state)
     end
 
-    machines.step_all(state.world)
+    --[[ The sandbox has no scenario clock, so a frame of real time is a frame of world time. With
+    a scene loaded the controller steps them inside its own substep loop instead, so that a wound-up
+    clock carries the computers along with the base rather than leaving them behind. ]]
+    if not scene_controller then
+        machines.step_all(state.world, dt)
+    end
     if scene_controller then
-        scene_controller.update(state.world, scene, dt)
+        scene_controller.update(state.world, scene, dt, sim_speed)
     end
 
     -- The frame goes on the cell the ray struck, and the sphere on the cell a click would fill.
@@ -546,6 +628,7 @@ function test_draw()
         ui.screen_focus(state.world, focus)
     else
         ui.crosshair()
+        ui.signs(state.world)
         ui.hotbar(TOOLS, selected)
         if scene_controller then
             scene_controller.draw(scene)
@@ -565,7 +648,7 @@ function test_draw()
         -- type into it. ImGui releases an active widget that is not submitted, so simply not
         -- drawing it hands the keyboard back.
         ui.panel(state, settings, {fps = fps, captured = vc.mouse_captured(),
-                scene = scene and scene.NAME or nil})
+                scene = scene and scene.NAME or nil, sim_speed = sim_speed})
     end
     return 0
 end

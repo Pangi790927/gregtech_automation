@@ -61,7 +61,7 @@ end
 local function settle(w, seconds)
     local deadline = vc.app_time() + seconds
     while vc.app_time() < deadline do
-        machines.step_all(w)
+        machines.step_all(w, 0.05)
     end
 end
 
@@ -77,7 +77,7 @@ end
 local function until_true(w, done, cap)
     local deadline = vc.app_time() + (cap or 8.0)
     while vc.app_time() < deadline do
-        machines.step_all(w)
+        machines.step_all(w, 0.05)
         if done() then
             return true
         end
@@ -249,13 +249,25 @@ end
 local function scripts_compile_case()
     print("every script compiles")
 
-    local dir = vc.path_resolve("scripts")
     local n = 0
-    for _, name in ipairs(vc.path_list_dir("scripts")) do
-        if name:sub(-4) == ".lua" then
-            local chunk, err = loadfile(dir .. "/" .. name)
-            check(name, chunk ~= nil, err)
-            n = n + 1
+    local function compile_dir(where)
+        local dir = vc.path_resolve(where)
+        for _, name in ipairs(vc.path_list_dir(where)) do
+            if name:sub(-4) == ".lua" then
+                local chunk, err = loadfile(dir .. "/" .. name)
+                check(name, chunk ~= nil, err)
+                n = n + 1
+            end
+        end
+    end
+    compile_dir("scripts")
+
+    -- The scenarios too, balancer.lua included. It runs on a guest machine rather than here, so
+    -- nothing else would ever parse it - and a scenario whose program will not compile is a
+    -- scenario that quietly tests nothing.
+    for _, scene_name in ipairs(vc.path_list_dir("scenes")) do
+        if vc.path_is_dir(vc.path_resolve("scenes/" .. scene_name)) then
+            compile_dir("scenes/" .. scene_name)
         end
     end
     check("there were scripts to compile", n > 0, n)
@@ -591,6 +603,14 @@ local function bank_case(mc)
     end
     check("every plasma the mixer needs is in the bank",
             have["plasma.helium"] and have["plasma.tin"] and have["plasma.americium"])
+
+    -- THE FEEDSTOCKS THE TWO MK-IIIs NEED. These were missing for a whole session: the list was
+    -- typed out from a hand extraction that predated the runtime reader, so both reactors sat
+    -- starved with their lamps lit and nothing in the bank to draw on.
+    check("radon's feedstock is banked", have["molten.iridium"] and have["fluorine"],
+            tostring(have["molten.iridium"]) .. "/" .. tostring(have["fluorine"]))
+    check("and americium's", have["molten.plutonium241"] and have["hydrogen"],
+            tostring(have["molten.plutonium241"]) .. "/" .. tostring(have["hydrogen"]))
     check("so is every catalyst it makes",
             have["exciteddtcc"] and have["exciteddtrc"] and have["exciteddtpc"]
             and have["exciteddtec"])
@@ -614,6 +634,12 @@ local function bank_case(mc)
     end
     check("feedstock starts full", level("deuterium") == scene.BANK.cap_per_fluid,
             level("deuterium"))
+    -- The two the MK-IIIs draw on, which is where this went wrong before.
+    check("and so does the iridium radon needs",
+            level("molten.iridium") == scene.BANK.cap_per_fluid, level("molten.iridium"))
+    check("and the plutonium americium needs",
+            level("molten.plutonium241") == scene.BANK.cap_per_fluid,
+            level("molten.plutonium241"))
     check("and what the scenario makes starts empty", level("plasma.helium") == 0,
             level("plasma.helium"))
 
@@ -647,121 +673,770 @@ local function bank_case(mc)
     end
 end
 
---[[ @brief The scenario's controller: does the invisible hand actually run a machine?
+--[[ @brief The scenario's rig: do the control lines actually move liquid and run the reactor?
 -- |
--- | Core: THE POINT IS THAT IT MOVES FLUID, not that it loads. A scene that compiles and does
--- | nothing looks exactly like a scene that works until somebody watches a tank for a minute.
--- | So this builds the rig, tells the reactor to make helium plasma the way the program under test
--- | would, and waits for plasma to appear in the bank.
+-- | Core: THE PATH A RECIPE TAKES, end to end and through the real actuators. The reactor is not
+-- | told what to make - it runs whatever its two inputs are a recipe for - so the only way to get
+-- | helium plasma out of it is to stage deuterium and tritium in front of it with the pumps, the
+-- | way the program under test has to. A test that reached in and set the feeds would prove the
+-- | machine works and nothing about the plumbing, which is the part with sixteen lines in it.
 -- |
--- | @date 2026-09-17 22:30
+-- | @date 2026-09-18 00:00
 --]]
 local function controller_case(mc)
-    print("the scenario's controller")
+    print("the scenario's rig")
 
     package.path = package.path .. ";./scenes/fusion_balancer/?.lua"
     local ok_s, scene = pcall(require, "scene")
     local ok_b, bankmod = pcall(require, "bank")
+    local ok_r, rigmod = pcall(require, "rig")
     local ok_c, ctrl = pcall(require, "controller")
+    check("the rig loads", ok_r, ok_r and "" or tostring(rigmod))
     check("the controller loads", ok_c, ok_c and "" or tostring(ctrl))
-    if not (ok_s and ok_b and ok_c) then
+    if not (ok_s and ok_b and ok_r and ok_c) then
         return
     end
 
     local st = world.new()
     local w = st.world
 
-    -- A bank row, and the four control blocks the scenario looks for.
+    -- The bank row.
     for i = 0, 3 do
-        w:set(10 + i, 0, 50, blocks.make_tank())
+        w:set(10 + i, 0, 50, blocks.make_qtank())
     end
-    for i = 0, 3 do
-        w:set(10 + i * 2, 0, 55, blocks.make_redstone())
-        w:set(10 + i * 2, 1, 55, blocks.make_lamp())
-    end
-
     bankmod.build(w, scene, mc)
-    local log = ctrl.init(w, scene, mc or "")
-    check("it read the recipes", #log > 0 and log[1]:find("fusion recipes", 1, true) ~= nil,
-            log[1])
-    check("it found the four control blocks",
-            #ctrl.read_signals() == 16, #ctrl.read_signals())
 
-    -- The reactor needs feedstock. Deuterium and tritium make helium plasma, which is the first
-    -- fluid in the bank and so is selector value one.
-    local function bank_cell(name)
-        for _, cell in ipairs(w:occupied()) do
-            if blocks.is_tank(cell.kind) and cell:fluid_lock_get()[1] == name then
-                return cell
+    -- Four control blocks, each with its lamp.
+    for i = 0, 3 do
+        w:set(10 + i * 2, 0, 60, blocks.make_redstone())
+        w:set(10 + i * 2, 1, 60, blocks.make_lamp())
+    end
+
+    -- Eight transposers above ground, four tanks around each and the C tank on top. The first
+    -- four carry the A fluids and feed the reactor's left input, the last four the B fluids.
+    for i = 0, 7 do
+        local x, z = 20 + i * 4, 60
+        w:set(x, 1, z, blocks.make_transposer())
+        w:set(x - 1, 1, z, blocks.make_tank())
+        w:set(x + 1, 1, z, blocks.make_tank())
+        w:set(x, 1, z - 1, blocks.make_tank())
+        w:set(x, 1, z + 1, blocks.make_tank())
+        w:set(x, 2, z, blocks.make_tank())
+    end
+
+    -- The reactor's two input hatches: loose ground tanks, belonging to no transposer.
+    w:set(30, 0, 55, blocks.make_tank())
+    w:set(32, 0, 55, blocks.make_tank())
+
+    -- SMALL TANKS HERE ON PURPOSE. The mechanism under test is fill-to-the-brim, lift whole, push;
+    -- none of it cares what the brim is, and a real 32,000,000 L batch is minutes of game time to
+    -- stage - a long stretch of suite for one assertion.
+    -- The scenario's own map keeps the real capacity.
+    local T_CAP = 8000000
+    for i = 0, 7 do
+        local x, z = 20 + i * 4, 60
+        for _, q in ipairs({{x - 1, 1, z}, {x + 1, 1, z}, {x, 1, z - 1}, {x, 1, z + 1},
+                {x, 2, z}}) do
+            w:get(q[1], q[2], q[3]):fluid_set_capacity(T_CAP)
+        end
+    end
+
+    local log = ctrl.init(w, scene, mc or "")
+    check("it read the recipes", log[1]:find("fusion recipes", 1, true) ~= nil, log[1])
+
+    local rig_complaints = 0
+    for _, l in ipairs(log) do
+        if l:find("^rig: ") then rig_complaints = rig_complaints + 1 end
+    end
+    check("the rig is complete", rig_complaints == 0, rig_complaints)
+
+    local function line(n, value)
+        local block = math.floor((n - 1) / 4) + 1
+        local face = ({blocks.FACE.XNEG, blocks.FACE.XPOS,
+                blocks.FACE.ZNEG, blocks.FACE.ZPOS})[(n - 1) % 4 + 1]
+        w:get(10 + (block - 1) * 2, 0, 60):rs_set(face, value)
+    end
+
+    --[[ THE TANK ASSIGNMENT. Sixteen input fluids over sixteen tanks, and the split is not a
+    choice: each recipe is an edge between its two inputs, and every recipe needs one end on each
+    side, which is a two-colouring. That it lands on eight and eight exactly is what makes a tank
+    able to hold one fluid for the whole run - and so what removes flushing entirely. ]]
+    local plan = ctrl.plan()
+    check("neither side wants more tanks than there are", #plan.a <= 8 and #plan.b <= 8,
+            #plan.a .. " / " .. #plan.b)
+    check("every recipe has one end on each side", plan.at["deuterium"] ~= nil)
+    print("  --   A: " .. table.concat(plan.a, ", "))
+    print("  --   B: " .. table.concat(plan.b, ", "))
+
+    local hel = plan.by_out["plasma.helium"]
+    check("helium plasma is made from an A tank and a B tank", hel ~= nil)
+    if not hel then
+        return
+    end
+
+    --[[ Where a fluid lives: which transposer, and which of its four faces. Four tanks to a
+    transposer, the A fluids on transposers 1 to 4 and the B fluids on 5 to 8. ]]
+    local function where(at)
+        return at.t, at.k
+    end
+    local ta, ka = where(plan.at[hel.a])
+    local tb, kb = where(plan.at[hel.b])
+
+    --[[ BANK PLUS ITS OWN STAGING TANK. plasma.helium is an input as well as a product - boron is
+    made out of it - so it has a tank of its own, and the hardwired fill pulls it straight back out
+    of the bank the moment any exists. The bank reads nought while the reactor is working perfectly,
+    which is exactly what this case saw when it only looked at the bank. ]]
+    local function made_helium()
+        local n = ctrl.bank_level("plasma.helium")
+        local at = plan.at["plasma.helium"]
+        if at then
+            local t = ctrl.side_tank(at.t, at.k)
+            local h = t and t:fluid_get() or {"", 0, ""}
+            if h[1] == "plasma.helium" then
+                n = n + h[2]
+            end
+        end
+        return n
+    end
+
+    -- FILLING TAKES NO COMMAND AT ALL. Every tank has one fluid and one source, so the pumps are
+    -- hardwired; the lines stay at nought and the tanks fill anyway.
+    for _ = 1, 10 do
+        ctrl.update(w, scene, 0.05, 400)    -- a tankful at the pump's rate
+    end
+
+    local fa = ctrl.side_tank(ta, ka):fluid_get()
+    local fb = ctrl.side_tank(tb, kb):fluid_get()
+    print(string.format("  --   a batch of helium is %d runs: %d L of %s and %d L of %s",
+            hel.runs, hel.lift_a, hel.a, hel.lift_b, hel.b))
+    check("the A tank took " .. hel.a, fa[1] == hel.a, fa[1])
+    check("and the B tank took " .. hel.b, fb[1] == hel.b, fb[1])
+    check("both hold a batch's worth and more", fa[2] >= hel.lift_a and fb[2] >= hel.lift_b,
+            fa[2] .. " / " .. fb[2])
+    check("and nothing has reached the reactor yet",
+            ctrl.bank_level("plasma.helium") == 0, ctrl.bank_level("plasma.helium"))
+
+    -- THE LIFT, AND IT IS ATOMIC. The face carries the tank number and nothing else; the whole
+    -- tankful goes up into C in one step and the tank is left empty behind it.
+    line(ta, ka)
+    line(tb, kb)
+    ctrl.update(w, scene, 0.05, 1)
+
+    local ca = ctrl.c_tank(ta):fluid_get()
+    -- A BATCH, NOT A TANKFUL, and it is exactly N runs of this recipe - which is what stops a
+    -- remainder too small to burn being left in C for ever. Nearly all of it because C starts
+    -- draining into the hatch the instant it has anything.
+    check("a batch went up into C in one step",
+            ca[1] == hel.a and ca[2] > hel.lift_a * 0.9 and ca[2] <= hel.lift_a,
+            ca[1] .. " " .. tostring(ca[2]))
+    check("and the tank underneath kept the rest",
+            ctrl.side_tank(ta, ka):fluid_get()[2] == fa[2] - hel.lift_a,
+            ctrl.side_tank(ta, ka):fluid_get()[2])
+    line(ta, 0)
+    line(tb, 0)
+
+    -- AND THE C TANKS PUSH THEMSELVES. No line says so: an empty C pushes nothing, and the lift
+    -- is what decides when a C stops being empty, so the wire has nothing left to decide.
+    for _ = 1, 20 do ctrl.update(w, scene, 0.05, 20) end
+
+    check("the reactor is fed from C", ctrl.feed_fluid(1) == hel.a, ctrl.feed_fluid(1))
+    check("on both sides", ctrl.feed_fluid(2) == hel.b, ctrl.feed_fluid(2))
+
+    -- AND IT IS IN THE TANK A PERSON CAN SEE. The inputs were two numbers inside the controller
+    -- for a while, so the tanks standing in the map for them stayed empty however well the run
+    -- went - which is the whole of what the author saw.
+    local hatch = w:get(30, 0, 55):fluid_get()
+    check("and the input tank in the world actually holds it",
+            hatch[1] == hel.a and hatch[2] > 0, hatch[1] .. " " .. tostring(hatch[2]))
+    check("and it made helium plasma out of them", made_helium() > 0, made_helium())
+
+    -- IT BATCHES. The compact fusion runs the recipe up to 64 times over - 128 on a cheap one like
+    -- this - and this case exists because the simulation ran it exactly once for a whole session
+    -- while still looking perfectly healthy. One parallel here means the width has been lost.
+    check("and it ran the recipe many times over, not once",
+            ctrl.reactor_para() > 1, "x" .. ctrl.reactor_para())
+    print(string.format("  --   the reactor ran %d parallels", ctrl.reactor_para()))
+
+    -- LOADING THE NEXT WHILE THIS ONE BURNS, which is what eight transposers are for: a different
+    -- transposer, a different tank, nothing shared with the pair being burned.
+    local other = nil
+    for out, r in pairs(plan.by_out) do
+        if out ~= "plasma.helium" and plan.at[r.a].t ~= ta then
+            other = {out = out, r = r}
+            break
+        end
+    end
+    if other then
+        local t2, k2 = plan.at[other.r.a].t, plan.at[other.r.a].k
+        -- NOT THE BANK LEVEL, and not the C tank either. plasma.helium is an input to boron as
+        -- well as a product, so its own staging tank drinks it out of the bank while the reactor
+        -- makes it; and C now empties into a 32,000,000 L hatch in a couple of seconds, so it is
+        -- long gone by the time this looks. What is actually being asked is whether the reactor
+        -- kept producing, so that is what is measured.
+        local burning = made_helium()
+        for _ = 1, 20 do ctrl.update(w, scene, 0.05, 20) end
+
+        local st = ctrl.side_tank(t2, k2):fluid_get()
+        check("another transposer's tank is loaded while this one feeds the reactor",
+                st[1] == other.r.a and st[2] > 0, st[1] .. " " .. tostring(st[2]))
+        check("and the reactor did not pause for it", made_helium() > burning,
+                made_helium() - burning)
+    end
+    check("with no two pumps asked for one hatch", ctrl.collisions() == 0, ctrl.collisions())
+
+    -- THE GUARD. Two C tanks on one side holding fluid at once is two fluids for one hatch, which
+    -- can only mean a batch was lifted while the last was still burning.
+    local one, two = 1, 2
+    ctrl.c_tank(one):fluid_set("deuterium", 1000, "Deuterium")
+    ctrl.c_tank(two):fluid_set("molten.magnesium", 1000, "Magnesium")
+    ctrl.update(w, scene, 0.05, 1)
+    check("two C tanks cannot share an input", ctrl.collisions() > 0, ctrl.collisions())
+    ctrl.c_tank(one):fluid_set("", 0, "")
+    ctrl.c_tank(two):fluid_set("", 0, "")
+
+    --[[ AND CLEAR WHAT THAT PUT IN THE HATCHES. Forcing fluid into a C tank by hand is not
+    something the rig can do to itself: a batch is consumed exactly, so a hatch ends a run at
+    nothing. Left there, the litres above would block the next batch of any other fluid - which is
+    worth knowing about, and is what the reactor's "X and Y are not a recipe" line is for. ]]
+    for i = 1, 2 do
+        local h = ctrl.hatch(i)
+        if h then
+            h:fluid_set("", 0, "")
+        end
+    end
+
+    -- THE CLOCK. A frame at a hundred times should simulate a hundred times as much, and the way
+    -- it used to be written it did not: one limit was trying to be both a stall guard and a speed
+    -- cap, and at sixty frames a second it held the clock to about fifteen.
+    -- A fresh batch, because the last one has long since been burnt.
+    line(ta, ka)
+    line(tb, kb)
+    ctrl.update(w, scene, 0.05, 1)
+    line(ta, 0)
+    line(tb, 0)
+
+    local slow_from = made_helium()
+    for _ = 1, 10 do ctrl.update(w, scene, 0.05, 1) end
+    local slow = made_helium() - slow_from
+
+    local fast_from = made_helium()
+    for _ = 1, 10 do ctrl.update(w, scene, 0.05, 20) end
+    local fast = made_helium() - fast_from
+
+    check("twenty times the clock makes far more", fast > slow * 10,
+            string.format("%d at 1x, %d at 20x", slow, fast))
+    check("and it substeps rather than taking one big stride", ctrl.steps() > 1, ctrl.steps())
+
+    --[[ THE FOUR LINES THAT RUN THE OTHER WAY. A comparator on each catalyst tank, driven INTO
+    the control block rather than out of it, saying "this one has reached its limit".
+
+    Worth a case of its own because a signal that never moves passes every test that only asks
+    whether the program still works: the program treats nought as "not finished yet", which is what
+    it would see if this were broken, and it would go on making plasma for a catalyst that was full
+    with nothing anywhere to say so. So this checks BOTH edges. ]]
+    local cat1 = scene.CATALYSTS[1]
+    local cat_tank = nil
+    for _, cell in ipairs(w:occupied()) do
+        if cell.kind == blocks.KIND.QTANK and cell:fluid_lock_get()[1] == cat1.fluid then
+            cat_tank = cell
+        end
+    end
+    check("the bank has a tank for " .. cat1.fluid, cat_tank ~= nil)
+    if cat_tank then
+        local function limit_face()
+            -- Line 11 is the third block's third face, the same arithmetic both halves use.
+            local block = w:get(10 + (3 - 1) * 2, 0, 60)
+            return block and block:rs_in_get(blocks.FACE.ZNEG) or -1
+        end
+
+        cat_tank:fluid_set(cat1.fluid, 0, cat1.fluid)
+        ctrl.update(w, scene, 0.05, 1)
+        check("an empty catalyst tank says nothing on the wire", limit_face() == 0, limit_face())
+
+        cat_tank:fluid_set(cat1.fluid, scene.CATALYST_LIMIT, cat1.fluid)
+        ctrl.update(w, scene, 0.05, 1)
+        check("and a full one tells the computer", limit_face() > 0, limit_face())
+
+        cat_tank:fluid_set(cat1.fluid, scene.CATALYST_LIMIT / 2, cat1.fluid)
+        ctrl.update(w, scene, 0.05, 1)
+        check("and it goes out again when the mixer drinks it",
+                limit_face() == 0, limit_face())
+        cat_tank:fluid_set("", 0, "")
+    end
+
+    --[[ THE CASE THE WHOLE BATCH SIZE EXISTS FOR: a recipe that does NOT take its two inputs in
+    equal measure. The author, 2026-09-18: "you shouldn't take 32M as the batch, but something that
+    is aroung 500K and multiple of the input sizes of the recipe, else it will get stuck".
+
+    A tankful stuck twice over. 32,000,000 is not a whole number of 144s or 375s, so the C tank kept
+    a few litres nothing could ever burn; and staging the same amount of both inputs strands most of
+    the smaller one - nitrogen takes 16 of one and 375 of the other. N runs of each input's own
+    amount cures both, and the proof is that BOTH C tanks reach exactly nothing. ]]
+    local odd, odd_name = nil, nil
+    for out, r in pairs(plan.by_out) do
+        if r.amt_a ~= r.amt_b then
+            odd, odd_name = r, out
+        end
+    end
+    check("there is a recipe with unequal inputs to try", odd ~= nil)
+    if odd then
+        print(string.format("  --   %s takes %d and %d: a batch is %d runs, %d L and %d L",
+                odd_name, odd.amt_a, odd.amt_b, odd.runs, odd.lift_a, odd.lift_b))
+
+        for _ = 1, 10 do ctrl.update(w, scene, 0.05, 400) end       -- let the tanks refill
+        local was_a, was_b = ctrl.feed_level(1), ctrl.feed_level(2)
+        line(odd.a_t, odd.a_k)
+        line(odd.b_t, odd.b_k)
+        ctrl.update(w, scene, 0.05, 1)
+        line(odd.a_t, 0)
+        line(odd.b_t, 0)
+
+        --[[ THE PROPORTION IS THE POINT, and it survives the accounting. C starts draining into
+        the hatch in the same tick it is filled and the reactor starts eating out of the hatch, so
+        the absolute litres standing anywhere are already a moment out of date - but everything that
+        moves, moves in the recipe's own ratio, so the ratio is exact whenever it is looked at.
+        Equal litres in both would fail this for any recipe that is not one-to-one. ]]
+        local got_a = ctrl.c_tank(odd.a_t):fluid_get()[2] + ctrl.feed_level(1) - was_a
+        local got_b = ctrl.c_tank(odd.b_t):fluid_get()[2] + ctrl.feed_level(2) - was_b
+        check("each C got its own input's share, not the same number",
+                got_a * odd.amt_b == got_b * odd.amt_a and got_a > odd.lift_a * 0.9,
+                string.format("%d / %d, wanted %d / %d", got_a, got_b, odd.lift_a, odd.lift_b))
+
+        for _ = 1, 120 do ctrl.update(w, scene, 0.05, 100) end
+        local ea = ctrl.c_tank(odd.a_t):fluid_get()
+        local eb = ctrl.c_tank(odd.b_t):fluid_get()
+        check("and both run dry exactly, with nothing stranded",
+                ea[2] == 0 and eb[2] == 0, ea[2] .. " / " .. eb[2])
+    end
+
+    --[[ AND THE HATCHES END EMPTY TOO. The C tanks running dry is only half of it: whatever they
+    pushed into the reactor has to be consumed to the last litre as well, or the leftover sits in
+    the hatch and blocks the next batch of anything else. ]]
+    for i = 1, 2 do
+        local h = ctrl.hatch(i)
+        if h then h:fluid_set("", 0, "") end
+    end
+    for _ = 1, 10 do ctrl.update(w, scene, 0.05, 400) end
+    line(ta, ka)
+    line(tb, kb)
+    ctrl.update(w, scene, 0.05, 1)
+    line(ta, 0)
+    line(tb, 0)
+    for _ = 1, 120 do ctrl.update(w, scene, 0.05, 100) end
+
+    local la, lb = ctrl.feed_level(1), ctrl.feed_level(2)
+    local lca = ctrl.c_tank(ta):fluid_get()[2]
+    local lcb = ctrl.c_tank(tb):fluid_get()[2]
+    check("a whole batch leaves the C tanks empty", lca == 0 and lcb == 0, lca .. " / " .. lcb)
+    check("and the hatches empty too, to the last litre", la == 0 and lb == 0, la .. " / " .. lb)
+
+    --[[ THE WORKING SIGNAL, and why it has to exist.
+    --
+    -- C drains into the hatch ten times faster than the reactor eats out of it, so C runs dry with
+    -- a hatchful of the batch still to go. A program that treats an empty C as a finished batch
+    -- lifts the next pair into the tail of the last one - and when the two recipes share a hatch
+    -- side, the new fluid goes in on top, gets eaten by the OLD recipe, and the batch that was
+    -- staged is left short and out of proportion. It comes to rest with a run's worth stranded:
+    -- the author, 2026-09-18, "the inputs still get stuck at 125,125".
+    --
+    -- So the rig says when the machine is working, which is what a redstone cover on it does in the
+    -- game. Both edges, because a signal stuck on would stop the rig dead and a signal stuck off
+    -- would bring the jam straight back. ]]
+    local function busy_face()
+        local n = rigmod.BUSY_LINE
+        local blk = w:get(10 + (math.floor((n - 1) / 4)) * 2, 0, 60)
+        local face = ({blocks.FACE.XNEG, blocks.FACE.XPOS,
+                blocks.FACE.ZNEG, blocks.FACE.ZPOS})[(n - 1) % 4 + 1]
+        return blk and blk:rs_in_get(face) or -1
+    end
+
+    check("the reactor says it is idle when nothing is staged", busy_face() == 0, busy_face())
+
+    for _ = 1, 10 do ctrl.update(w, scene, 0.05, 400) end
+    line(ta, ka)
+    line(tb, kb)
+    ctrl.update(w, scene, 0.05, 1)
+    line(ta, 0)
+    line(tb, 0)
+    check("and busy the moment it has a pair", busy_face() > 0, busy_face())
+
+    -- THE HALF THAT MATTERS: C is empty long before the machine is.
+    local c_empty_at = nil
+    for i = 1, 200 do
+        ctrl.update(w, scene, 0.05, 100)
+        if not c_empty_at and ctrl.c_tank(ta):fluid_get()[2] == 0 then
+            c_empty_at = {i = i, busy = busy_face(), hatch = ctrl.feed_level(1)}
+        end
+    end
+    check("it was still busy when the C tank ran dry",
+            c_empty_at ~= nil and c_empty_at.busy > 0,
+            c_empty_at and string.format("busy %d with %d L still in the hatch",
+                    c_empty_at.busy, c_empty_at.hatch) or "C never emptied")
+    check("and idle again once the hatches are eaten", busy_face() == 0, busy_face())
+
+    -- AND BUSY FOR A HATCH THAT IS NOT BEING BURNED. Between two cycles the reactor is briefly
+    -- making nothing while the hatches are still full, and a signal built only on "is it mid
+    -- recipe" would blink idle in that gap and invite the next batch in on top. A hatch with
+    -- anything in it is an unfinished batch, whether the machine is turning or not.
+    local h1 = ctrl.hatch(1)
+    if h1 then
+        h1:fluid_set("deuterium", 1000, "Deuterium")
+        ctrl.update(w, scene, 0.05, 1)
+        check("a hatch with anything in it counts as busy on its own",
+                busy_face() > 0, busy_face())
+        h1:fluid_set("", 0, "")
+        ctrl.update(w, scene, 0.05, 1)
+    end
+
+    --[[ THE LAST RUN, AND WHOLE LITRES.
+    --
+    -- The author, 2026-09-18: "magnesium stuck at 128 128, is this some floating point bulshit?".
+    -- It was. Litres are integers in the game and a pump moving `rate * dt` is not, so a tank could
+    -- come to rest on 127.99999999 - which reads as 128 in every display, floors to nought runs,
+    -- and makes the reactor start a cycle of ZERO parallel: it produces nothing, calls itself busy,
+    -- and the rig waits on it for ever.
+    --
+    -- Two cases, because the two halves fail differently: exactly one run must be burnable, and a
+    -- fraction must never be left anywhere for it to trip over. ]]
+    --[[ A PUMP MOVES WHOLE LITRES, and this is where that has to be proved.
+    --
+    -- The author, 2026-09-18: "magnesium stuck at 128 128, is this some floating point bulshit?".
+    -- It was, though not where it first looked. A real frame is 0.0163 seconds, not 0.05, so a
+    -- substep is a ragged fraction and `rate * dt` is not a whole number of litres. A hatch left
+    -- holding 127.99999999 of a 128 L input reads as 128 in every display, fails the recipe's
+    -- `at least 128` test, and can never be consumed by anything - so the reactor reports itself
+    -- busy on a pair it cannot use and the rig waits on it for ever.
+    --
+    -- Testing it through a whole run proved nothing: everything downstream rounds the evidence away
+    -- by the time it settles - a side tank stops at its capacity, a C tank gets an exact batch, and
+    -- a hatch that has been handed the WHOLE of a C tank is whole again however ragged the pieces
+    -- were. The fraction only exists mid-transfer. So this asks the pump directly. ]]
+    do
+        local from = blocks.make_tank()
+        local to = blocks.make_tank()
+        from:fluid_set("deuterium", 1000000, "Deuterium")
+        local moved = rigmod.pump(from, to, "deuterium", "Deuterium", 0.0163 / 13)
+        check("a pump moves a whole number of litres", moved == math.floor(moved), moved)
+        check("and leaves a whole number behind", to:fluid_get()[2] == math.floor(to:fluid_get()[2])
+                and from:fluid_get()[2] == math.floor(from:fluid_get()[2]),
+                from:fluid_get()[2] .. " / " .. to:fluid_get()[2])
+    end
+
+    local cal = plan.by_out["plasma.calcium"]
+    if cal then
+        local h1, h2 = ctrl.hatch(1), ctrl.hatch(2)
+        h1:fluid_set(cal.a, cal.amt_a, cal.a)
+        h2:fluid_set(cal.b, cal.amt_b, cal.b)
+        local before_cal = ctrl.bank_level("plasma.calcium")
+        for _ = 1, 40 do ctrl.update(w, scene, 0.05, 20) end
+        check("a single run's worth in the hatches is burnt, not left",
+                ctrl.feed_level(1) == 0 and ctrl.feed_level(2) == 0,
+                ctrl.feed_level(1) .. " / " .. ctrl.feed_level(2))
+        check("and it really made something out of it",
+                ctrl.bank_level("plasma.calcium") > before_cal,
+                ctrl.bank_level("plasma.calcium") - before_cal)
+    end
+
+    --[[ A STAGING TANK IS A BUFFER, NOT A STORE. It stops at two batches of whatever the hungriest
+    recipe asks of it, rather than filling all 32,000,000 L - which matters for a fluid the base
+    makes as well as uses. plasma.helium is an input to boron, so its tank was swallowing eight
+    batches of helium plasma before any reached the bank, and it looked as though none was being
+    made at all. ]]
+    local over = {}
+    for t = 1, 8 do
+        for k = 1, 4 do
+            local f = plan.tank[t] and plan.tank[t][k]
+            local cell = f and ctrl.side_tank(t, k)
+            local held = cell and cell:fluid_get()[2] or 0
+            if f and plan.hold[f] and held > plan.hold[f] then
+                over[#over + 1] = string.format("%s %d > %d", f, held, plan.hold[f])
             end
         end
     end
-    local deut = bank_cell("deuterium")
-    local trit = bank_cell("tritium")
-    check("the bank has a deuterium tank", deut ~= nil)
-    check("and a tritium tank", trit ~= nil)
-    if not (deut and trit) then
+    check("no staging tank hoards more than a couple of batches", #over == 0,
+            table.concat(over, ", "))
+
+    -- The mixer takes orders and nothing else.
+    check("no mixer runs until told", ctrl.mixers_running() == 0, ctrl.mixers_running())
+
+    -- The knobs, measured with everything else idle.
+    ctrl.set_flow("exciteddtcc", 1000)
+    local before = ctrl.bank_level("exciteddtcc")
+    for _ = 1, 10 do ctrl.update(w, scene, 0.1, 1) end
+    check("a flow fills the bank", math.abs((ctrl.bank_level("exciteddtcc") - before) - 1000) < 1,
+            ctrl.bank_level("exciteddtcc") - before)
+    ctrl.set_flow("exciteddtcc", 0)
+end
+
+--[[ @brief The balancer itself: does the program actually run and drive anything?
+-- |
+-- | Core: EVERY OTHER CASE TESTS THE RIG. This one tests the thing the rig exists for. It loads the
+-- | scenario's own map - the one with the cables and the computer actually wired to the redstone
+-- | blocks, which a hand-built test world does not have - boots the machine, and waits for the
+-- | program to start driving lines by itself.
+-- |
+-- | It asserts nothing about WHICH plasma the balancer picks. That is a judgement call the author
+-- | will tune; what must not break is that the program boots, finds its rig, and acts.
+-- |
+-- | @date 2026-09-18 02:00
+--]]
+local function balancer_case(mc)
+    print("the balancer, running on the computer")
+
+    package.path = package.path .. ";./scenes/fusion_balancer/?.lua"
+    local ok_s, scene = pcall(require, "scene")
+    local ok_b, bankmod = pcall(require, "bank")
+    local ok_r, rigmod = pcall(require, "rig")
+    local ok_c, ctrl = pcall(require, "controller")
+    if not (ok_s and ok_b and ok_r and ok_c) then
+        check("the scenario loads", false, "one of its modules would not load")
         return
     end
-    deut:fluid_set("deuterium", 100000, "Deuterium")
-    trit:fluid_set("tritium", 100000, "Tritium")
 
-    check("helium plasma starts at nothing", ctrl.bank_level("plasma.helium") == 0)
-    check("and the compact fusion can make it",
-            ctrl.best_recipe("plasma.helium", scene.REACTOR.eu_store) ~= nil)
-    -- What it cannot: radon wants 450,000,000 and the MK-II holds 320,006,000.
-    check("but not radon plasma",
-            ctrl.best_recipe("plasma.radon", scene.REACTOR.eu_store) == nil)
-    check("though an MK-III can",
-            ctrl.best_recipe("plasma.radon", scene.CONVERTER_EU_STORE) ~= nil)
+    local st = world.new()
+    local n = world.load(st, vc.path_resolve("scenes/fusion_balancer/save/level.save"))
+    check("the scenario's map loads", n > 0, n)
+    if n == 0 then
+        return
+    end
+    local w = st.world
 
-    -- Line one selects what the reactor makes. The redstone block's own faces are what the program
-    -- under test would drive, so the test drives them the same way.
-    local sig = w:get(10, 0, 55)
-    sig:rs_set(blocks.FACE.XNEG, 1)
+    -- THE DISK TOO, read straight out of the scene folder. machines.load_disks looks under the
+    -- running instance's data prefix, which under --test is test_run/ - not the scene's own save -
+    -- so it finds nothing. Without an operating system the computer sits there not booting, which
+    -- looks exactly like a program that failed to start.
+    local case_for_disk = nil
+    for _, cell in ipairs(w:occupied()) do
+        if cell.kind == blocks.KIND.CASE then
+            case_for_disk = cell
+        end
+    end
+    local files = 0
+    if case_for_disk then
+        local addr = blocks.u(case_for_disk).hdd_address
+        local root = vc.path_resolve("scenes/fusion_balancer/save/opencomputers/"
+                .. tostring(addr))
+        local mach = machines.of(case_for_disk)
+        local function walk(dir, prefix)
+            for _, name in ipairs(vc.path_list_dir(dir)) do
+                local full = dir .. "/" .. name
+                local rel = (prefix == "") and name or (prefix .. "/" .. name)
+                if vc.path_is_dir(full) then
+                    walk(full, rel)
+                else
+                    local f = io.open(full, "rb")
+                    if f then
+                        local data = f:read("a") or ""
+                        f:close()
+                        if vc.machine_hdd_write(mach, rel, data) then
+                            files = files + 1
+                        end
+                    end
+                end
+            end
+        end
+        if vc.path_is_dir(root) then
+            walk(root, "")
+        end
+    end
+    check("the scenario's disk loads", files > 0, files)
 
-    -- The recipe is 16 ticks at 2x overclock, so well under a second of simulated time.
-    for _ = 1, 40 do
-        ctrl.update(w, scene, 0.05)
+    bankmod.build(w, scene, mc)
+    ctrl.init(w, scene, mc or "")
+
+    -- The program, and OpenOS's own way of running it when the shell opens.
+    local src = io.open(vc.path_resolve("scenes/fusion_balancer/balancer.lua"), "r")
+    check("balancer.lua is there to inject", src ~= nil)
+    if not src then
+        return
+    end
+    local text = src:read("a")
+    src:close()
+
+    local case = nil
+    for _, cell in ipairs(w:occupied()) do
+        if cell.kind == blocks.KIND.CASE then
+            case = cell
+        end
+    end
+    check("the map has a computer", case ~= nil)
+    if not case then
+        return
     end
 
-    local made = ctrl.bank_level("plasma.helium")
-    check("the reactor made helium plasma", made > 0, made)
-    check("and it ate the feedstock", deut:fluid_get()[2] < 100000, deut:fluid_get()[2])
+    local m = machines.of(case)
+    vc.machine_hdd_write(m, "home/balancer.lua", text)
+    -- AND THE PLAN, which is the only way the program learns which tank holds what.
+    vc.machine_hdd_write(m, "home/plan.lua", ctrl.plan_source())
+    vc.machine_hdd_write(m, "home/.shrc", "balancer\n")
+    check("the machine starts", machines.start(case, w, mc or ""))
 
-    -- Switched off, it stops.
-    sig:rs_set(blocks.FACE.XNEG, 0)
-    local before = ctrl.bank_level("plasma.helium")
-    for _ = 1, 40 do
-        ctrl.update(w, scene, 0.05)
+    -- Boot, and let the shell run .shrc. The guest is a real Lua machine on real time, so this
+    -- waits on the clock like everything else does.
+    local deadline = vc.app_time() + 25.0
+    local drove, output = false, ""
+    while vc.app_time() < deadline and not drove do
+        ctrl.update(w, scene, 0.02, 1)
+
+        local lines = rigmod.lines(ctrl.signals())
+        for _, v in ipairs(lines) do
+            if v > 0 then
+                drove = true
+            end
+        end
     end
-    check("and stops when the line goes low", ctrl.bank_level("plasma.helium") == before,
-            ctrl.bank_level("plasma.helium") - before)
-    -- THE KNOBS. A flow per fluid is what makes the bank move under the balancer's feet, so it is
-    -- worth checking that a positive one fills and a negative one drains, at the rate asked for.
+
+    for _, row in ipairs(machines.output(case)) do
+        output = output .. row .. "\n"
+    end
+
+    check("the balancer drove a control line by itself", drove,
+            output ~= "" and output:sub(-200) or "no output at all")
+
+    if not drove then
+        return
+    end
+
+    local lines = rigmod.lines(ctrl.signals())
+    local named = {}
+    for i = 1, 10 do
+        if lines[i] > 0 then
+            named[#named + 1] = string.format("%s=%d", rigmod.LINE_NAME[i] or i, lines[i])
+        end
+    end
+    print("  --   it set " .. table.concat(named, ", "))
+
+    -- THE LINES IT DRIVES MUST BE THE ONES THE SCENARIO READS. Both sides number the blocks
+    -- themselves, and they once disagreed: the program sorts its components by address because that
+    -- is all it can see, while the scenario sorted by position. Everything it drove landed on lines
+    -- nobody was reading, and the reactor sat idle while lines 13 to 15 lit up.
+    --[[ AND IT NEVER DRIVES A LINE THE RIG DRIVES INTO IT. Eleven to fifteen carry the catalyst
+    limits and the reactor's working signal - the only things the rig ever tells the program - and a
+    program writing over one of them would be answering its own question. ]]
+    local trodden = 0
+    for i = 11, 15 do
+        trodden = trodden + lines[i]
+    end
+    check("and it never writes over what the rig tells it", trodden == 0, trodden)
+
+    --[[ AND THEN IT RUNS A BATCH, WHICH IS THE CASE THE WHOLE RIG EXISTS FOR.
     --
-    -- MEASURED WITH THE REACTOR IDLE, and that is not fussiness: the first version of this case
-    -- ran it while the reactor was still going and the tritium came out 250 L light, because the
-    -- reactor was drinking it. The test was wrong, not the controller - but a loose tolerance
-    -- would have hidden a real leak just as happily.
-    -- Filled into something the scenario MAKES, which starts empty: a feedstock tank starts full
-    -- and adding to it does nothing, which is correct and useless as a measurement.
-    ctrl.set_flow("exciteddtcc", 1000)
-    ctrl.set_flow("tritium", -2000)
-    local lith_before = ctrl.bank_level("exciteddtcc")
-    local trit_before = ctrl.bank_level("tritium")
-    for _ = 1, 10 do
-        ctrl.update(w, scene, 0.1)          -- one second of simulated time
+    -- Nothing here drives a line. The program has to wait for two tanks to reach 32,000,000 L on
+    -- pumps it does not control, decide which pair is worth burning, lift exactly those two, and
+    -- let the C tanks carry them to the reactor. If any part of that is wrong - the plan it was
+    -- handed, the numbering of the transposers, the choice of recipe - nothing is produced.
+    --
+    -- A tankful is still minutes of game time, so this only happens with the clock wound right up.
+    -- The loop stops the moment it has seen it. ]]
+    -- ONLY WHAT THE COMPACT FUSION CAN MAKE COUNTS. The two standalone MK-IIIs run whenever their
+    -- plasma is short, so total plasma rises within seconds whatever the balancer does - measuring
+    -- that would pass while the reactor under test sat idle, which it did.
+    local mine = {}
+    for out in pairs(ctrl.plan().by_out) do
+        mine[#mine + 1] = out
     end
-    check("a positive flow fills the bank",
-            math.abs((ctrl.bank_level("exciteddtcc") - lith_before) - 1000) < 1,
-            ctrl.bank_level("exciteddtcc") - lith_before)
-    check("and a negative one drains it",
-            math.abs((trit_before - ctrl.bank_level("tritium")) - 2000) < 1,
-            trit_before - ctrl.bank_level("tritium"))
-    ctrl.set_flow("exciteddtcc", 0)
-    ctrl.set_flow("tritium", 0)
+    --[[ BANK PLUS STAGING, because some plasmas are inputs too. plasma.helium feeds boron, so it
+    has a staging tank of its own, and the hardwired fill pulls a batch of it out of the bank the
+    moment one exists - the bank reads nought while the reactor has in fact made 32,000,000 L, and
+    a test that looked only at the bank would say nothing had happened. ]]
+    local function held(pl)
+        local n = ctrl.bank_level(pl)
+        local at = ctrl.plan().at[pl]
+        if at then
+            local t = ctrl.side_tank(at.t, at.k)
+            local h = t and t:fluid_get() or {"", 0, ""}
+            if h[1] == pl then
+                n = n + h[2]
+            end
+        end
+        return n
+    end
+    local function ours()
+        local n = 0
+        for _, pl in ipairs(mine) do
+            n = n + held(pl)
+        end
+        return n
+    end
+    local before = ours()
 
+    local lifted, made = 0, false
+    local deadline2 = vc.app_time() + 60.0
+    while vc.app_time() < deadline2 and not made do
+        ctrl.update(w, scene, 0.05, 400)
+
+        local l = rigmod.lines(ctrl.signals())
+        for i = 1, 8 do
+            if l[i] > 0 then
+                lifted = i
+            end
+        end
+        made = ours() > before
+    end
+
+    check("it lifts a batch of its own accord", lifted > 0, lifted)
+    check("and the reactor made plasma out of what it lifted", made)
+    check("with no two C tanks ever sharing a hatch", ctrl.collisions() == 0, ctrl.collisions())
+
+    --[[ AND IT MOVES ON. The author, 2026-09-18: "plasma helium reached 128M while others where
+    stil stoped, this is not what I've described".
+
+    The scheduler returned the first plasma under the limit, and the limit is five hundred million,
+    so the first one on the list won sixteen rounds running while the rest of the catalyst's
+    dependencies sat at nothing - the slowest possible route to a catalyst, which needs all of them.
+    Every other case passed throughout: batches were lifted, plasma was made, no collisions. Only
+    the SPREAD was wrong, so only a case that looks at the spread can see it. ]]
+    local kinds, first = 0, nil
+    local deadline3 = vc.app_time() + 60.0
+    while vc.app_time() < deadline3 and kinds < 2 do
+        ctrl.update(w, scene, 0.05, 400)
+
+        kinds = 0
+        for _, pl in ipairs(mine) do
+            if held(pl) > 0 then
+                kinds = kinds + 1
+                first = first or pl
+            end
+        end
+    end
+    check("and then makes something else rather than hoarding one", kinds >= 2,
+            string.format("only %s after a whole run", tostring(first)))
+
+    --[[ AND THE CHANGEOVER IS CLEAN. Making two different plasmas means at least one changeover,
+    which is where it used to jam: C runs dry a hatchful before the reactor does, so a program that
+    calls an empty C a finished batch lifts the next pair into the tail of the last one. The hatch
+    holds one fluid, refuses it, and everything stops with a run's worth stranded - while the lamps,
+    the lifts and the tank levels all still look right. ]]
+    check("with the hatches never left holding a pair that makes nothing",
+            ctrl.jams() == 0, ctrl.jams())
+
+    print(string.format("  --   the reactor worked %.0f%% of the run", ctrl.duty() * 100))
+    local spread = {}
+    for _, pl in ipairs(mine) do
+        if held(pl) > 0 then
+            spread[#spread + 1] = string.format("%s %.0fM", pl:gsub("^plasma%.", ""),
+                    held(pl) / 1000000)
+        end
+    end
+    print("  --   it made: " .. table.concat(spread, ", "))
+
+    -- What it said for itself, which is the only window into its reasoning.
+    -- What it said for itself, which is the only window into its reasoning. The screen, not the
+    -- machine's log: print goes to the screen and the log only carries "machine started".
+    local scr = nil
+    for _, cell in ipairs(w:occupied()) do
+        if cell.kind == blocks.KIND.SCREEN then
+            scr = cell
+        end
+    end
+    local shown = 0
+    for _, row in ipairs(scr and machines.screen_output(w, scr) or {}) do
+        local text = row:gsub("%s+$", "")
+        if text ~= "" and not text:find("^[╒│└]") and shown < 8 then
+            shown = shown + 1
+            print("  --   " .. text)
+        end
+    end
 end
 
 --[[ @brief The cases. @date 2026-09-17 12:00 ]]
@@ -775,6 +1450,7 @@ local function run_cases(mc)
     fusion_recipe_case(mc)
     bank_case(mc)
     controller_case(mc)
+    balancer_case(mc)
     legacy_save_case()
 
     local rig = build_rig()
@@ -849,6 +1525,25 @@ local function run_cases(mc)
     check("setting it back to nothing darkens the lamp", until_true(w, function()
         return rig.lamp.state == blocks.STATE.OFF
     end, 4.0), rig.lamp.state)
+
+    --[[ AND THE OTHER DIRECTION, which until now did not exist: getInput answered nought whatever
+    the world did, so every wire in a scenario ran one way, out of the computer. A rig that wants to
+    TELL a program something - that a tank has reached its limit, say - needs this.
+
+    Driven from inside the machine for the same reason as the rest: a test that called the C++
+    would be checking the simulator against itself and would not notice the side numbering being
+    wrong on one of the two paths. ]]
+    rig.redstone:rs_in_set(blocks.FACE.XNEG, 15)
+    typeline(rig, "=component.redstone.getInput(4)")
+    check("getInput reads what the world feeds the block", until_true(w, function()
+        return screen_has(rig, "15")
+    end, 4.0))
+
+    rig.redstone:rs_in_set(blocks.FACE.XNEG, 0)
+    typeline(rig, "=component.redstone.getInput(4) == 0")
+    check("and it goes away again", until_true(w, function()
+        return screen_has(rig, "true")
+    end, 4.0))
 
     -- and out of the interpreter again, with the control key, which is its own small test
     machines.send_key(w, rig.screen, 0, 29, true)

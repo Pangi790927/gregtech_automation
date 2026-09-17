@@ -83,6 +83,7 @@ blocks.KIND = {
     IMPORT_BUS = 12,
     EXPORT_BUS = 13,
     QTANK = 14,
+    SIGN = 15,
 }
 
 --[[ @brief What a cell is doing. Mirrors `cell_state_e` in world_composer.h.
@@ -127,6 +128,7 @@ blocks.KIND_NAME = {
     [12] = "ME Import Bus",
     [13] = "ME Export Bus",
     [14] = "quantum tank",
+    [15] = "sign",
 }
 
 --[[ @brief Is this kind part of the component network?
@@ -361,6 +363,19 @@ function blocks.make_qtank()
     return blocks.make(blocks.KIND.QTANK)
 end
 
+--[[ @brief A sign, blank.
+-- |
+-- | Its text lives in `u.text`, which is where script-layer state belongs: a string is not
+-- | something the renderer or a component has any use for, and the interface draws it by projecting
+-- | the block's position onto the screen.
+-- |
+-- | @date 2026-09-18 ]]
+function blocks.make_sign(text)
+    local cell = blocks.make(blocks.KIND.SIGN)
+    blocks.u(cell).text = text or ""
+    return cell
+end
+
 --[[ @brief Is this kind a tank of either size? @date 2026-09-17 ]]
 function blocks.is_tank(kind)
     return kind == blocks.KIND.TANK or kind == blocks.KIND.QTANK
@@ -524,6 +539,7 @@ function blocks.make_kind(kind)
         [blocks.KIND.IMPORT_BUS] = blocks.make_import_bus,
         [blocks.KIND.EXPORT_BUS] = blocks.make_export_bus,
         [blocks.KIND.QTANK]      = blocks.make_qtank,
+        [blocks.KIND.SIGN]       = blocks.make_sign,
     }
     local make = makers[kind]
     if make then

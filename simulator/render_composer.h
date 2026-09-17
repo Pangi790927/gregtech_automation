@@ -155,6 +155,10 @@ struct renderer_t {
     int tile_cable = 0;
     int tile_cable_cap = 0;
 
+    /*! A flat white square, which exists only to be tinted. Everything else in the atlas is a
+     * picture; this is the one tile whose whole purpose is to carry a colour. @date 2026-09-18 */
+    int tile_solid = 0;
+
     /*! The fluids GregTech ships, in the order they are offered, and where each one's picture
      * landed in the atlas.
      *
@@ -680,6 +684,24 @@ inline void build_atlas(renderer_t &r) {
         }
     }
 
+    /* A sign: vanilla's own planks, which is what one is made of. The text is not drawn here -
+    it is not a texture but a string, and the interface puts it on the screen over the block. */
+    {
+        mca::tile_t planks = load_vanilla_or("planks_oak", mca::fallback_panel(150, 120, 70, 171));
+        mca::tile_t face = planks;
+        for (int y = 3; y <= 12; y++)
+            for (int x = 2; x <= 13; x++) {
+                int n = mca::speckle(x, y, 173) / 3;
+                face.set(x, y, mca::clamp8(196 + n), mca::clamp8(170 + n), mca::clamp8(120 + n));
+            }
+        for (int st = 0; st < 4; st++) {
+            r.tile_cell[worldc::CELL_KIND_SIGN][st][ROLE_FRONT] = push(face);
+            r.tile_cell[worldc::CELL_KIND_SIGN][st][ROLE_BACK]  = push(planks);
+            r.tile_cell[worldc::CELL_KIND_SIGN][st][ROLE_TOP]   = push(planks);
+            r.tile_cell[worldc::CELL_KIND_SIGN][st][ROLE_SIDE]  = push(planks);
+        }
+    }
+
     /* The quantum tank: THE SAME MODEL AS THE IRON TANK, in a different metal.
     
     The author asked on 2026-09-17 not to change the tank's model - "I liked that one" - so this is
@@ -783,6 +805,15 @@ inline void build_atlas(renderer_t &r) {
         r.fluid_labels.push_back(src.fluid_label(name));
     }
     DBG("render: %zu fluids from gregtech", r.fluid_names.size());
+
+    /* A plain white square for anything drawn as a colour rather than as a picture. */
+    {
+        mca::tile_t solid;
+        for (int y = 0; y < mca::TILE_PX; y++)
+            for (int x = 0; x < mca::TILE_PX; x++)
+                solid.set(x, y, 255, 255, 255);
+        r.tile_solid = push(solid);
+    }
 
     /* One row, so a tile's atlas coordinate is its index and nothing has to divide. */
     r.tile_count = (int)tiles.size();
@@ -930,6 +961,63 @@ inline void emit_box_tinted(std::vector<glu::vertex_t> &verts, std::vector<uint3
         }
         indices.push_back(base + 0); indices.push_back(base + 1); indices.push_back(base + 2);
         indices.push_back(base + 0); indices.push_back(base + 2); indices.push_back(base + 3);
+    }
+}
+
+/*! Draws a small ball of one colour, standing off a face.
+ *
+ * Core: THE ONE THING IN THE WORLD THAT IS NOT A BOX. Everything else the renderer emits is a
+ * textured cuboid, which is right for blocks and wrong for this: an indicator lamp on the side of a
+ * control block reads as a lamp because it is round, and as another panel if it is square.
+ *
+ * Shaded by the normal rather than by which face it belongs to - a sphere has no faces to look up
+ * in FACE_SHADE - so it keeps the flat-lit look of the rest without going dark all over.
+ *
+ * @param cx,cy,cz  where the middle of the ball sits, in world cells
+ * @param radius    in cells
+ * @date 2026-09-18 */
+inline void emit_sphere_tinted(std::vector<glu::vertex_t> &verts, std::vector<uint32_t> &indices,
+        float cx, float cy, float cz, float radius, int tile, int tile_count,
+        float tr, float tg, float tb)
+{
+    /* Coarse on purpose: this is a blob a few pixels across on screen, and a finer one costs
+    triangles for a difference nobody can see. */
+    const int RINGS = 8, SEGS = 12;
+    const float PI = 3.14159265358979f;
+
+    float u0 = (float)tile / (float)tile_count;
+    float du = 1.0f / (float)tile_count;
+    uint32_t base = (uint32_t)verts.size();
+
+    for (int i = 0; i <= RINGS; i++) {
+        float phi = PI * (float)i / (float)RINGS;              /* 0 at the top, PI at the bottom */
+        float sp = sinf(phi), cp = cosf(phi);
+        for (int j = 0; j <= SEGS; j++) {
+            float th = 2.0f * PI * (float)j / (float)SEGS;
+            float nx = sp * cosf(th), ny = cp, nz = sp * sinf(th);
+
+            glu::vertex_t v;
+            v.x = cx + nx * radius;
+            v.y = cy + ny * radius;
+            v.z = cz + nz * radius;
+            /* The middle of the tile, so nothing bleeds in from the squares either side of it. */
+            v.u = u0 + du * 0.5f;
+            v.v = 0.5f;
+
+            /* Lit from above and a little to one side, which is what the box shading amounts to. */
+            float lit = 0.62f + 0.26f * (ny * 0.5f + 0.5f) + 0.12f * (nx * 0.5f + 0.5f);
+            v.tr = lit * tr; v.tg = lit * tg; v.tb = lit * tb;
+            verts.push_back(v);
+        }
+    }
+
+    for (int i = 0; i < RINGS; i++) {
+        for (int j = 0; j < SEGS; j++) {
+            uint32_t a = base + (uint32_t)(i * (SEGS + 1) + j);
+            uint32_t b = a + (uint32_t)(SEGS + 1);
+            indices.push_back(a);     indices.push_back(b);     indices.push_back(a + 1);
+            indices.push_back(a + 1); indices.push_back(b);     indices.push_back(b + 1);
+        }
     }
 }
 
@@ -1154,8 +1242,14 @@ inline void rebuild_world_mesh(renderer_t &r, const worldc::world_t &w) {
             int tile = fluid_tile_of(r, c->fluid);
             uint32_t rgb = fluid_tint_of(r, c->fluid);
             if (tile >= 0) {
-                double full = c->fluid_amount / worldc::TANK_CAPACITY_L;
+                /* THE TANK'S OWN CAPACITY, not a constant. A quantum tank holds sixteen times
+                what an ordinary one does, so dividing by the ordinary figure drew every bank tank
+                brim full from a sixteenth of the way up - the author saw one reading full at seven
+                percent. A cell already knows how much it can hold; nothing else should decide. */
+                double cap = c->fluid_capacity();
+                double full = (cap > 0.0) ? (c->fluid_amount / cap) : 0.0;
                 if (full > 1.0) full = 1.0;
+                if (full < 0.0) full = 0.0;
                 /* Never quite nothing: a tank holding a single litre of something should still
                 show a film of it rather than looking empty. */
                 float height = (float)(0.04 + full * 0.88);
@@ -1166,6 +1260,34 @@ inline void rebuild_world_mesh(renderer_t &r, const worldc::world_t &w) {
                         ((rgb >> 16) & 0xff) / 255.0f, ((rgb >> 8) & 0xff) / 255.0f,
                         (rgb & 0xff) / 255.0f);
             }
+        }
+    }
+
+    /* THE INPUT INDICATORS: a ball on every face something is wired into, dark red when the signal
+    is down and bright when it is up.
+    --
+    -- The author, 2026-09-18: "draw it as a sphere on the face, black red not active, bright red
+    -- active". It sits on the face rather than in the block because that is what it reports - what
+    -- is coming IN on that side - and a face with nothing wired to it shows nothing at all, so the
+    -- board reads as four lamps rather than as twenty-four. */
+    for (const worldc::cell_p &c : w.cells) {
+        if (!c || c->kind != worldc::CELL_KIND_REDSTONE)
+            continue;
+        for (int f = 0; f < worldc::FACE_COUNT; f++) {
+            if (!c->rs_in_wired(f))
+                continue;
+            bool on = c->rs_in_get(f) > 0;
+
+            /* Just clear of the face, so it reads as a lamp set into the side rather than as a
+            decal fighting the surface for the depth buffer. */
+            const float out = 0.46f;
+            const float radius = 0.13f;
+            float bx = (float)c->x + 0.5f + (float)worldc::FACE_DIR[f][0] * out;
+            float by = (float)c->y + 0.5f + (float)worldc::FACE_DIR[f][1] * out;
+            float bz = (float)c->z + 0.5f + (float)worldc::FACE_DIR[f][2] * out;
+
+            emit_sphere_tinted(verts, indices, bx, by, bz, radius, r.tile_solid, r.tile_count,
+                    on ? 1.0f : 0.22f, on ? 0.13f : 0.02f, on ? 0.10f : 0.02f);
         }
     }
 
@@ -1505,6 +1627,49 @@ inline std::vector<double> render_item_uv(const char *id, int damage) {
             (double)(col + 1) / r.item_cols, (double)(row + 1) / r.item_rows};
 }
 
+/*! Where a point in the world lands on the screen.
+ *
+ * Core: FOR DRAWING TEXT ON A BLOCK. A sign carries a string, and a string is not a texture - it
+ * has to be drawn by the interface, which needs to know where the block is in screen coordinates.
+ * The same projection the world pass uses, so a label lands exactly on the block it belongs to.
+ *
+ * Answers `{x, y, visible}` - visible is nought when the point is behind the camera or off the
+ * edge, which a caller must check before drawing or the text lands on the wrong side of the
+ * screen.
+ * @date 2026-09-18 */
+inline std::tuple<double, double, double> cam_forward();   /* defined below, with the camera */
+
+inline std::vector<double> render_project(double wx, double wy, double wz,
+        int width, int height) {
+    const renderer_t &r = renderc::g_rend;
+    if (width <= 0 || height <= 0)
+        return {0.0, 0.0, 0.0};
+
+    float eye[3] = {r.cam_x, r.cam_y, r.cam_z};
+    auto [fx, fy, fz] = renderc::cam_forward();
+    float fwd[3] = {(float)fx, (float)fy, (float)fz};
+    float up[3] = {0, 1, 0};
+
+    glu::mat4_t proj = glu::mat4_t::perspective(r.cam_fov, (float)width / (float)height,
+            0.05f, 512.0f);
+    glu::mat4_t view = glu::mat4_t::look_dir(eye, fwd, up);
+    glu::mat4_t mvp = glu::mat4_t::mul(proj, view);
+
+    /* Column-major, the way mat4_t stores it and the way the shader multiplies. */
+    const float *m = mvp.m;
+    float x = (float)wx, y = (float)wy, z = (float)wz;
+    float cx = m[0] * x + m[4] * y + m[8]  * z + m[12];
+    float cy = m[1] * x + m[5] * y + m[9]  * z + m[13];
+    float cw = m[3] * x + m[7] * y + m[11] * z + m[15];
+
+    if (cw <= 0.0001f)
+        return {0.0, 0.0, 0.0};             /* behind the eye */
+
+    double sx = (cx / cw * 0.5 + 0.5) * width;
+    double sy = (1.0 - (cy / cw * 0.5 + 0.5)) * height;
+    return {sx, sy, 1.0};
+}
+
 inline std::string render_mc_source() {
     return renderc::g_rend.mc_loaded ? renderc::g_rend.mc_path : std::string();
 }
@@ -1721,6 +1886,10 @@ inline int register_meta(vc::virt_state_t *vs) {
         >},
         {"render_item_damage", vc::luaw_function_wrapper<
                /* FN:    */ renderc::render_item_damage
+        >},
+        {"render_project", vc::luaw_function_wrapper<
+               /* FN:    */ renderc::render_project,
+               /* PARAMS:*/ double, double, double, int, int
         >},
         {"render_mc_source", vc::luaw_function_wrapper<
                /* FN:    */ renderc::render_mc_source

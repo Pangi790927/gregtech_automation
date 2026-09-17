@@ -75,6 +75,56 @@ inline double host_clock() {
     return std::chrono::duration<double>(clock::now() - origin).count();
 }
 
+/*! THE CLOCK A COMPUTER LIVES ON, which is the WORLD'S, not the host's.
+ *
+ * Core: a computer in Minecraft runs inside the world's tick loop. Wind the world forward and the
+ * computer goes with it - there is no sense in which it carries on at its own pace while everything
+ * around it speeds up.
+ *
+ * This used to be host_clock(), and it made the scenario's fast-forward a lie: the base ran four
+ * hundred times faster while the program kept thinking at one, so half a second of its deliberation
+ * became minutes of plant standing idle and the whole rig's behaviour changed with the speed slider.
+ * The author, 2026-09-18: "the two should run in sync independent of the speed of the world".
+ *
+ * Whoever owns the world advances it - by the real frame time in the sandbox, by the simulated step
+ * in a scenario. Nothing else may touch it, and nothing inside a machine can see it move.
+ * @date 2026-09-18 */
+inline double &world_clock() {
+    static double t = 0.0;
+    return t;
+}
+
+/*! When the world clock was last wound on, by the host's own reckoning. @date 2026-09-18 */
+inline double &world_clock_mark() {
+    static double t = host_clock();
+    return t;
+}
+
+/*! Moves every computer's clock forward with the world. @date 2026-09-18 */
+inline void machine_advance_clock(double dt) {
+    if (dt > 0.0)
+        world_clock() += dt;
+    world_clock_mark() = host_clock();
+}
+
+/*! What time it is for a computer: the world's time, plus however long the host has been inside
+ * this step.
+ *
+ * Core: IT MUST KEEP MOVING WHILE THE GUEST IS RUNNING. The world's clock is wound on between
+ * steps, so during one it stands still - and a guest that waits by asking the time in a loop then
+ * waits for ever. `lua_resume` never returns, and the whole application stops dead with no error
+ * anywhere: the window simply never draws. That is what a frozen clock did the first time this was
+ * tried, and it only showed in a scenario because only a scenario drives the clock by hand.
+ *
+ * The real term is tiny beside a wound-up world - a frame's worth against twenty seconds of base -
+ * so what a program measures is still the world's time. It exists so that time never stops, which
+ * is a thing no clock may do.
+ * @date 2026-09-18 */
+inline double machine_now() {
+    double drift = host_clock() - world_clock_mark();
+    return world_clock() + (drift > 0.0 ? drift : 0.0);
+}
+
 /*! What a machine is doing. Reported to Lua, and what drives a case's lit textures.
  * @date 2026-09-16 */
 enum machine_state_e : int {
@@ -619,12 +669,14 @@ inline int l_computer_tmp_address(lua_State *L) {
 }
 
 inline int l_computer_uptime(lua_State *L) {
-    lua_pushnumber(L, host_clock() - self(L)->boot_time);
+    lua_pushnumber(L, machine_now() - self(L)->boot_time);
     return 1;
 }
 
 inline int l_computer_real_time(lua_State *L) {
-    lua_pushnumber(L, host_clock());
+    /* The world's time here too: a program that times itself against this and against uptime must
+    see one clock, not two running at different rates. */
+    lua_pushnumber(L, machine_now());
     return 1;
 }
 
@@ -1578,10 +1630,13 @@ inline void refresh_lamps_around(component_t &c) {
                 c.wz + worldc::FACE_DIR[f][2]);
 }
 
-inline int rs_get_input(machine_t &, component_t &, lua_State *L) {
-    /* Nothing in the world emits into a block yet, so what comes in is nothing. Answered honestly
-    rather than invented. */
-    lua_pushinteger(L, 0);
+inline int rs_get_input(machine_t &, component_t &c, lua_State *L) {
+    /* What the world is feeding this face. It used to answer nothing at all, because nothing could
+    drive a signal inward - which meant every wire in a scenario ran one way, out of the computer,
+    and a scenario had no way to tell a program anything. cell_t::rs_in is the other direction. */
+    worldc::cell_p cell = own_cell(c);
+    int face = worldc::face_from_oc_side((int)lua_tointeger(L, 3));
+    lua_pushinteger(L, (cell && face >= 0) ? cell->rs_in_get(face) : 0);
     return 1;
 }
 
@@ -2426,6 +2481,25 @@ inline std::vector<std::vector<std::string>> fusion_recipes(const char *mc_path)
     return out;
 }
 
+/*! The address of the component a machine has at a world position, or empty when it has none.
+ *
+ * Core: SO BOTH SIDES CAN AGREE ON AN ORDER. A program inside the machine can only tell its
+ * redstone blocks apart by address - it has no idea where they are - while the world outside knows
+ * only positions. Numbering them by position on one side and by address on the other put the
+ * scenario's line one and the program's line one on different blocks, and the program spent a
+ * session driving lines nobody was reading.
+ *
+ * @date 2026-09-18 */
+inline std::string machine_component_at(machine_p mp, int x, int y, int z) {
+    if (!mp)
+        return {};
+    for (const component_t &c : mp->components) {
+        if (c.world && c.wx == x && c.wy == y && c.wz == z)
+            return c.address;
+    }
+    return {};
+}
+
 inline std::vector<std::string> loot_files(const char *mc_path, const char *jar_folder) {
     std::vector<std::string> out;
     if (!mc_path || !jar_folder)
@@ -2655,7 +2729,7 @@ inline bool machine_boot(machine_p mp) {
         return false;
     }
 
-    m.boot_time = host_clock();
+    m.boot_time = machine_now();
     m.now = m.boot_time;
 
     m.L = luaL_newstate();
@@ -2712,7 +2786,7 @@ inline void machine_step(machine_p mp) {
     if (!mp || !mp->co || mp->status != MACHINE_RUNNING)
         return;
     machine_t &m = *mp;
-    double now = host_clock();
+    double now = machine_now();
     m.now = now;
 
     for (int budget = 0; budget < m.budget_per_step; budget++) {
@@ -2890,6 +2964,10 @@ inline int register_meta(vc::virt_state_t *vs) {
                /* FN:    */ machc::fusion_recipes,
                /* PARAMS:*/ const char *
         >},
+        {"machine_component_at", vc::luaw_function_wrapper<
+               /* FN:    */ machc::machine_component_at,
+               /* PARAMS:*/ machine_p, int, int, int
+        >},
         {"loot_files", vc::luaw_function_wrapper<
                /* FN:    */ machc::loot_files,
                /* PARAMS:*/ const char *, const char *
@@ -2945,6 +3023,10 @@ inline int register_meta(vc::virt_state_t *vs) {
         {"machine_stop", vc::luaw_function_wrapper<
                /* FN:    */ machc::machine_stop,
                /* PARAMS:*/ machine_p
+        >},
+        {"machine_advance_clock", vc::luaw_function_wrapper<
+               /* FN:    */ machc::machine_advance_clock,
+               /* PARAMS:*/ double
         >},
         {"machine_step", vc::luaw_function_wrapper<
                /* FN:    */ machc::machine_step,

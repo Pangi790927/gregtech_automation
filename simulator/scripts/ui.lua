@@ -1130,6 +1130,61 @@ function ui.tank(cell)
     return true
 end
 
+--[[ @brief Writes every sign's text over the block it belongs to.
+-- |
+-- | Core: A SIGN'S TEXT IS NOT A TEXTURE. It is a string that changes while the scenario runs, so
+-- | it cannot be baked into the atlas - it is drawn by projecting the block's position onto the
+-- | screen and putting the words there. Behind the camera or too far away, it is skipped.
+-- |
+-- | Drawn on the foreground list so it sits over the world rather than being clipped into some
+-- | window's rectangle.
+-- |
+-- | @param w  world
+-- |
+-- | @date 2026-09-18 ]]
+function ui.signs(w)
+    local disp = vc.ImGui_GetDisplaySize()
+    local W, H = math.floor(disp.x), math.floor(disp.y)
+
+    vc.ImGui_SetDrawForeground(true)
+    for _, cell in ipairs(w:occupied()) do
+        -- ANY BLOCK CAN CARRY A LABEL, not only a sign. A lamp that says nothing is a lamp nobody
+        -- can read: the four above the redstone blocks meant "something on this block is live" and
+        -- looked identical to each other. Putting the text on the lamp itself labels it where it
+        -- stands, without needing a sign block squeezed in beside it.
+        local text = blocks.u(cell).text
+        if text and text ~= "" then
+            local p = cell:pos()
+            local lines = {}
+            for line in tostring(text):gmatch("[^\n]+") do
+                lines[#lines + 1] = line
+            end
+
+            -- The middle of the block's top, so the words sit on it rather than in it.
+            local at = vc.render_project(p[1] + 0.5, p[2] + 1.02, p[3] + 0.5, W, H)
+            if at[3] > 0 and at[1] > -200 and at[1] < W + 200 and at[2] > 0 and at[2] < H then
+                local lh = vc.ImGui_GetFontSize() + 2
+                local wide = 0
+                for _, l in ipairs(lines) do
+                    wide = math.max(wide, vc.ImGui_CalcTextSize(l).x)
+                end
+                local top = at[2] - lh * #lines - 2
+
+                -- A dark plate behind them, because white words over a bright world are
+                -- unreadable at exactly the angles you want to read them from.
+                vc.ImGui_AddRectFilled({x = at[1] - wide * 0.5 - 3, y = top - 2},
+                        {x = at[1] + wide * 0.5 + 3, y = at[2] + 1}, 0xb0000000, 3)
+                for i, l in ipairs(lines) do
+                    local sz = vc.ImGui_CalcTextSize(l)
+                    vc.ImGui_AddText({x = at[1] - sz.x * 0.5, y = top + (i - 1) * lh},
+                            0xffffffff, l)
+                end
+            end
+        end
+    end
+    vc.ImGui_SetDrawForeground(false)
+end
+
 --[[ @brief The one interface window.
 -- |
 -- | Core: it answers the three questions a person actually has while using this - what am I looking
@@ -1222,7 +1277,11 @@ function ui.panel(state, settings, info)
     vc.ImGui_Text("left click breaks; right click opens a case, screen or chest")
     vc.ImGui_Text("(a scenario's map is read-only - nothing can be broken or placed)")
     vc.ImGui_Text("right click anything else - or shift+right click - places instead")
-    vc.ImGui_Text("the mouse wheel, or 1 to 4, changes what is selected")
+    vc.ImGui_Text("the mouse wheel, or 1 to 9, changes what is selected")
+    if info.scene and info.scene ~= "" then
+        vc.ImGui_Text(string.format("scenario clock: %gx  -  minus slower, equals faster, 0 resets",
+                info.sim_speed or 1))
+    end
     vc.ImGui_Text("the orange ball marks where a placed block would go")
     vc.ImGui_Text("a wire cannot be built on, and breaking takes the wire first")
     vc.ImGui_Text("f toggles the aimed case between off and running")

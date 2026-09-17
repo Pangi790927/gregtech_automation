@@ -175,6 +175,16 @@ Local `unzip` on Windows silently extracted 27 of 179 files once. Use python's `
   Letting it see `vc` would hand a simulated computer the keys to the simulator.
 - `cell_t` is a leaf, deliberately: a kind, a state, a facing, a position, and `u` for whatever the
   script layer wants. **A new per-block field goes in `u`**, not in C++.
+  - The exception, and the only one so far: `rs_in`, added 2026-09-18. A component implementation is
+    C++ (`rs_get_input` in `machine_composer.h`) and cannot reach into a cell's `u` table, so a
+    field a COMPONENT must read has to live on the cell. Everything a component does not touch still
+    belongs in `u`.
+- **A signal can now run into a computer, not only out of it.** `getInput` used to return a literal
+  zero - "nothing in the world emits into a block yet" - which meant a scenario could listen to a
+  program but never tell it anything. `cell_t::rs_in_set` drives a face and the guest reads it back
+  through `redstone.getInput`. The fusion scenario uses four of them to say which catalysts have hit
+  their limit, because the program has no line of sight to the bank and everything else it works
+  with is its own bookkeeping.
 
 ## Where a save lives
 

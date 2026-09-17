@@ -70,6 +70,7 @@ enum cell_kind_e : int {
     CELL_KIND_IMPORT_BUS = 12, /*!< An ME import bus. Scenery: it has no behaviour yet. */
     CELL_KIND_EXPORT_BUS = 13, /*!< An ME export bus. Scenery: it has no behaviour yet. */
     CELL_KIND_QTANK = 14,      /*!< A quantum tank. A tank, but far bigger and not see-through. */
+    CELL_KIND_SIGN = 15,       /*!< A sign. Holds a line of text, which the interface draws. */
 };
 
 /*! Does this kind sit on the component network?
@@ -258,6 +259,23 @@ struct cell_t : public vc::object_t {
      * @date 2026-09-17 */
     int rs_out[FACE_COUNT] = {};
 
+    /*! What the WORLD is feeding into this cell on each face, which is a different thing from what
+     * the cell emits.
+     *
+     * OpenComputers' Redstone I/O has both and keeps them apart: getInput answers what the blocks
+     * around it are giving it, getOutput what it is giving them. Until this existed getInput
+     * answered nothing at all, so a scenario had no way to TELL a program anything - every wire ran
+     * one direction, out of the computer. A signal that says "the catalyst bank is full" has to
+     * come the other way.
+     *
+     * MINUS ONE MEANS NOTHING IS WIRED THERE, which is a different thing from a wire carrying
+     * nothing - and the difference is visible: a face somebody has connected shows its indicator
+     * dark, a face nobody has connected shows none at all. getInput answers zero for both.
+     *
+     * Not saved: it is driven from whatever the scenario is measuring, and recomputed every tick.
+     * @date 2026-09-18 */
+    int rs_in[FACE_COUNT] = {-1, -1, -1, -1, -1, -1};
+
     /*! The fluid a tank holds: its internal name, such as "chlorine", and how many litres of it.
      *
      * In C++ for the same reason the inventory is - a transposer is a component inside a guest
@@ -391,6 +409,32 @@ struct cell_t : public vc::object_t {
         return (face >= 0 && face < FACE_COUNT) ? rs_out[face] : 0;
     }
 
+    /*! Drives a signal INTO this cell on one face, the way a neighbouring block would.
+     *
+     * This is how a scenario answers a program rather than only listening to it. A guest reads it
+     * back through the redstone component's getInput.
+     * @date 2026-09-18 */
+    void rs_in_set(int face, int value) {
+        if (face < 0 || face >= FACE_COUNT)
+            return;
+        rs_in[face] = (value < 0) ? 0 : ((value > 15) ? 15 : value);
+        touch();
+    }
+
+    /*! What the world is feeding into this cell on one face. An unwired face answers nothing, the
+     * same as a wired one carrying nothing - that distinction is for the picture, not the program.
+     * @date 2026-09-18 */
+    int rs_in_get(int face) const {
+        if (face < 0 || face >= FACE_COUNT || rs_in[face] < 0)
+            return 0;
+        return rs_in[face];
+    }
+
+    /*! Whether anything has been wired into this face at all. @date 2026-09-18 */
+    bool rs_in_wired(int face) const {
+        return face >= 0 && face < FACE_COUNT && rs_in[face] >= 0;
+    }
+
     /*! What this tank holds, as `{name, litres}`. An empty tank answers an empty name and a zero.
      * @date 2026-09-17 */
     std::tuple<std::string, double, std::string> fluid_get() const {
@@ -497,6 +541,21 @@ struct world_t : public vc::object_t {
     std::unordered_map<uint32_t, cell_p> faces;
 
     uint64_t version = 1;
+
+    /*! How many times a block has been PLACED OR BROKEN, which is a different question from
+     * `version`.
+     *
+     * Core: `version` moves whenever anything at all changes, a tank's contents included, and that
+     * is right for the renderer - the mesh has to be rebuilt when a fluid level moves. It is quite
+     * wrong for anything asking "has the wiring changed?": a scenario pumping liquid bumps it
+     * thousands of times a second while the map stands perfectly still.
+     *
+     * Stepping the computers once per world tick made that expensive enough to look like a hang -
+     * every machine re-scanned the world for its components on every substep, four hundred times a
+     * frame. Hot swapping only has to notice blocks coming and going, so this counts only those.
+     * @date 2026-09-18 */
+    uint64_t topo_version = 1;
+
     int placed_count = 0;
     int face_count = 0;
 
@@ -536,6 +595,9 @@ struct world_t : public vc::object_t {
 
     /*! The version the last change left behind. @date 2026-09-16 */
     double get_version() const { return (double)version; }
+
+    /*! How many times a block has been placed or broken. See `topo_version`. @date 2026-09-18 */
+    double get_topology_version() const { return (double)topo_version; }
 
     /*! Declares the world changed. Lua needs this only when it has changed something the registered
      * setters cannot see; ordinary placement and field writes bump the version themselves.
@@ -589,6 +651,7 @@ struct world_t : public vc::object_t {
 
         slot = cell;
         version++;
+        topo_version++;
         return true;
     }
 
@@ -697,6 +760,7 @@ struct world_t : public vc::object_t {
             faces.erase(it);
             face_count--;
             version++;
+            topo_version++;
             return true;
         }
 
@@ -709,6 +773,7 @@ struct world_t : public vc::object_t {
         faces[key] = cell;
         face_count++;
         version++;
+        topo_version++;
         return true;
     }
 
@@ -857,6 +922,7 @@ struct world_t : public vc::object_t {
         placed_count = 0;
         face_count = 0;
         version++;
+        topo_version++;
     }
 
     /*! Marches a ray through the map and reports the first thing it meets.
@@ -1064,6 +1130,9 @@ inline int register_meta(vc::virt_state_t *vs) {
             const char *);
     VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, rs_get, int);
     VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, rs_set, int, int);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, rs_in_get, int);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, rs_in_wired, int);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, rs_in_set, int, int);
 
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, get, int, int, int);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, set, int, int, int, cell_p);
@@ -1071,6 +1140,7 @@ inline int register_meta(vc::virt_state_t *vs) {
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, size);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, count);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, get_version);
+    VC_REGISTER_MEMBER_FUNCTION(vs, world_t, get_topology_version);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, touch);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, occupied);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, face_get, int, int, int, int);

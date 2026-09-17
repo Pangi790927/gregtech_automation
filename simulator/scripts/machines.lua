@@ -10,7 +10,7 @@
 -- |     the case first - its hard disk, and the floppy in any disk drive
 -- |     standing against it. `toggle` answers whether it runs afterwards.
 -- |
--- | step_all(w: world)                        -> nothing
+-- | step_all(w: world, dt: number)            -> nothing
 -- |     Gives every live machine its slice of the frame, reconciling its
 -- |     components first whenever the world has changed.
 -- |
@@ -298,13 +298,28 @@ end
 -- |
 -- | @date 2026-09-16 23:30
 --]]
-function machines.step_all(w)
-    local version = w and w:get_version() or 0
+function machines.step_all(w, dt)
+    --[[ THE COMPUTERS' CLOCK MOVES WITH THE WORLD'S, and this is the only place it moves.
+    --
+    -- A computer in Minecraft lives inside the world's tick loop: wind the world forward and it
+    -- goes with it. `dt` is how much of the world's time this step is worth - a simulated substep
+    -- in a scenario, a real frame in the sandbox - and without it a fast-forwarded world would leave
+    -- every program thinking at its own unhurried pace while the base raced ahead of it.
+    --
+    -- One step per world tick, so a program gets exactly the share of the processor it would get in
+    -- the game rather than one slice a frame however much world went past. @date 2026-09-18 ]]
+    vc.machine_advance_clock(dt or 0)
+
+    local version = w and w:get_topology_version() or 0
     for _, entry in ipairs(live) do
         if entry.cell:placed() then
-            -- Components are brought level whenever the world has changed, which is the whole of
-            -- what makes everything hot swappable: the world's version moves on every placement
-            -- and every break, and on nothing else, so this costs one comparison on a still world.
+            --[[ Components are brought level whenever a block has been PLACED OR BROKEN, which is
+            -- the whole of what makes everything hot swappable, and costs one comparison otherwise.
+            --
+            -- Not the world's general version: that moves whenever ANYTHING changes, a tank's
+            -- contents included. Reconciling on that was a full component scan per machine per
+            -- step, and once the computers began stepping with every world tick rather than once a
+            -- frame it became four hundred scans a frame - which looks exactly like a hang. ]]
             if w and version ~= entry.seen_version then
                 machines.reconcile(w, entry.cell)
                 entry.seen_version = version

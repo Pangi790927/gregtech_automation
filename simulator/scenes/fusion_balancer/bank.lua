@@ -55,9 +55,16 @@ end
 -- |
 -- | @date 2026-09-17 ]]
 function bank.input_only(scene, mc_path)
+    -- WHAT THIS SCENARIO MAKES, which is not the same as what the modpack can make. There is a
+    -- fusion recipe somewhere for molten iridium, so counting every recipe's output marked it as
+    -- something we produce - it started empty, nothing here could ever make it, and the radon
+    -- reactor sat starved forever waiting for it.
+    --
+    -- The scenario produces exactly the sixteen plasmas and the four catalysts. Everything else in
+    -- the bank is bought in and starts full.
     local produced = {}
-    for _, e in ipairs(vc.fusion_recipes(mc_path or "")) do
-        produced[e[5]] = true
+    for _, pl in ipairs(bank.PLASMAS) do
+        produced[pl] = true
     end
     for _, c in ipairs(scene.CATALYSTS or {}) do
         produced[c.fluid] = true
@@ -82,29 +89,80 @@ end
 -- |
 -- | Helium-3 is spelled with a hyphen, which is GregTech's spelling and not a typo here.
 -- | @date 2026-09-17 ]]
-bank.FLUIDS = {
-    -- the sixteen plasmas, in the mixer's own order
+--[[ Every fluid the scenario deals in.
+-- |
+-- | THE FIRST TWENTY ARE FIXED and everything else counts on it: sixteen plasmas in the mixer's own
+-- | order, then the four catalysts. `bank.FLUIDS[i]` for i up to sixteen IS plasma number i, which
+-- | is what lets one of the sixteen be named by number.
+-- |
+-- | THE FEEDSTOCKS AFTER THEM ARE DERIVED, not written down. They used to be a list typed out from
+-- | the recipes - and it went stale the moment the runtime reader found recipes the hand extraction
+-- | had missed: radon and americium plasma need iridium, plutonium-241 and hydrogen, none of which
+-- | were in the list, so both reactors sat starved with their lamps on and nothing to say why.
+-- | Reading the inputs off the recipes cannot go stale that way.
+-- |
+-- | @date 2026-09-18 ]]
+bank.PLASMAS = {
     "plasma.helium", "plasma.iron", "plasma.calcium", "plasma.niobium",
     "plasma.radon", "plasma.nickel", "plasma.boron", "plasma.sulfur",
     "plasma.nitrogen", "plasma.zinc", "plasma.silver", "plasma.titanium",
     "plasma.americium", "plasma.bismuth", "plasma.oxygen", "plasma.tin",
-
-    -- what the mixer makes of them
-    "exciteddtcc", "exciteddtrc", "exciteddtpc", "exciteddtec",
-
-    -- and what the fusion reactor eats to make the plasmas
-    "deuterium", "tritium", "helium-3", "helium", "oxygen", "fluorine",
-    "molten.carbon", "molten.aluminium", "molten.lithium", "molten.beryllium",
-    "molten.silicon", "molten.magnesium", "molten.potassium", "molten.copper",
-    "molten.cobalt", "molten.gold", "molten.arsenic", "molten.silver",
-    "molten.tantalum",
 }
+
+bank.FLUIDS = {}
+
+--[[ @brief Works out what the bank must hold, from the recipes.
+-- |
+-- | The sixteen plasmas, the four catalysts, and every input of every recipe that makes one of
+-- | those plasmas - whichever reactor runs it, since the two MK-IIIs draw on the same bank.
+-- |
+-- | @param scene    the scenario, for its catalysts
+-- | @param mc_path  where Minecraft is
+-- | @return number - how many feedstocks were found
+-- |
+-- | @date 2026-09-18 ]]
+function bank.rebuild(scene, mc_path)
+    local out, seen = {}, {}
+    local function add(f)
+        if f and f ~= "" and not seen[f] then
+            seen[f] = true
+            out[#out + 1] = f
+        end
+    end
+
+    for _, p in ipairs(bank.PLASMAS) do
+        add(p)
+    end
+    for _, c in ipairs(scene.CATALYSTS or {}) do
+        add(c.fluid)
+    end
+
+    local wanted = {}
+    for _, p in ipairs(bank.PLASMAS) do
+        wanted[p] = true
+    end
+
+    local feed = 0
+    for _, e in ipairs(vc.fusion_recipes(mc_path or "")) do
+        if wanted[e[5]] then
+            for _, f in ipairs({e[1], e[3]}) do
+                if not seen[f] then
+                    feed = feed + 1
+                end
+                add(f)
+            end
+        end
+    end
+
+    bank.FLUIDS = out
+    return feed
+end
 
 --[[ @brief Finds the row of tanks that stands for the bank.
 -- |
--- | Core: THE LONGEST STRAIGHT RUN OF TANKS ON THE GROUND. The scenario's other tanks are the
--- | reactor's two inputs and the sixteen the program reads, and those sit in short groups or above
--- | ground; the bank is the long line. Recognising it by its shape means the row can be built
+-- | Core: THE LONGEST STRAIGHT RUN OF TANKS ON THE GROUND. The scenario's other tanks are the two
+-- | the reactor is fed through and the thirty-two around the transposers, and those stand alone or
+-- | above ground; the bank is the long line. Recognising it by its shape means the row can be built
 -- | anywhere and moved without editing this file.
 -- |
 -- | @param w  world
@@ -159,6 +217,7 @@ end
 --]]
 function bank.build(w, scene, mc_path)
     local complaints = {}
+    bank.rebuild(scene, mc_path)
     local row = bank.row(w)
     if not row then
         return 0, 0, {"no row of tanks on the ground to use as the bank"}
