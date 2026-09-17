@@ -286,7 +286,14 @@ struct texture_t {
 struct vertex_t {
     float x, y, z;
     float u, v;
-    float shade;
+    /*! The colour this vertex multiplies its texel by.
+     *
+     * It was one float, a plain brightness, until the tanks needed it: GregTech keeps no picture
+     * for most of its fluids and draws them by tinting a greyscale image with the material's own
+     * colour. Three floats instead of one means the same mesh can carry both - a face's baked
+     * brightness is simply the same number three times.
+     * @date 2026-09-17 */
+    float tr, tg, tb;
 };
 
 /*! An indexed triangle mesh living in one vertex buffer and one index buffer.
@@ -331,7 +338,7 @@ struct mesh_t {
      * and not to the mesh, and the same mesh may be drawn by more than one program. A location of
      * -1 - what glGetAttribLocation answers for an attribute the linker dropped - is skipped.
      * @date 2026-09-16 */
-    void draw(int loc_pos, int loc_uv, int loc_shade) const {
+    void draw(int loc_pos, int loc_uv, int loc_tint) const {
         if (!index_count || !vao)
             return;
 
@@ -349,17 +356,17 @@ struct mesh_t {
             glVertexAttribPointer(loc_uv, 2, GL_FLOAT, GL_FALSE, sizeof(vertex_t),
                     (void *)offsetof(vertex_t, u));
         }
-        if (loc_shade >= 0) {
-            glEnableVertexAttribArray(loc_shade);
-            glVertexAttribPointer(loc_shade, 1, GL_FLOAT, GL_FALSE, sizeof(vertex_t),
-                    (void *)offsetof(vertex_t, shade));
+        if (loc_tint >= 0) {
+            glEnableVertexAttribArray(loc_tint);
+            glVertexAttribPointer(loc_tint, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t),
+                    (void *)offsetof(vertex_t, tr));
         }
 
         glDrawElements(GL_TRIANGLES, index_count, GL_UNSIGNED_INT, nullptr);
 
         if (loc_pos >= 0)   glDisableVertexAttribArray(loc_pos);
         if (loc_uv >= 0)    glDisableVertexAttribArray(loc_uv);
-        if (loc_shade >= 0) glDisableVertexAttribArray(loc_shade);
+        if (loc_tint >= 0) glDisableVertexAttribArray(loc_tint);
         glBindVertexArray(0);
     }
 

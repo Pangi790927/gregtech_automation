@@ -80,7 +80,8 @@ end
 --[[ @brief One frame of flying.
 -- |
 -- | Core: the mouse turns the view while the pointer is captured, and the keys move it - W and S
--- | along the heading, A and D across it, E and Q straight up and down. Holding shift moves at the
+-- | along the heading, A and D across it, space and shift straight up and down, and both at once
+-- | to hold height. Holding ctrl moves at the
 -- | faster of the two speeds. Every distance is multiplied by `dt`, so the camera travels at the
 -- | same rate whatever the frame rate is doing.
 -- |
@@ -122,8 +123,11 @@ function camera.update(settings, dt)
     end
 
     if not vc.ImGui_WantCaptureKeyboard() then
-        local fast = vc.ImGui_IsKeyDown("ImGuiKey_LeftShift")
-                or vc.ImGui_IsKeyDown("ImGuiKey_RightShift")
+        -- CTRL IS THE FAST ONE NOW. Shift used to be, and cannot be any more: the author asked on
+        -- 2026-09-17 for shift to descend, and a key cannot both sink you and hurry you along.
+        -- Ctrl is free - it lost its click bindings when a plain right click took over interacting.
+        local fast = vc.ImGui_IsKeyDown("ImGuiKey_LeftCtrl")
+                or vc.ImGui_IsKeyDown("ImGuiKey_RightCtrl")
         local speed = fast and (settings.get("move_speed_fast") or 26.0)
                 or (settings.get("move_speed") or 9.0)
         local step = speed * dt
@@ -143,8 +147,21 @@ function camera.update(settings, dt)
         if vc.ImGui_IsKeyDown("ImGuiKey_S") then fwd = fwd - 1 end
         if vc.ImGui_IsKeyDown("ImGuiKey_D") then side = side + 1 end
         if vc.ImGui_IsKeyDown("ImGuiKey_A") then side = side - 1 end
-        if vc.ImGui_IsKeyDown("ImGuiKey_E") then rise = rise + 1 end
-        if vc.ImGui_IsKeyDown("ImGuiKey_Q") then rise = rise - 1 end
+        -- SPACE RISES, SHIFT SINKS, AND BOTH TOGETHER HOLD STILL. The author's rule, 2026-09-17,
+        -- and the last part of it is the point: shift is also what turns a right click from opening
+        -- a thing into placing against it, so holding shift to build would otherwise drag the
+        -- camera towards the floor while aiming. Pressing space with it cancels the descent and
+        -- leaves the modifier free to do its other job.
+        --
+        -- E AND Q ARE DELIBERATELY NOT BOUND. They were, and the author asked on 2026-09-17 for
+        -- them to stop: the simulator is a thing you switch to and from the game, and a control
+        -- that exists here and nowhere there makes the hands hesitate in both.
+        if vc.ImGui_IsKeyDown("ImGuiKey_Space") then rise = rise + 1 end
+        if vc.ImGui_IsKeyDown("ImGuiKey_LeftShift")
+                or vc.ImGui_IsKeyDown("ImGuiKey_RightShift") then
+            rise = rise - 1
+        end
+
 
         x = x + (hx * fwd + r[1] * side) * step
         y = y + rise * step

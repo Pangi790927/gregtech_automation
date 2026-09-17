@@ -69,6 +69,7 @@ enum cell_kind_e : int {
     CELL_KIND_TANK = 11,       /*!< A liquid tank. Holds one fluid; read through a transposer. */
     CELL_KIND_IMPORT_BUS = 12, /*!< An ME import bus. Scenery: it has no behaviour yet. */
     CELL_KIND_EXPORT_BUS = 13, /*!< An ME export bus. Scenery: it has no behaviour yet. */
+    CELL_KIND_QTANK = 14,      /*!< A quantum tank. A tank, but far bigger and not see-through. */
 };
 
 /*! Does this kind sit on the component network?
@@ -94,6 +95,13 @@ inline bool kind_is_flat(int kind) {
     return kind == CELL_KIND_WIRE || kind == CELL_KIND_KEYBOARD;
 }
 
+/*! Is this kind a tank of some sort? Both hold one fluid and both are read the same way by a
+ * transposer; they differ in how much they hold and in whether you can see inside.
+ * @date 2026-09-17 */
+inline bool kind_is_tank(int kind) {
+    return kind == CELL_KIND_TANK || kind == CELL_KIND_QTANK;
+}
+
 /*! Does this kind fill its whole cell?
  *
  * Everything that occupies a slot does, except a cable, which is a thin run through the middle of
@@ -107,7 +115,7 @@ inline bool kind_is_flat(int kind) {
  * and the tank did the moment it existed.
  * @date 2026-09-17 */
 inline bool kind_is_full_cube(int kind) {
-    return kind != CELL_KIND_NONE && kind != CELL_KIND_CABLE && kind != CELL_KIND_TANK
+    return kind != CELL_KIND_NONE && kind != CELL_KIND_CABLE && !kind_is_tank(kind)
             && !kind_is_flat(kind);
 }
 
@@ -178,6 +186,15 @@ constexpr int CHEST_SLOTS = 27;
  * followed by " L".
  * @date 2026-09-17 */
 constexpr double TANK_CAPACITY_L = 32000000.0;
+
+/*! What a quantum tank holds, in litres.
+ *
+ * GregTech's Quantum Tank III, which is tier 8 of the same commonSizeCompute the super tanks use:
+ * 512,000,000. A scenario standing a row of them up as a fluid bank wanted exactly this, and the
+ * author picked the tank to match the number rather than the other way round.
+ * @date 2026-09-17 */
+constexpr double QTANK_CAPACITY_L = 512000000.0;
+
 
 /*! Translates an OpenComputers side number into one of this file's face indices.
  *
@@ -254,6 +271,26 @@ struct cell_t : public vc::object_t {
     std::string fluid;
     double fluid_amount = 0.0;
 
+    /*! What this tank holds when full, in litres.
+     *
+     * PER CELL, not one constant for every tank. A tank placed by hand is a Super Tank IV, which is
+     * what TANK_CAPACITY_L is; a scenario standing a row of them up as a fluid bank sets whatever
+     * the thing it is standing in for holds - a Quantum Tank III, say. Not written to the save: a
+     * capacity belongs to the part a tank is playing, and the scenario sets it again every time it
+     * loads.
+     * @date 2026-09-17 */
+    double fluid_cap = TANK_CAPACITY_L;
+
+    /*! The one fluid this tank will hold, whether or not it holds any right now.
+     *
+     * THE MOD'S OWN IDEA, not ours: GregTech's digital tanks have a lock, and its tooltip says so -
+     * "This tank will be locked to only accept one type of fluid". It is what lets a row of tanks
+     * standing in for a fluid bank say what each of them is FOR while they are empty, which a
+     * contents-only model cannot: draining a tank to nothing would otherwise forget what it was.
+     * @date 2026-09-17 */
+    std::string fluid_lock;
+    std::string fluid_lock_label;
+
     /*! The fluid's name as the game shows it - "Chlorine" for "chlorine".
      *
      * Carried on the cell rather than looked up when asked, because the lookup is GregTech's lang
@@ -271,6 +308,8 @@ struct cell_t : public vc::object_t {
     static vc::ref_t<cell_t> create(int kind) {
         auto ret = std::make_shared<cell_t>(vc::object_t::Private{type_id_static()});
         ret->kind = kind;
+        if (kind == CELL_KIND_QTANK)
+            ret->fluid_cap = QTANK_CAPACITY_L;
         ret->u = vc::lua_object_t::create(); /* always a valid receiver for u:capture()/u:push() */
         return ret;
     }
@@ -331,6 +370,22 @@ struct cell_t : public vc::object_t {
         return true;
     }
 
+    /*! Sets what this cell emits on one face, clamped to what redstone can carry.
+     *
+     * The counterpart of rs_get, and the way anything OUTSIDE a guest machine drives a signal: a
+     * scenario's controller working the world, or a test standing in for the program under test.
+     * A guest does it through the redstone component's setOutput, which ends up here too.
+     *
+     * Lamps are not relit from here - a cell does not know its world. Whatever owns the world does
+     * that, the same as it does after a component writes.
+     * @date 2026-09-17 */
+    void rs_set(int face, int value) {
+        if (face < 0 || face >= FACE_COUNT)
+            return;
+        rs_out[face] = (value < 0) ? 0 : ((value > 15) ? 15 : value);
+        touch();
+    }
+
     /*! What this cell is emitting on one face. @date 2026-09-17 */
     int rs_get(int face) const {
         return (face >= 0 && face < FACE_COUNT) ? rs_out[face] : 0;
@@ -350,6 +405,34 @@ struct cell_t : public vc::object_t {
      *
      * @return the litres actually held afterwards
      * @date 2026-09-17 */
+    /*! Sets what this tank holds when full, and spills nothing: an amount already over the new
+     * capacity is clipped to it. @date 2026-09-17 */
+    /*! Locks this tank to one fluid, or unlocks it when given nothing. @date 2026-09-17 */
+    void fluid_lock_set(const char *name, const char *label) {
+        if (!name || !*name) {
+            fluid_lock.clear();
+            fluid_lock_label.clear();
+        }
+        else {
+            fluid_lock = name;
+            fluid_lock_label = (label && *label) ? label : name;
+        }
+        touch();
+    }
+
+    /*! What this tank is locked to, as `{name, label}`; empty names when it is not locked.
+     * @date 2026-09-17 */
+    std::tuple<std::string, std::string> fluid_lock_get() const {
+        return {fluid_lock, fluid_lock_label};
+    }
+
+    void fluid_set_capacity(double litres) {
+        fluid_cap = (litres > 0.0) ? litres : TANK_CAPACITY_L;
+        if (fluid_amount > fluid_cap)
+            fluid_amount = fluid_cap;
+        touch();
+    }
+
     double fluid_set(const char *name, double litres, const char *label) {
         if (!name || !*name || litres <= 0.0) {
             fluid.clear();
@@ -359,7 +442,7 @@ struct cell_t : public vc::object_t {
         else {
             fluid = name;
             fluid_label = (label && *label) ? label : name;
-            fluid_amount = (litres > TANK_CAPACITY_L) ? TANK_CAPACITY_L : litres;
+            fluid_amount = (litres > fluid_cap) ? fluid_cap : litres;
         }
         touch();
         return fluid_amount;
@@ -368,7 +451,7 @@ struct cell_t : public vc::object_t {
     /*! What a tank can hold, in litres. A cell that is not a tank holds nothing.
      * @date 2026-09-17 */
     double fluid_capacity() const {
-        return (kind == CELL_KIND_TANK) ? TANK_CAPACITY_L : 0.0;
+        return kind_is_tank(kind) ? fluid_cap : 0.0;
     }
 };
 
@@ -970,12 +1053,17 @@ inline int register_meta(vc::virt_state_t *vs) {
     VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, fluid_set, const char *, double,
             const char *);
     VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, fluid_capacity);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, fluid_set_capacity, double);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, fluid_lock_set, const char *,
+            const char *);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, fluid_lock_get);
     VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, inv_size);
     VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, inv_resize, int);
     VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, inv_get, int);
     VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, inv_set, int, const char *, int, int,
             const char *);
     VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, rs_get, int);
+    VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, rs_set, int, int);
 
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, get, int, int, int);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, set, int, int, int, cell_p);

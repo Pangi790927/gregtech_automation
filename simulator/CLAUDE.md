@@ -136,6 +136,18 @@ Fluids are the opposite case and that is why they are trusted: `fluid.chlorine.p
 `javap` from the Adoptium JDK on this machine disassembles a class when the strings are not enough:
 `javap -p -c Foo.class`.
 
+### Extract to a scratch directory, and check you got there
+
+Reading a mod's bytecode means extracting `.class` files somewhere. **That somewhere must not be
+the repository.** On 2026-09-17 a run of `cd "$SCRATCH" && python -c "...extract..."` left GregTech,
+GT++, GoodGenerator and TecTech class files plus seven `javap` dumps sitting untracked in the repo
+root, one `git add -A` away from being committed - compiled mod code and its disassembly, which is
+exactly what this repository must never carry.
+
+The cause was `cd` to a path that resolved to nothing: an empty argument leaves the shell where it
+is and says nothing. Use an absolute scratch path, or `cd X || exit`, and check `git status` after a
+session of jar-reading.
+
 ## How to check
 
 The jars are the source of truth and both are already on the machine. Read them directly:

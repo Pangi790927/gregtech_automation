@@ -276,6 +276,7 @@ local function interaction_case()
     check("a screen", blocks.is_interactive(blocks.KIND.SCREEN))
     check("a chest", blocks.is_interactive(blocks.KIND.CHEST))
     check("a liquid tank", blocks.is_interactive(blocks.KIND.TANK))
+    check("a quantum tank", blocks.is_interactive(blocks.KIND.QTANK))
 
     -- The ones a right click has to keep placing on, or building stops working.
     for _, kind in ipairs({blocks.KIND.WIRE, blocks.KIND.KEYBOARD, blocks.KIND.LAMP,
@@ -436,6 +437,333 @@ local function bus_and_item_case()
     check("and both ignore anything that is not theirs", true)
 end
 
+--[[ @brief The fusion recipes, read out of the installed mods at runtime.
+-- |
+-- | Core: these are checked against values read BY HAND out of the same jars with a disassembler,
+-- | so the reader is measured against the game rather than against itself. If a modpack update
+-- | moves them the counts change and this says so; if the reader breaks, the named recipes vanish.
+-- |
+-- | @date 2026-09-17 22:00
+--]]
+local function fusion_recipe_case(mc)
+    print("fusion recipes, read from the mods")
+
+    local r = vc.fusion_recipes(mc or "")
+    check("some recipes were found", #r > 10, #r)
+    if #r == 0 then
+        print("  --   no minecraft path here, so there was nothing to read")
+        return
+    end
+
+    -- Indexed by what they make, since that is how the scenario asks for them.
+    local by_out = {}
+    for _, e in ipairs(r) do
+        by_out[e[5]] = by_out[e[5]] or {}
+        table.insert(by_out[e[5]], e)
+    end
+
+    check("helium plasma has a recipe", by_out["plasma.helium"] ~= nil)
+    check("and two routes to it", by_out["plasma.helium"] and #by_out["plasma.helium"] == 2,
+            by_out["plasma.helium"] and #by_out["plasma.helium"])
+
+    -- Deuterium + Tritium -> Helium plasma, 16 ticks, 4096 EU/t, 40,000,000 to start.
+    local he = by_out["plasma.helium"] and by_out["plasma.helium"][1]
+    if he then
+        check("its inputs are deuterium and tritium",
+                he[1] == "deuterium" and he[3] == "tritium", he[1] .. " + " .. he[3])
+        check("125 L of each", he[2] == "125" and he[4] == "125", he[2] .. "/" .. he[4])
+        check("16 ticks", he[7] == "16", he[7])
+        check("4096 EU/t", he[8] == "4096", he[8])
+        check("40,000,000 EU to start", he[9] == "40000000", he[9])
+    end
+
+    -- The one GTNH's own core mod adds, and the reason a balancer has ordering to do: boron plasma
+    -- is made OUT OF helium plasma.
+    local boron = by_out["plasma.boron"] and by_out["plasma.boron"][1]
+    check("boron plasma has a recipe", boron ~= nil)
+    if boron then
+        check("made out of helium plasma", boron[1] == "plasma.helium" or boron[3] == "plasma.helium",
+                boron[1] .. " + " .. boron[3])
+        check("with molten lithium", boron[1] == "molten.lithium" or boron[3] == "molten.lithium")
+        check("240 ticks", boron[7] == "240", boron[7])
+        check("and it came from the core mod", boron[10]:find("CoreMod", 1, true) ~= nil, boron[10])
+    end
+
+    -- Bismuth eats zinc plasma, the other dependency in the graph.
+    local bi = by_out["plasma.bismuth"] and by_out["plasma.bismuth"][1]
+    check("bismuth plasma is made from zinc plasma",
+            bi ~= nil and (bi[1] == "plasma.zinc" or bi[3] == "plasma.zinc"),
+            bi and (bi[1] .. " + " .. bi[3]))
+
+    -- THE TWO WE COULD NOT FIND BY HAND. A python scan over a disassembly missed them; this reader
+    -- did not, which is the argument for reading the game rather than transcribing it.
+    for _, want in ipairs({"plasma.radon", "plasma.americium"}) do
+        local e = by_out[want] and by_out[want][1]
+        check(want .. " has a recipe", e ~= nil)
+        if e then
+            print(string.format("  --   %s: %s %s + %s %s -> %s %s, %s ticks, %s EU/t, start %s",
+                    want, e[1], e[2], e[3], e[4], e[5], e[6], e[7], e[8], e[9]))
+        end
+    end
+
+    -- What a Compact Fusion MK-II can and cannot run, which is the scenario's real constraint.
+    local MK2 = 320006000
+    local fits, too_big = 0, {}
+    for out_name, list in pairs(by_out) do
+        local best = nil
+        for _, e in ipairs(list) do
+            local s = tonumber(e[9])
+            if not best or s < best then best = s end
+        end
+        if best and best <= MK2 then
+            fits = fits + 1
+        elseif best then
+            too_big[#too_big + 1] = out_name
+        end
+    end
+    check("an MK-II can run a good many of them", fits > 8, fits)
+    table.sort(too_big)
+    print("  --   past an MK-II's store: " .. table.concat(too_big, ", "))
+end
+
+--[[ @brief The fusion balancer scenario's bank of fluids.
+-- |
+-- | Core: the row of tanks that stands for the ME system has to end up with one tank per fluid, in
+-- | a known order, each the size of the tank it stands for. The scenario builds it from whatever
+-- | row it finds, so the case gives it a short row and checks it grew correctly.
+-- |
+-- | @date 2026-09-17 21:00
+--]]
+local function bank_case(mc)
+    print("the scenario's bank of fluids")
+
+    package.path = package.path .. ";./scenes/fusion_balancer/?.lua"
+    local ok_s, scene = pcall(require, "scene")
+    local ok_b, bank = pcall(require, "bank")
+    check("the scene loads", ok_s, ok_s and "" or tostring(scene))
+    check("the bank loads", ok_b, ok_b and "" or tostring(bank))
+    if not (ok_s and ok_b) then
+        return
+    end
+
+    local st = world.new()
+    local w = st.world
+
+    -- A short row, plus one tank too many at the far end, and a block in the way of neither.
+    for i = 0, 4 do
+        w:set(10 + i, 0, 40, blocks.make_tank())
+    end
+
+    local placed, removed, complaints = bank.build(w, scene, mc)
+    -- Every one of them placed: the five that were there were ordinary tanks, and the bank row is
+    -- quantum tanks, so they are replaced rather than resized.
+    check("it built one quantum tank per fluid", placed == #bank.FLUIDS,
+            placed .. " placed for " .. #bank.FLUIDS .. " fluids")
+    check("and took nothing away that was not there", removed == 0, removed)
+
+    local first = w:get(10, 0, 40)
+    check("the first tank is locked to the first fluid",
+            first ~= nil and first:fluid_lock_get()[1] == bank.FLUIDS[1],
+            first and first:fluid_lock_get()[1])
+    check("and is a quantum tank", first ~= nil and first.kind == blocks.KIND.QTANK,
+            first and blocks.KIND_NAME[first.kind])
+    check("and is the size the scenario says", first ~= nil
+            and first:fluid_capacity() == scene.BANK.cap_per_fluid, first:fluid_capacity())
+    -- The rest of a scene's tanks stand for ordinary connections and stay small.
+    check("an ordinary tank is still a super tank IV",
+            blocks.make_tank():fluid_capacity() == 32000000,
+            blocks.make_tank():fluid_capacity())
+    check("and a quantum tank a quantum tank III",
+            blocks.make_qtank():fluid_capacity() == 512000000,
+            blocks.make_qtank():fluid_capacity())
+    check("which is a quantum tank III", scene.BANK.cap_per_fluid == 512000000)
+
+    local last = w:get(10 + #bank.FLUIDS - 1, 0, 40)
+    check("the last tank is locked to the last fluid",
+            last ~= nil and last:fluid_lock_get()[1] == bank.FLUIDS[#bank.FLUIDS],
+            last and last:fluid_lock_get()[1])
+    check("and nothing was built past it", w:get(10 + #bank.FLUIDS, 0, 40) == nil)
+
+    -- Every fluid the recipes touch has somewhere to go.
+    local have = {}
+    for _, f in ipairs(bank.FLUIDS) do
+        have[f] = true
+    end
+    check("every plasma the mixer needs is in the bank",
+            have["plasma.helium"] and have["plasma.tin"] and have["plasma.americium"])
+    check("so is every catalyst it makes",
+            have["exciteddtcc"] and have["exciteddtrc"] and have["exciteddtpc"]
+            and have["exciteddtec"])
+    check("and the reactor's own feedstocks",
+            have["deuterium"] and have["tritium"] and have["helium-3"]
+            and have["molten.lithium"] and have["molten.tantalum"])
+
+    -- THE STARTING STATE. What the base buys in starts full, what the scenario makes starts empty,
+    -- and rebuilding puts it back to that rather than inheriting the last run.
+    local feed = bank.input_only(scene, mc)
+    check("deuterium is bought in, not made", feed["deuterium"] == true)
+    check("and helium plasma is not", feed["plasma.helium"] == nil)
+    check("nor is a catalyst", feed["exciteddtcc"] == nil)
+
+    local function level(name)
+        for _, cell in ipairs(w:occupied()) do
+            if blocks.is_tank(cell.kind) and cell:fluid_lock_get()[1] == name then
+                return cell:fluid_get()[2]
+            end
+        end
+    end
+    check("feedstock starts full", level("deuterium") == scene.BANK.cap_per_fluid,
+            level("deuterium"))
+    check("and what the scenario makes starts empty", level("plasma.helium") == 0,
+            level("plasma.helium"))
+
+    check("the catalysts read as the author names them",
+            bank.display("exciteddtcc") == "excited-crude"
+            and bank.display("exciteddtec") == "excited-exotic")
+    check("but keep the name the game gives them",
+            level("exciteddtcc") ~= nil)
+
+    -- EVERY fluid draws. Most have no picture of their own and use GregTech's greyscale stand-in
+    -- coloured by the material - without that a row of bank tanks looks empty, which is exactly
+    -- what the author reported on 2026-09-17.
+    local undrawn = {}
+    for _, f in ipairs(bank.FLUIDS) do
+        if vc.render_fluid_tile(f) < 0 then
+            undrawn[#undrawn + 1] = f
+        end
+    end
+    check("every bank fluid has something to draw with", #undrawn == 0,
+            table.concat(undrawn, ", "))
+    check("a plasma falls back to the plasma stand-in",
+            vc.render_fluid_tile("plasma.helium") >= 0)
+    check("and a molten metal to the molten one",
+            vc.render_fluid_tile("molten.lithium") >= 0)
+    check("a fluid with its own picture keeps it",
+            vc.render_fluid_tile("deuterium") >= 0
+            and math.floor(vc.render_fluid_tint("deuterium")) == 0xffffff)
+
+    for _, c in ipairs(complaints) do
+        print("  --   " .. c)
+    end
+end
+
+--[[ @brief The scenario's controller: does the invisible hand actually run a machine?
+-- |
+-- | Core: THE POINT IS THAT IT MOVES FLUID, not that it loads. A scene that compiles and does
+-- | nothing looks exactly like a scene that works until somebody watches a tank for a minute.
+-- | So this builds the rig, tells the reactor to make helium plasma the way the program under test
+-- | would, and waits for plasma to appear in the bank.
+-- |
+-- | @date 2026-09-17 22:30
+--]]
+local function controller_case(mc)
+    print("the scenario's controller")
+
+    package.path = package.path .. ";./scenes/fusion_balancer/?.lua"
+    local ok_s, scene = pcall(require, "scene")
+    local ok_b, bankmod = pcall(require, "bank")
+    local ok_c, ctrl = pcall(require, "controller")
+    check("the controller loads", ok_c, ok_c and "" or tostring(ctrl))
+    if not (ok_s and ok_b and ok_c) then
+        return
+    end
+
+    local st = world.new()
+    local w = st.world
+
+    -- A bank row, and the four control blocks the scenario looks for.
+    for i = 0, 3 do
+        w:set(10 + i, 0, 50, blocks.make_tank())
+    end
+    for i = 0, 3 do
+        w:set(10 + i * 2, 0, 55, blocks.make_redstone())
+        w:set(10 + i * 2, 1, 55, blocks.make_lamp())
+    end
+
+    bankmod.build(w, scene, mc)
+    local log = ctrl.init(w, scene, mc or "")
+    check("it read the recipes", #log > 0 and log[1]:find("fusion recipes", 1, true) ~= nil,
+            log[1])
+    check("it found the four control blocks",
+            #ctrl.read_signals() == 16, #ctrl.read_signals())
+
+    -- The reactor needs feedstock. Deuterium and tritium make helium plasma, which is the first
+    -- fluid in the bank and so is selector value one.
+    local function bank_cell(name)
+        for _, cell in ipairs(w:occupied()) do
+            if blocks.is_tank(cell.kind) and cell:fluid_lock_get()[1] == name then
+                return cell
+            end
+        end
+    end
+    local deut = bank_cell("deuterium")
+    local trit = bank_cell("tritium")
+    check("the bank has a deuterium tank", deut ~= nil)
+    check("and a tritium tank", trit ~= nil)
+    if not (deut and trit) then
+        return
+    end
+    deut:fluid_set("deuterium", 100000, "Deuterium")
+    trit:fluid_set("tritium", 100000, "Tritium")
+
+    check("helium plasma starts at nothing", ctrl.bank_level("plasma.helium") == 0)
+    check("and the compact fusion can make it",
+            ctrl.best_recipe("plasma.helium", scene.REACTOR.eu_store) ~= nil)
+    -- What it cannot: radon wants 450,000,000 and the MK-II holds 320,006,000.
+    check("but not radon plasma",
+            ctrl.best_recipe("plasma.radon", scene.REACTOR.eu_store) == nil)
+    check("though an MK-III can",
+            ctrl.best_recipe("plasma.radon", scene.CONVERTER_EU_STORE) ~= nil)
+
+    -- Line one selects what the reactor makes. The redstone block's own faces are what the program
+    -- under test would drive, so the test drives them the same way.
+    local sig = w:get(10, 0, 55)
+    sig:rs_set(blocks.FACE.XNEG, 1)
+
+    -- The recipe is 16 ticks at 2x overclock, so well under a second of simulated time.
+    for _ = 1, 40 do
+        ctrl.update(w, scene, 0.05)
+    end
+
+    local made = ctrl.bank_level("plasma.helium")
+    check("the reactor made helium plasma", made > 0, made)
+    check("and it ate the feedstock", deut:fluid_get()[2] < 100000, deut:fluid_get()[2])
+
+    -- Switched off, it stops.
+    sig:rs_set(blocks.FACE.XNEG, 0)
+    local before = ctrl.bank_level("plasma.helium")
+    for _ = 1, 40 do
+        ctrl.update(w, scene, 0.05)
+    end
+    check("and stops when the line goes low", ctrl.bank_level("plasma.helium") == before,
+            ctrl.bank_level("plasma.helium") - before)
+    -- THE KNOBS. A flow per fluid is what makes the bank move under the balancer's feet, so it is
+    -- worth checking that a positive one fills and a negative one drains, at the rate asked for.
+    --
+    -- MEASURED WITH THE REACTOR IDLE, and that is not fussiness: the first version of this case
+    -- ran it while the reactor was still going and the tritium came out 250 L light, because the
+    -- reactor was drinking it. The test was wrong, not the controller - but a loose tolerance
+    -- would have hidden a real leak just as happily.
+    -- Filled into something the scenario MAKES, which starts empty: a feedstock tank starts full
+    -- and adding to it does nothing, which is correct and useless as a measurement.
+    ctrl.set_flow("exciteddtcc", 1000)
+    ctrl.set_flow("tritium", -2000)
+    local lith_before = ctrl.bank_level("exciteddtcc")
+    local trit_before = ctrl.bank_level("tritium")
+    for _ = 1, 10 do
+        ctrl.update(w, scene, 0.1)          -- one second of simulated time
+    end
+    check("a positive flow fills the bank",
+            math.abs((ctrl.bank_level("exciteddtcc") - lith_before) - 1000) < 1,
+            ctrl.bank_level("exciteddtcc") - lith_before)
+    check("and a negative one drains it",
+            math.abs((trit_before - ctrl.bank_level("tritium")) - 2000) < 1,
+            trit_before - ctrl.bank_level("tritium"))
+    ctrl.set_flow("exciteddtcc", 0)
+    ctrl.set_flow("tritium", 0)
+
+end
+
 --[[ @brief The cases. @date 2026-09-17 12:00 ]]
 local function run_cases(mc)
     -- From nothing every time. A suite that starts on whatever the last run left behind passes and
@@ -444,6 +772,9 @@ local function run_cases(mc)
     scripts_compile_case()
     interaction_case()
     bus_and_item_case()
+    fusion_recipe_case(mc)
+    bank_case(mc)
+    controller_case(mc)
     legacy_save_case()
 
     local rig = build_rig()

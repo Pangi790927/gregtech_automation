@@ -105,8 +105,9 @@ so.
     tab              capture the mouse and look around, or release it
                      (the simulator opens already captured)
     w a s d          move along the heading and across it, always level
-    e / q            rise and descend
-    shift            move at the faster speed
+    space / shift    rise and descend; both at once holds height, which is
+                     what lets shift+right click place without sinking
+    ctrl             move at the faster speed
     wheel, or 1..9   choose what a right click places
     left click       break what the crosshair is on - a flat thing first,
                      then the block it clings to
@@ -118,7 +119,7 @@ so.
                      looking around
     ctrl+q           quit, saving the world on the way out
 
-Space and ctrl are deliberately unbound. A right click follows the game: it opens whatever has
+A right click follows the game: it opens whatever has
 anything to open, and sneaking past it with shift places against it instead.
 
 What can be placed, in selector order: a computer case, a screen, a disk drive and a redstone lamp,
@@ -173,3 +174,12 @@ was being worked on.
     scripts/camera.lua    the flying camera
     scripts/world.lua     aim, place, break, and the world file
     scripts/ui.lua        the crosshair and the panel
+
+## To investigate
+
+Open questions recorded for later, not conclusions.
+
+- **~700 GregTech materials are absent from the item catalogue.** `gt_materials()` reads 511 of the
+  ~1,206 names the lang file has. The ones it does not read are built through GregTech's copy
+  constructor, which takes a material rather than a sub-id as its first argument. Recorded
+  2026-09-17.

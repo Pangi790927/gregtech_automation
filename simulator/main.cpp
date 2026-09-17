@@ -59,10 +59,23 @@ int main(int argc, char const *argv[]) {
      *
      * Read before anything else, because the logger and the window both want to know. */
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--test") == 0)
+        if (strcmp(argv[i], "--test") == 0) {
             appm::set_testing(true);
-        else
+        }
+        else if (strcmp(argv[i], "--scene") == 0 && i + 1 < argc) {
+            /* A scenario: its own map, its own disks, and a controller script that works the
+            world while the program under test runs. See app_mode.h. */
+            appm::set_scene_dir(argv[++i]);
+        }
+        else {
             printf("ignoring unknown argument: %s\n", argv[i]);
+        }
+    }
+
+    if (!appm::app_scene_dir().empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(appm::app_scene_dir(), ec);
+        printf("scene: %s\n", appm::app_scene_dir().c_str());
     }
 
     if (appm::app_is_testing()) {

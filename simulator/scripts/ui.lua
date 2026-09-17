@@ -613,7 +613,7 @@ end
 -- | @date 2026-09-17 19:00
 --]]
 function ui.minitank(cell)
-    if not cell or cell.kind ~= blocks.KIND.TANK or not cell:placed() then
+    if not cell or not blocks.is_tank(cell.kind) or not cell:placed() then
         return
     end
 
@@ -624,11 +624,30 @@ function ui.minitank(cell)
     vc.ImGui_SetDrawForeground(true)
 
     local p = cell:pos()
-    local x0, y0, x1, y1 = mini_frame(string.format("liquid tank %d, %d, %d", p[1], p[2], p[3]), 122)
+    local x0, y0, x1, y1 = mini_frame(string.format("%s %d, %d, %d",
+            blocks.KIND_NAME[cell.kind] or "tank", p[1], p[2], p[3]), 122)
 
     if name == "" then
-        vc.ImGui_AddText({x = x0, y = y0 + 6}, 0xff909090,
-                string.format("empty  -  room for %s L", ui.commas(cap)))
+        -- A locked tank says what it is FOR even while it is empty, which is what makes a row of
+        -- them readable as a bank rather than as a row of empty boxes.
+        local lock = cell:fluid_lock_get()
+        if lock[1] ~= "" then
+            local tile = vc.render_fluid_tile(lock[1])
+            if tile >= 0 then
+                local uv = vc.render_tile_uv_at(math.floor(tile))
+                vc.ImGui_AddImageQuad(vc.render_atlas_id(),
+                        {x = x0, y = y0}, {x = x0 + 40, y = y0},
+                        {x = x0 + 40, y = y0 + 40}, {x = x0, y = y0 + 40},
+                        {x = uv[1], y = uv[2]}, {x = uv[3], y = uv[2]},
+                        {x = uv[3], y = uv[4]}, {x = uv[1], y = uv[4]}, 0x60ffffff)
+            end
+            vc.ImGui_AddText({x = x0 + 50, y = y0}, 0xff909090, lock[2])
+            vc.ImGui_AddText({x = x0 + 50, y = y0 + 18}, 0xff707070,
+                    string.format("empty  -  holds %s L", ui.commas(cap)))
+        else
+            vc.ImGui_AddText({x = x0, y = y0 + 6}, 0xff909090,
+                    string.format("empty  -  room for %s L", ui.commas(cap)))
+        end
         vc.ImGui_SetDrawForeground(false)
         return
     end
@@ -641,7 +660,7 @@ function ui.minitank(cell)
                 {x = x0, y = y0}, {x = x0 + 40, y = y0},
                 {x = x0 + 40, y = y0 + 40}, {x = x0, y = y0 + 40},
                 {x = uv[1], y = uv[2]}, {x = uv[3], y = uv[2]},
-                {x = uv[3], y = uv[4]}, {x = uv[1], y = uv[4]}, 0xffffffff)
+                {x = uv[3], y = uv[4]}, {x = uv[1], y = uv[4]}, ui.fluid_colour(name))
     end
 
     local full = (cap > 0) and (amount / cap) or 0.0
@@ -949,6 +968,20 @@ end
 -- |
 -- | @date 2026-09-17 16:00
 --]]
+--[[ @brief A fluid's colour, as ImGui packs one.
+-- |
+-- | Most fluids have no picture and are drawn as a greyscale stand-in multiplied by the material's
+-- | colour, which is how GregTech draws them. The renderer answers that colour as 0xRRGGBB and
+-- | ImGui wants 0xAABBGGRR, so the two ends get swapped here.
+-- | @date 2026-09-17 ]]
+function ui.fluid_colour(name)
+    local rgb = math.floor(vc.render_fluid_tint(name or ""))
+    local r = math.floor(rgb / 65536) % 256
+    local g = math.floor(rgb / 256) % 256
+    local b = rgb % 256
+    return 0xff000000 + b * 65536 + g * 256 + r
+end
+
 local function fluid_icon(name, size)
     local at = vc.ImGui_GetCursorScreenPos()
     local tile = vc.render_fluid_tile(name or "")
@@ -958,7 +991,7 @@ local function fluid_icon(name, size)
                 {x = at.x, y = at.y}, {x = at.x + size, y = at.y},
                 {x = at.x + size, y = at.y + size}, {x = at.x, y = at.y + size},
                 {x = uv[1], y = uv[2]}, {x = uv[3], y = uv[2]},
-                {x = uv[3], y = uv[4]}, {x = uv[1], y = uv[4]}, 0xffffffff)
+                {x = uv[3], y = uv[4]}, {x = uv[1], y = uv[4]}, ui.fluid_colour(name))
     else
         vc.ImGui_AddQuadFilled({x = at.x, y = at.y}, {x = at.x + size, y = at.y},
                 {x = at.x + size, y = at.y + size}, {x = at.x, y = at.y + size}, 0xff404040)
@@ -983,7 +1016,7 @@ end
 -- | @date 2026-09-17 16:00
 --]]
 function ui.tank(cell)
-    if not cell or cell.kind ~= blocks.KIND.TANK or not cell:placed() then
+    if not cell or not blocks.is_tank(cell.kind) or not cell:placed() then
         return false
     end
 
@@ -993,7 +1026,8 @@ function ui.tank(cell)
     end
 
     local p = cell:pos()
-    vc.ImGui_Begin(string.format("liquid tank %d, %d, %d", p[1], p[2], p[3]), 0)
+    vc.ImGui_Begin(string.format("%s %d, %d, %d",
+            blocks.KIND_NAME[cell.kind] or "tank", p[1], p[2], p[3]), 0)
 
     local held = cell:fluid_get()
     local name, amount, label = held[1], held[2], held[3]
@@ -1016,7 +1050,15 @@ function ui.tank(cell)
                 label ~= "" and label or name,
                 ui.commas(amount), ui.commas(cap), cap > 0 and (amount / cap * 100.0) or 0.0))
     else
-        vc.ImGui_Text(string.format("empty - room for %s L", ui.commas(cap)))
+        local lock = cell:fluid_lock_get()
+        if lock[1] ~= "" then
+            fluid_icon(lock[1], 32)
+            vc.ImGui_SameLine(0, 8)
+            vc.ImGui_Text(string.format("%s\nempty - locked to this fluid, holds %s L",
+                    lock[2], ui.commas(cap)))
+        else
+            vc.ImGui_Text(string.format("empty - room for %s L", ui.commas(cap)))
+        end
     end
 
     vc.ImGui_Separator()
@@ -1163,10 +1205,22 @@ function ui.panel(state, settings, info)
 
     vc.ImGui_Separator()
 
+    -- WHICH SCENARIO IS RUNNING, or plainly that none is. Without this the only sign that a scene
+    -- was not loaded is a window that is not there, and a window that is not there looks exactly
+    -- like a window that is broken.
+    if info.scene and info.scene ~= "" then
+        vc.ImGui_Text("scenario: " .. info.scene)
+    else
+        vc.ImGui_Text("no scenario - start with --scene scenes/<name> for the controller")
+    end
+    vc.ImGui_Separator()
+
     vc.ImGui_Text(info.captured and "mouse: captured - tab to release"
             or "mouse: free - tab to capture and look around")
-    vc.ImGui_Text("wasd moves level, e and q for up and down, shift to go faster")
+    vc.ImGui_Text("wasd moves level; space rises, shift sinks, both together hold still")
+    vc.ImGui_Text("ctrl moves at the faster speed")
     vc.ImGui_Text("left click breaks; right click opens a case, screen or chest")
+    vc.ImGui_Text("(a scenario's map is read-only - nothing can be broken or placed)")
     vc.ImGui_Text("right click anything else - or shift+right click - places instead")
     vc.ImGui_Text("the mouse wheel, or 1 to 4, changes what is selected")
     vc.ImGui_Text("the orange ball marks where a placed block would go")

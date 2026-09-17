@@ -34,6 +34,13 @@ local ui = require("ui")
 local machines = require("machines")
 local saves = require("saves")
 
+--[[ The scenario, when one was asked for with --scene. A scene is a save directory with a
+`scene.lua` beside it saying what the map is for; loading it is what turns the simulator from a
+sandbox into a rig that tests a program. Nil when running as a sandbox. @date 2026-09-17 ]]
+local scene = nil
+local scene_controller = nil
+local scene_report = {}
+
 --[[ A SAVE IS A DIRECTORY. saves.lua owns its shape - the map in one file, the settings in
 another, and every hard disk as a folder of real files under `opencomputers`, the way the mod keeps
 them. This file only says which of them it wants and when. @date 2026-09-17 14:00 ]]
@@ -68,6 +75,8 @@ local TOOLS = {
             place = function(st) return world.place(st, blocks.make_redstone) end},
     {name = "liquid tank", kind = blocks.KIND.TANK,
             place = function(st) return world.place(st, blocks.make_tank) end},
+    {name = "quantum tank", kind = blocks.KIND.QTANK,
+            place = function(st) return world.place(st, blocks.make_qtank) end},
     {name = "ME import bus", kind = blocks.KIND.IMPORT_BUS,
             place = function(st) return world.place(st, blocks.make_import_bus) end},
     {name = "ME export bus", kind = blocks.KIND.EXPORT_BUS,
@@ -175,7 +184,7 @@ local function interact_with(st, cell)
     elseif cell.kind == blocks.KIND.CHEST then
         chest = cell
         vc.mouse_capture(false)
-    elseif cell.kind == blocks.KIND.TANK then
+    elseif blocks.is_tank(cell.kind) then
         tank = cell
         vc.mouse_capture(false)
     end
@@ -188,7 +197,11 @@ local function handle_tools(st)
 
     local t = st.target
 
-    if vc.ImGui_IsMouseClicked("ImGuiMouseButton_Left", false) then
+    -- A SCENARIO'S MAP IS NOT YOURS TO EDIT. The author, 2026-09-17: "I shouldn't be able to change
+    -- a scenario's static scene at all". A scene is a rig a program is measured in, and a rig you
+    -- can knock a block out of by misclicking is not one the measurement can be trusted from.
+    -- Opening things still works - that is reading the rig, not changing it.
+    if not scene and vc.ImGui_IsMouseClicked("ImGuiMouseButton_Left", false) then
         world.break_at(st)
     end
 
@@ -200,12 +213,13 @@ local function handle_tools(st)
                 or vc.ImGui_IsKeyDown("ImGuiKey_RightShift")
         if not sneak and t and t.cell and blocks.is_interactive(t.cell.kind) then
             interact_with(st, t.cell)
-        else
+        elseif not scene then
             TOOLS[selected].place(st)
         end
     end
 
-    if not vc.ImGui_WantCaptureKeyboard() and vc.ImGui_IsKeyPressed("ImGuiKey_F", false) then
+    if not scene and not vc.ImGui_WantCaptureKeyboard()
+            and vc.ImGui_IsKeyPressed("ImGuiKey_F", false) then
         if t and t.cell then
             -- The whole of "modifications on them make them react": one assignment.
             if t.cell.state == blocks.STATE.OFF then
@@ -346,6 +360,50 @@ function test_init()
     -- After the world, because a disk is restored onto the machine of the case it belongs to and
     -- the cases have to exist first.
     machines.load_disks(state)
+
+    -- A scenario, if one was named. Its scripts live beside its save, so the path goes on
+    -- package.path rather than being required by a name the scripts directory would have to know.
+    local scene_dir = vc.app_scene_dir and vc.app_scene_dir() or ""
+    if scene_dir ~= "" then
+        package.path = package.path .. ";" .. scene_dir .. "?.lua"
+        local ok, mod = pcall(require, "scene")
+        if not ok then
+            scene_report = {"scene.lua would not load: " .. tostring(mod)}
+        else
+            scene = mod
+            -- The bank of fluids is part of the map rather than part of the state, so it is built
+            -- before anything looks at the world: one tank per fluid, each the right size.
+            local okb, bankmod = pcall(require, "bank")
+            if okb then
+                local placed, removed, complaints = bankmod.build(state.world, scene,
+                        settings.get("minecraft_path") or "")
+                scene_report = complaints or {}
+                table.insert(scene_report, 1, string.format(
+                        "%s: bank row %d tanks (%d placed, %d removed)",
+                        scene.NAME or "scene", #bankmod.FLUIDS, placed, removed))
+            end
+            -- The invisible hand: the machines, the pumps and the bank. It reads the world once
+            -- here and works it every frame from test_draw.
+            local okc, ctrl = pcall(require, "controller")
+            if okc then
+                scene_controller = ctrl
+                for _, line in ipairs(ctrl.init(state.world, scene,
+                        settings.get("minecraft_path") or "") or {}) do
+                    scene_report[#scene_report + 1] = line
+                end
+            else
+                scene_report[#scene_report + 1] = "controller.lua would not load: " .. tostring(ctrl)
+            end
+
+            local _, missing = scene.discover(state.world)
+            for _, m in ipairs(missing or {}) do
+                scene_report[#scene_report + 1] = "missing: " .. m
+            end
+        end
+        for _, line in ipairs(scene_report) do
+            print(line)
+        end
+    end
     -- The author asked on 2026-09-16 for the simulator to open already looking around, rather than
     -- with a loose cursor waiting for a tab.
     vc.mouse_capture(true)
@@ -383,8 +441,20 @@ function test_draw()
         fps = fps * 0.9 + (1.0 / dt) * 0.1
     end
 
-    if vc.ImGui_IsKeyPressed("ImGuiKey_Tab", false) and not vc.ImGui_WantCaptureKeyboard() then
+    -- TAB IS THE SIMULATOR'S, NOT IMGUI'S. The author, 2026-09-17: it "should only capture the
+    -- screen, not given to imgui". It used to stand down whenever ImGui wanted the keyboard, which
+    -- meant that once a text box had been clicked there was no way back to the world except with
+    -- the mouse - and tab is exactly the key you reach for.
+    --
+    -- The one exception is a focused screen, where tab belongs to the terminal: OpenOS completes
+    -- file names with it, and taking that away would make the shell markedly worse to use.
+    if vc.ImGui_IsKeyPressed("ImGuiKey_Tab", false) and not focus then
         camera.toggle_capture()
+        -- Going back to flying: drop whatever ImGui was focused on, or a settings field that was
+        -- clicked a minute ago keeps swallowing every key typed at the world.
+        if vc.mouse_captured() then
+            vc.ImGui_ClearFocus()
+        end
     end
 
     -- Choosing what to place: the number keys pick a slot outright, the wheel steps through them.
@@ -439,6 +509,9 @@ function test_draw()
     end
 
     machines.step_all(state.world)
+    if scene_controller then
+        scene_controller.update(state.world, scene, dt)
+    end
 
     -- The frame goes on the cell the ray struck, and the sphere on the cell a click would fill.
     -- Together they answer the two questions aiming raises: what am I pointing at, and where would
@@ -474,6 +547,9 @@ function test_draw()
     else
         ui.crosshair()
         ui.hotbar(TOOLS, selected)
+        if scene_controller then
+            scene_controller.draw(scene)
+        end
         -- The console view follows the crosshair: aiming at a screen opens it, looking away shuts
         -- it again.
         ui.miniscreen(state.world, t and t.cell or nil)
@@ -488,7 +564,8 @@ function test_draw()
         -- swallow every letter has no business being on screen while the point of the screen is to
         -- type into it. ImGui releases an active widget that is not submitted, so simply not
         -- drawing it hands the keyboard back.
-        ui.panel(state, settings, {fps = fps, captured = vc.mouse_captured()})
+        ui.panel(state, settings, {fps = fps, captured = vc.mouse_captured(),
+                scene = scene and scene.NAME or nil})
     end
     return 0
 end

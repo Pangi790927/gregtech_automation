@@ -82,6 +82,7 @@ blocks.KIND = {
     TANK = 11,
     IMPORT_BUS = 12,
     EXPORT_BUS = 13,
+    QTANK = 14,
 }
 
 --[[ @brief What a cell is doing. Mirrors `cell_state_e` in world_composer.h.
@@ -125,6 +126,7 @@ blocks.KIND_NAME = {
     -- Applied Energistics' own names, out of its en_US.lang.
     [12] = "ME Import Bus",
     [13] = "ME Export Bus",
+    [14] = "quantum tank",
 }
 
 --[[ @brief Is this kind part of the component network?
@@ -197,7 +199,7 @@ function blocks.is_interactive(kind)
     return kind == blocks.KIND.CASE
             or kind == blocks.KIND.SCREEN
             or kind == blocks.KIND.CHEST
-            or kind == blocks.KIND.TANK
+            or blocks.is_tank(kind)
 end
 
 blocks.FACE_NAME = {
@@ -341,6 +343,27 @@ end
 --]]
 function blocks.make_tank()
     return blocks.make(blocks.KIND.TANK)
+end
+
+--[[ @brief A quantum tank, empty.
+-- |
+-- | Core: THE SAME TANK, SIXTEEN TIMES THE SIZE. GregTech's Quantum Tank III holds 512,000,000
+-- | litres against a Super Tank IV's 32,000,000, and a scenario standing a row of them up as a
+-- | fluid bank needs the bigger one. The author asked on 2026-09-17 for a second variant rather
+-- | than for every tank to grow, because the rest of a scene's tanks stand for ordinary input and
+-- | output connections and should stay small.
+-- |
+-- | It keeps the iron tank's model on purpose - the author liked it, and being able to see what is
+-- | inside is worth more here than matching GregTech's opaque casing.
+-- |
+-- | @date 2026-09-17 ]]
+function blocks.make_qtank()
+    return blocks.make(blocks.KIND.QTANK)
+end
+
+--[[ @brief Is this kind a tank of either size? @date 2026-09-17 ]]
+function blocks.is_tank(kind)
+    return kind == blocks.KIND.TANK or kind == blocks.KIND.QTANK
 end
 
 --[[ @brief How many litres a tank holds when it is full.
@@ -500,6 +523,7 @@ function blocks.make_kind(kind)
         [blocks.KIND.TANK]       = blocks.make_tank,
         [blocks.KIND.IMPORT_BUS] = blocks.make_import_bus,
         [blocks.KIND.EXPORT_BUS] = blocks.make_export_bus,
+        [blocks.KIND.QTANK]      = blocks.make_qtank,
     }
     local make = makers[kind]
     if make then

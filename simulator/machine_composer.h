@@ -1825,7 +1825,7 @@ inline int tr_unimplemented(machine_t &, component_t &, lua_State *L) {
  * @date 2026-09-17 */
 inline worldc::cell_p side_tank(component_t &c, lua_State *L, int arg) {
     worldc::cell_p n = side_cell(c, (int)lua_tointeger(L, arg));
-    return (n && n->kind == worldc::CELL_KIND_TANK) ? n : nullptr;
+    return (n && worldc::kind_is_tank(n->kind)) ? n : nullptr;
 }
 
 /*! How many tanks the block on that side has.
@@ -2390,6 +2390,78 @@ inline double machine_hdd_used(machine_p mp) {
  * Params: `label` what the disk calls itself, `jar_folder` a path under assets/opencomputers.
  * Returns the address, or an empty string when nothing could be read.
  * @date 2026-09-16 */
+/*! Every file in one of the mod's loot folders, as paths.
+ *
+ * Core: for saving a hard disk as a DIFF rather than as a copy. A disk with OpenOS installed holds
+ * a hundred and eighty files that came out of the mod's own jar unchanged; writing them into a save
+ * makes the save enormous and puts somebody else's code in it. Knowing what the jar has is what
+ * lets the save keep only what differs.
+ *
+ * Params: `mc_path` the instance, `jar_folder` a path under assets/opencomputers such as
+ * "loot/openos". Paths come back relative to that folder.
+ * @date 2026-09-17 */
+/*! Every fusion reactor recipe the installed mods register, flattened for Lua.
+ *
+ * One entry per recipe, as a table of `{in_a, amt_a, in_b, amt_b, out, amt_out, ticks, eut,
+ * start_eu}` - the scenario turns those into whatever it needs. Read out of the mods' compiled
+ * code each time it is asked for; see mc_assets.h's gt_fusion_recipes for why that rather than a
+ * table written here.
+ * @date 2026-09-17 */
+inline std::vector<std::vector<std::string>> fusion_recipes(const char *mc_path) {
+    std::vector<std::vector<std::string>> out;
+    if (!mc_path)
+        return out;
+
+    mca::mc_source_t src;
+    src.open_extras(mc_path);
+    for (const auto &r : src.gt_fusion_recipes(mc_path)) {
+        out.push_back({
+            r.in_a, std::to_string(r.amt_a),
+            r.in_b, std::to_string(r.amt_b),
+            r.out,  std::to_string(r.amt_out),
+            std::to_string(r.ticks), std::to_string(r.eut), std::to_string(r.start_eu),
+            r.source,
+        });
+    }
+    return out;
+}
+
+inline std::vector<std::string> loot_files(const char *mc_path, const char *jar_folder) {
+    std::vector<std::string> out;
+    if (!mc_path || !jar_folder)
+        return out;
+
+    mca::mc_source_t src;
+    if (!src.open(mc_path))
+        return out;
+
+    std::string prefix = std::string("assets/opencomputers/") + jar_folder;
+    if (!prefix.empty() && prefix.back() != '/')
+        prefix += "/";
+
+    for (const std::string &entry : mca::zip_list(src.jar, prefix))
+        out.push_back(entry.substr(prefix.size()));
+    return out;
+}
+
+/*! One file out of a loot folder. Empty when it is not there. @date 2026-09-17 */
+inline std::string loot_read(const char *mc_path, const char *jar_folder, const char *path) {
+    if (!mc_path || !jar_folder || !path)
+        return {};
+
+    mca::mc_source_t src;
+    if (!src.open(mc_path))
+        return {};
+
+    std::string entry = std::string("assets/opencomputers/") + jar_folder;
+    if (!entry.empty() && entry.back() != '/')
+        entry += "/";
+    entry += path;
+
+    std::vector<uint8_t> bytes = mca::zip_extract(src.jar, entry);
+    return std::string(bytes.begin(), bytes.end());
+}
+
 inline std::string machine_add_floppy(machine_p mp, const char *label, const char *jar_folder) {
     if (!mp || !jar_folder)
         return {};
@@ -2813,6 +2885,18 @@ inline int register_meta(vc::virt_state_t *vs) {
         {"machine_hdd_write", vc::luaw_function_wrapper<
                /* FN:    */ machc::machine_hdd_write,
                /* PARAMS:*/ machine_p, const char *, const char *
+        >},
+        {"fusion_recipes", vc::luaw_function_wrapper<
+               /* FN:    */ machc::fusion_recipes,
+               /* PARAMS:*/ const char *
+        >},
+        {"loot_files", vc::luaw_function_wrapper<
+               /* FN:    */ machc::loot_files,
+               /* PARAMS:*/ const char *, const char *
+        >},
+        {"loot_read", vc::luaw_function_wrapper<
+               /* FN:    */ machc::loot_read,
+               /* PARAMS:*/ const char *, const char *, const char *
         >},
         {"machine_hdd_remove", vc::luaw_function_wrapper<
                /* FN:    */ machc::machine_hdd_remove,

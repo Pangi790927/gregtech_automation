@@ -830,6 +830,9 @@ struct mc_source_t {
         if (gt_lang.empty())
             return name;
 
+        /* Two spellings: GregTech gives most fluids a `fluid.<name>` line, but its elemental
+        gases - helium, oxygen, nitrogen - are named after the material instead, and fall back to
+        `Material.<name>`. Without the second lookup those read as "helium" rather than "Helium". */
         std::string key = "S:fluid." + name + "=";
         size_t at = gt_lang.find(key);
         while (at != std::string::npos) {
@@ -848,6 +851,19 @@ struct mc_source_t {
                     return label;
             }
             at = gt_lang.find(key, at + 1);
+        }
+
+        std::string mkey = "S:Material." + name + "=";
+        size_t mat = gt_lang.find(mkey);
+        if (mat != std::string::npos) {
+            size_t from = mat + mkey.size();
+            size_t to = gt_lang.find_first_of("\r\n", from);
+            std::string label = gt_lang.substr(from, (to == std::string::npos)
+                    ? std::string::npos : to - from);
+            while (!label.empty() && (label.back() == ' ' || label.back() == '	'))
+                label.pop_back();
+            if (!label.empty())
+                return label;
         }
         return name;
     }
@@ -976,7 +992,97 @@ struct mc_source_t {
         std::string name;       /*!< what the code calls it, such as "Naquadah" */
         std::string set;        /*!< the texture set that draws it, such as "METALLIC" */
         int r = 255, g = 255, b = 255;
+        bool has_colour = false;/*!< false when nothing in the constructor said what colour it is */
+        std::string parent;     /*!< the material it was copied from, for the ones that were */
     };
+
+    /*! GregTech's dye colours, read out of its compiled code.
+     *
+     * Core: A MATERIAL'S COLOUR IS SOMETIMES A DYE. Most materials carry their own red, green and
+     * blue as constructor arguments, but a good many are built with a shorter constructor that has
+     * none and name a `Dyes` value instead - and those came out white, which is how eighteen of the
+     * fusion scenario's thirty-nine fluids ended up grey.
+     *
+     * The enum is built the way every enum is: `new Dyes ; dup ; <name> ; <ordinal> ; <index> ;
+     * <r> ; <g> ; <b> ; <label> ; invokespecial ; putstatic <the field>`. So the three integers
+     * before the second string are the colour, and the field it is stored into is the dye's name.
+     *
+     * @return the dye's field name -> 0x00RRGGBB
+     * @date 2026-09-17 */
+    std::map<std::string, uint32_t> gt_dyes() const {
+        std::map<std::string, uint32_t> out;
+        if (!gregtech_open())
+            return out;
+
+        namespace cr = class_reader;
+        cr::class_file_t cf = cr::read_class(
+                zip_extract(gregtech, "gregtech/api/enums/Dyes.class"), "<clinit>");
+        if (!cf.ok || !cf.code)
+            return out;
+
+        const std::string DYES = "gregtech/api/enums/Dyes";
+        const uint8_t *code = cf.code;
+        uint32_t len = cf.code_len;
+
+        std::vector<uint32_t> pending;       /* the colour of each Dyes being built, in order */
+
+        for (uint32_t i = 0; i + 3 < len; i++) {
+            if (code[i] == 0xBB) {                                  /* new */
+                uint32_t ref = (uint32_t)((code[i + 1] << 8) | code[i + 2]);
+                if (cf.class_name(ref) != DYES || code[i + 3] != 0x59)
+                    continue;
+
+                /* Walk the arguments: the ints are ordinal, index, r, g, b and then a label. */
+                std::vector<int32_t> ints;
+                uint32_t at = i + 4;
+                int strings = 0;
+                for (int guard = 0; guard < 32 && at < len && strings < 2; guard++) {
+                    uint8_t op = code[at];
+                    int32_t v = 0;
+                    uint32_t size = 0;
+                    if (op == 0x12 || op == 0x13) {
+                        uint32_t idx = (op == 0x12) ? code[at + 1]
+                                : (uint32_t)((code[at + 1] << 8) | code[at + 2]);
+                        if (idx < cf.pool.size() && cf.pool[idx].tag == 8)
+                            strings++;
+                        else if (cr::int_push(cf, code, len, at, v, size))
+                            ints.push_back(v);
+                        at += (op == 0x12) ? 2 : 3;
+                    }
+                    else if (cr::int_push(cf, code, len, at, v, size)) {
+                        ints.push_back(v);
+                        at += size;
+                    }
+                    else {
+                        break;
+                    }
+                }
+
+                uint32_t rgb = 0xffffff;
+                size_t n = ints.size();
+                if (strings >= 2 && n >= 3) {
+                    /* The three before the label, clamped: a dye's channel is a byte. */
+                    auto clamp = [](int32_t v) -> uint32_t {
+                        return (uint32_t)((v < 0) ? 0 : ((v > 255) ? 255 : v));
+                    };
+                    rgb = (clamp(ints[n - 3]) << 16) | (clamp(ints[n - 2]) << 8)
+                            | clamp(ints[n - 1]);
+                }
+                pending.push_back(rgb);
+            }
+            else if (code[i] == 0xB3) {                             /* putstatic */
+                uint32_t ref = (uint32_t)((code[i + 1] << 8) | code[i + 2]);
+                std::string c, n, d;
+                if (!cf.ref(ref, c, n, d) || c != DYES || pending.empty())
+                    continue;
+                out.emplace(n, pending.front());
+                pending.erase(pending.begin());
+            }
+        }
+
+        DBG("mc_assets: %zu gregtech dyes", out.size());
+        return out;
+    }
 
     /*! GregTech's material list, read out of its compiled code.
      *
@@ -1016,6 +1122,9 @@ struct mc_source_t {
         std::map<int, gt_material_t> out;
         if (!gregtech_open())
             return out;
+
+        /* For the materials whose constructor carries no colour of its own. */
+        std::map<std::string, uint32_t> dyes = gt_dyes();
 
         namespace cr = class_reader;
         cr::class_file_t cf = cr::read_class(
@@ -1059,6 +1168,21 @@ struct mc_source_t {
                         objs.push_back(n);
                         at += 3;
                     }
+                    else if (op >= 0x09 && op <= 0x0F) {
+                        /* lconst, fconst, dconst: a constant that is not an integer. It has to be
+                        STEPPED OVER rather than stopped at - the walk used to break here, and a
+                        material whose tool speed was exactly 1.0 (written fconst_1 rather than as
+                        a pool constant) lost every argument after it, colour included. Tin, zinc,
+                        oxygen, niobium, boron and potassium were all grey for this one reason. */
+                        ints.push_back(INT32_MIN);
+                        objs.push_back(std::string());
+                        at += 1;
+                    }
+                    else if (op == 0x14) {              /* ldc2_w: a long or a double */
+                        ints.push_back(INT32_MIN);
+                        objs.push_back(std::string());
+                        at += 3;
+                    }
                     else if (op == 0x12 || op == 0x13) {  /* ldc of a float or a string */
                         uint32_t idx = (op == 0x12) ? code[at + 1]
                                 : (uint32_t)((code[at + 1] << 8) | code[at + 2]);
@@ -1075,7 +1199,38 @@ struct mc_source_t {
                     }
                 }
 
+                /* A Dyes value among the arguments, which is where the colour comes from when the
+                constructor does not carry one. It sits AFTER the two name strings, so the walk
+                above has already stopped - this looks the rest of the way to the constructor
+                call. */
+                std::string dye;
+                for (uint32_t k = at; k < len && k < at + 200; ) {
+                    uint32_t size = cr::insn_length(code, len, k);
+                    if (!size)
+                        break;
+                    if (code[k] == 0xB7) {          /* invokespecial: the constructor, so stop */
+                        std::string c, n, d;
+                        if (cf.ref((uint32_t)((code[k + 1] << 8) | code[k + 2]), c, n, d)
+                                && c == MAT)
+                            break;
+                    }
+                    if (code[k] == 0xB2) {
+                        std::string c, n, d;
+                        if (cf.ref((uint32_t)((code[k + 1] << 8) | code[k + 2]), c, n, d)
+                                && c == "gregtech/api/enums/Dyes")
+                            dye = n;
+                    }
+                    k += size;
+                }
+
                 gt_material_t m;
+                /* THE COPY CONSTRUCTOR. Some materials are built from another material rather than
+                from a list of numbers - `Materials(Materials, boolean)` - and take its colour with
+                them. Tin, zinc, oxygen, niobium, boron and potassium are all made this way, which
+                is why their plasmas came out grey. The parent is simply the first argument. */
+                if (!objs.empty() && !objs[0].empty() && ints[0] == INT32_MIN)
+                    m.parent = objs[0];
+
                 if (ints.size() >= 2 && !objs[1].empty()) {
                     /* SET_METALLIC names the folder METALLIC. */
                     m.set = objs[1].compare(0, 4, "SET_") == 0 ? objs[1].substr(4) : objs[1];
@@ -1083,11 +1238,24 @@ struct mc_source_t {
                 /* The colour is the three integers before the alpha, which is the last argument
                 before the name. Only trusted when all four really are integers. */
                 size_t n = ints.size();
+                bool have_rgb = false;
                 if (hit_string && n >= 4 && ints[n - 1] != INT32_MIN && ints[n - 2] != INT32_MIN
                         && ints[n - 3] != INT32_MIN && ints[n - 4] != INT32_MIN) {
                     m.r = ints[n - 4];
                     m.g = ints[n - 3];
                     m.b = ints[n - 2];
+                    have_rgb = true;
+                    m.has_colour = true;
+                }
+                /* No colour of its own: the dye it names is the colour. */
+                if (!have_rgb && !dye.empty()) {
+                    auto dit = dyes.find(dye);
+                    if (dit != dyes.end()) {
+                        m.r = (int)((dit->second >> 16) & 0xff);
+                        m.g = (int)((dit->second >> 8) & 0xff);
+                        m.b = (int)(dit->second & 0xff);
+                        m.has_colour = true;
+                    }
                 }
 
                 pending_id.push_back(ints.empty() ? INT32_MIN : ints[0]);
@@ -1106,12 +1274,58 @@ struct mc_source_t {
 
                 if (id != INT32_MIN && id >= 0) {
                     m.name = n;
-                    out.emplace(id, m);
+                    /* TWO MATERIALS CAN CLAIM THE SAME SUB-ID, and the loser used to vanish -
+                    which is how tin, zinc and oxygen came to have no colour despite being built
+                    with the full constructor that carries one. The metaitem lookup wants one
+                    material per id and keeps the first; the colour table wants every material
+                    there is. So a collision is kept as well, under a negative key nothing
+                    indexes by.  @date 2026-09-17 */
+                    if (!out.emplace(id, m).second)
+                        out.emplace(-(int)out.size() - 1, m);
+                }
+                else if (!n.empty()) {
+                    /* NO SUB-ID IS NOT NO MATERIAL. A material built without one has no metaitem -
+                    there is no dust of it to draw - but it can still be a FLUID, and its colour is
+                    wanted all the same. Tin, zinc, oxygen and niobium plasma were grey for exactly
+                    this reason: the material existed and the map it went into was keyed by a
+                    number it did not have. They go in at a negative key, which nothing indexes by,
+                    so the metaitem lookup is unaffected.  @date 2026-09-17 */
+                    m.name = n;
+                    out.emplace(-(int)out.size() - 1, m);
                 }
             }
         }
 
-        DBG("mc_assets: %zu gregtech materials out of Materials.class", out.size());
+        /* A material copied from another takes its colour. Resolved afterwards because a parent
+        may itself be a copy, and may be built later in the file than its child - so the chain is
+        walked a few times rather than assuming an order. Three passes settle every chain GregTech
+        actually has; a cycle simply stops improving rather than hanging. */
+        std::map<std::string, const gt_material_t *> by_name;
+        for (const auto &kv : out)
+            by_name.emplace(kv.second.name, &kv.second);
+
+        for (int pass = 0; pass < 3; pass++) {
+            for (auto &kv : out) {
+                gt_material_t &m = kv.second;
+                if (m.has_colour || m.parent.empty())
+                    continue;
+                auto pit = by_name.find(m.parent);
+                if (pit == by_name.end() || !pit->second->has_colour)
+                    continue;
+                m.r = pit->second->r;
+                m.g = pit->second->g;
+                m.b = pit->second->b;
+                if (m.set.empty())
+                    m.set = pit->second->set;
+                m.has_colour = true;
+            }
+        }
+
+        size_t coloured = 0;
+        for (const auto &kv : out)
+            coloured += kv.second.has_colour ? 1 : 0;
+        DBG("mc_assets: %zu gregtech materials out of Materials.class, %zu with a colour",
+                out.size(), coloured);
         return out;
     }
 
@@ -1235,6 +1449,176 @@ struct mc_source_t {
         base.from_mc = true;
         out = base;
         return true;
+    }
+
+    /*! One fusion reactor recipe, as the mods register it. @date 2026-09-17 */
+    struct fusion_recipe_t {
+        std::string in_a, in_b, out;    /*!< fluid names: "plasma.helium", "molten.lithium" */
+        int amt_a = 0, amt_b = 0, amt_out = 0;
+        int ticks = 0;
+        long long eut = 0;
+        long long start_eu = 0;         /*!< the reactor's EU store must hold this to run it */
+        std::string source;             /*!< which jar it came from, for saying so */
+    };
+
+    /*! The fluid a material takes in a given form, spelled the way the game registers it.
+     *
+     * GregTech's convention: a plasma is `plasma.<material>`, a molten metal `molten.<material>`,
+     * and a gas or liquid is the bare material. All lower case, and an underscore becomes a hyphen -
+     * the material `Helium_3` is the fluid `helium-3`, which is a real spelling in the lang file and
+     * not a slip here.
+     * @date 2026-09-17 */
+    static std::string gt_fluid_name(const std::string &material, const std::string &form) {
+        std::string m;
+        for (char ch : material)
+            m.push_back(ch == '_' ? '-' : (char)tolower((unsigned char)ch));
+
+        if (form == "Plasma")
+            return "plasma." + m;
+        if (form == "Molten")
+            return "molten." + m;
+        return m;                       /* getGas, getFluid, getSolid and friends */
+    }
+
+    /*! Every fusion reactor recipe the installed mods register, read out of their compiled code.
+     *
+     * Core: THE RECIPES ARE NOT IN ANY FILE EITHER. They are calls in whatever loader class a mod
+     * happens to use, and they are spread across several mods - GregTech has thirteen, GTNH's own
+     * core mod adds the three that make titanium, boron and a second route to oxygen. Reading them
+     * here rather than writing them down means the simulator runs the modpack that is installed,
+     * and keeps saying so after it updates.
+     *
+     * HOW. Every registration is a call to `addFusionReactorRecipe`, and the arguments before it
+     * are plain pushes: a material, an amount, and the method that turns the pair into a fluid.
+     * So the code is walked instruction by instruction - see class_reader::insn_length, because a
+     * byte-wise scan eventually matches the middle of an operand and invents a recipe - collecting
+     * those triples and the numbers, and each call takes the last three of each.
+     *
+     * WHAT IT SKIPS, deliberately. The array form of the call, which GT++ uses for its multi-input
+     * recipes, and any recipe whose fluids come from a mod's own material system rather than
+     * GregTech's. Those are read as nothing rather than as something wrong. Radon and americium
+     * plasma are made by neither form and appear in no jar at all, which is why the scenario models
+     * them as conversions instead.
+     *
+     * @return the recipes, in the order the mods register them
+     * @date 2026-09-17 */
+    std::vector<fusion_recipe_t> gt_fusion_recipes(const std::string &instance_dir) const {
+        std::vector<fusion_recipe_t> out;
+        if (instance_dir.empty())
+            return out;
+
+        std::string base = instance_dir;
+        if (base.back() != '/' && base.back() != '\\')
+            base += "/";
+
+        /* The classes that carry them. Found by searching every jar for the call once; kept as a
+        list so a lookup is cheap, and a name that is not there is simply skipped. */
+        struct where_t { const char *jar; const char *cls; };
+        static const where_t PLACES[] = {
+            {"mods/gregtech-5.09.41.317.jar",
+             "gregtech/loaders/postload/recipes/FusionReactorRecipes.class"},
+            {"mods/GTNewHorizonsCoreMod-1.9.171.jar",
+             "com/dreammaster/bartworksHandler/BacteriaRegistry.class"},
+            {"mods/GT-PlusPlus-1.7.227.jar",
+             "gtPlusPlus/core/recipe/RECIPES_GREGTECH.class"},
+            {"mods/GoodGenerator-0.4.88.jar",
+             "goodgenerator/loader/RecipeLoader.class"},
+        };
+
+        namespace cr = class_reader;
+        for (const where_t &w : PLACES) {
+            std::vector<zip_entry_t> dir = zip_dir(base + w.jar);
+            if (dir.empty())
+                continue;
+
+            std::vector<uint8_t> bytes;
+            for (const zip_entry_t &e : dir)
+                if (e.name == w.cls) {
+                    bytes = zip_read(base + w.jar, e);
+                    break;
+                }
+            if (bytes.empty())
+                continue;
+
+            cr::class_file_t cf;
+            std::vector<cr::method_code_t> methods = cr::read_methods(bytes, cf);
+
+            for (const cr::method_code_t &m : methods) {
+                std::string mat;
+                long long amt = 0;
+                struct stack_t { std::string fluid; int amount; };
+                std::vector<stack_t> stacks;
+                std::vector<long long> nums;
+
+                uint32_t at = 0;
+                while (at < m.len) {
+                    uint32_t size = cr::insn_length(m.code, m.len, at);
+                    if (!size)
+                        break;
+
+                    uint8_t op = m.code[at];
+                    int32_t iv = 0;
+                    uint32_t isize = 0;
+
+                    if (op == 0xB2) {                       /* getstatic - a material */
+                        std::string c, n, d;
+                        cf.ref((uint32_t)((m.code[at + 1] << 8) | m.code[at + 2]), c, n, d);
+                        if (c == "gregtech/api/enums/Materials")
+                            mat = n;
+                    }
+                    else if (op == 0x14) {                  /* ldc2_w - the amount, a long */
+                        amt = cf.longv((uint32_t)((m.code[at + 1] << 8) | m.code[at + 2]), 0);
+                    }
+                    else if (cr::int_push(cf, m.code, m.len, at, iv, isize)) {
+                        amt = iv;
+                        nums.push_back(iv);
+                    }
+                    else if (op == 0xB6 || op == 0xB8) {    /* invokevirtual / invokestatic */
+                        std::string c, n, d;
+                        cf.ref((uint32_t)((m.code[at + 1] << 8) | m.code[at + 2]), c, n, d);
+                        if (c == "gregtech/api/enums/Materials" && n.compare(0, 3, "get") == 0
+                                && !mat.empty()) {
+                            stacks.push_back({gt_fluid_name(mat, n.substr(3)), (int)amt});
+                            mat.clear();
+                        }
+                    }
+                    else if (op == 0xB9 || op == 0xB6 || op == 0xB8 || op == 0xB7) {
+                        /* handled above */
+                    }
+
+                    if (op == 0xB9) {                       /* invokeinterface */
+                        std::string c, n, d;
+                        cf.ref((uint32_t)((m.code[at + 1] << 8) | m.code[at + 2]), c, n, d);
+                        if (n == "addFusionReactorRecipe" && stacks.size() >= 3
+                                && nums.size() >= 3
+                                && d.compare(0, 2, "(L") == 0) {
+                            fusion_recipe_t r;
+                            r.in_a  = stacks[stacks.size() - 3].fluid;
+                            r.amt_a = stacks[stacks.size() - 3].amount;
+                            r.in_b  = stacks[stacks.size() - 2].fluid;
+                            r.amt_b = stacks[stacks.size() - 2].amount;
+                            r.out   = stacks[stacks.size() - 1].fluid;
+                            r.amt_out = stacks[stacks.size() - 1].amount;
+                            r.ticks    = (int)nums[nums.size() - 3];
+                            r.eut      = nums[nums.size() - 2];
+                            r.start_eu = nums[nums.size() - 1];
+                            r.source   = w.jar;
+                            if (!r.in_a.empty() && !r.in_b.empty() && !r.out.empty()
+                                    && r.ticks > 0)
+                                out.push_back(r);
+                        }
+                        stacks.clear();
+                        nums.clear();
+                        mat.clear();
+                    }
+
+                    at += size;
+                }
+            }
+        }
+
+        DBG("mc_assets: %zu fusion recipes read out of the mods", out.size());
+        return out;
     }
 
     /*! One item a mod packs behind a shared registry name: its damage value and its name.
@@ -1486,6 +1870,19 @@ struct mc_source_t {
         if (!vanilla_open())
             return false;
         return png_to_tile(zip_extract(vanilla, "assets/minecraft/textures/" + rel + ".png"), out);
+    }
+
+    /*! One GregTech block texture by its bare name, such as "MACHINE_CASING_TANK_8".
+     *
+     * GregTech keeps its block art under iconsets rather than beside the other blocks, which is
+     * why this cannot go through block_tile.
+     * @date 2026-09-17 */
+    bool gt_block_tile(const char *name, tile_t &out) const {
+        if (!gregtech_open() || !name)
+            return false;
+        std::string entry = std::string("assets/gregtech/textures/blocks/iconsets/") + name
+                + ".png";
+        return png_to_tile(zip_extract(gregtech, entry), out);
     }
 
     /*! Loads one block texture by its bare name, such as "CaseSide", from the open jar.

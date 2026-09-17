@@ -297,6 +297,35 @@ inline void pop_item_spacing() {
     ImGui::PopStyleVar();
 }
 
+/*! Sets how wide the next widgets are, and puts it back.
+ *
+ * Exposed for the same reason the spacing is: a row that puts a bar, two buttons, a number box and
+ * a value on one line needs the box to be a known width, and a script has no way to say so
+ * otherwise. Like the spacing, only this one value is offered rather than the whole style.
+ * @date 2026-09-17 */
+/*! Takes the keyboard away from ImGui: no focused window, no active widget.
+ *
+ * Core: FOR GOING BACK TO THE WORLD. Tab captures the mouse and hands control to the camera, but
+ * ImGui does not know that - a text box that was clicked stays active and goes on eating every
+ * key, so the first thing typed while flying lands in a settings field instead. Clearing both the
+ * focus and the active widget is what actually hands the keyboard back.
+ *
+ * ClearActiveID is from imgui_internal.h, which this file already includes; there is no public
+ * call that drops an active widget without submitting something else.
+ * @date 2026-09-17 */
+inline void clear_focus() {
+    ImGui::SetWindowFocus(nullptr);
+    ImGui::ClearActiveID();
+}
+
+inline void push_item_width(float w) {
+    ImGui::PushItemWidth(w);
+}
+
+inline void pop_item_width() {
+    ImGui::PopItemWidth();
+}
+
 inline int register_meta(vc::virt_state_t *vs) {
     DBG_SCOPE();
 
@@ -420,6 +449,16 @@ inline int register_meta(vc::virt_state_t *vs) {
         >},
         {"ImGui_PopItemSpacing", vc::luaw_function_wrapper<
                /* FN:    */ imgc::pop_item_spacing
+        >},
+        {"ImGui_ClearFocus", vc::luaw_function_wrapper<
+               /* FN:    */ imgc::clear_focus
+        >},
+        {"ImGui_PushItemWidth", vc::luaw_function_wrapper<
+               /* FN:    */ imgc::push_item_width,
+               /* PARAMS:*/ float
+        >},
+        {"ImGui_PopItemWidth", vc::luaw_function_wrapper<
+               /* FN:    */ imgc::pop_item_width
         >},
         /* The spacing between items, pushed and popped around a list.
          *

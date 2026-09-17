@@ -33,6 +33,7 @@ struct constant_t {
     uint8_t tag = 0;
     std::string text;       /*!< tag 1, a utf8 */
     int32_t ival = 0;       /*!< tag 3, an integer */
+    int64_t lval = 0;       /*!< tag 5, a long - how a fluid amount is written */
     uint32_t a = 0, b = 0;  /*!< class/string: the name index. refs: class and name-and-type */
 };
 
@@ -73,6 +74,11 @@ struct class_file_t {
         name = utf8(pool[nat].a);
         desc = utf8(pool[nat].b);
         return true;
+    }
+
+    /*! The long a constant holds, or `def` when it is not one. @date 2026-09-17 */
+    int64_t longv(uint32_t i, int64_t def) const {
+        return (i && i < pool.size() && pool[i].tag == 5) ? pool[i].lval : def;
     }
 
     /*! The integer a constant holds, or `def` when it is not one. @date 2026-09-17 */
@@ -127,7 +133,10 @@ inline class_file_t read_class(const std::vector<uint8_t> &data, const char *met
             case 4: p += 5; break;
             /* A long or a double takes two pool slots. Getting this wrong shifts every index
             after it, which is exactly the confident nonsense mentioned above. */
-            case 5: case 6: p += 9; n++; break;
+            case 5:
+                cf.pool[n].lval = ((int64_t)u4(p + 1) << 32) | (uint32_t)u4(p + 5);
+                p += 9; n++; break;
+            case 6: p += 9; n++; break;
             case 7: case 8: cf.pool[n].a = u2(p + 1); p += 3; break;
             case 9: case 10: case 11: case 12:
                 cf.pool[n].a = u2(p + 1);
@@ -219,6 +228,169 @@ inline bool int_push(const class_file_t &cf, const uint8_t *code, uint32_t len, 
         return value != INT32_MIN;
     }
     return false;
+}
+
+/*! How many bytes the instruction at `at` occupies, or 0 when it cannot be worked out.
+ *
+ * Core: A SCAN THAT DOES NOT KNOW THIS IS GUESSING. Reading a code array byte by byte and matching
+ * on opcodes will sooner or later match the middle of a wide operand and report a recipe that is
+ * not there - and it will look entirely plausible. Stepping instruction by instruction is what
+ * makes the difference between reading the code and reading the bytes.
+ *
+ * The two switch instructions are variable length and padded to a four byte boundary; everything
+ * else is a fixed length from the table below. `wide` doubles the operand of the instruction it
+ * prefixes.
+ *
+ * @date 2026-09-17 */
+inline uint32_t insn_length(const uint8_t *code, uint32_t len, uint32_t at) {
+    if (at >= len)
+        return 0;
+
+    uint8_t op = code[at];
+
+    /* tableswitch and lookupswitch: padding to a multiple of four, then their own tables. */
+    if (op == 0xAA || op == 0xAB) {
+        uint32_t p = at + 1;
+        while ((p % 4) != 0)
+            p++;
+        auto u4 = [&](uint32_t q) -> int32_t {
+            if (q + 3 >= len)
+                return 0;
+            return (int32_t)((code[q] << 24) | (code[q + 1] << 16) | (code[q + 2] << 8)
+                    | code[q + 3]);
+        };
+        if (op == 0xAA) {
+            int32_t lo = u4(p + 4), hi = u4(p + 8);
+            if (hi < lo)
+                return 0;
+            return (p + 12 + 4u * (uint32_t)(hi - lo + 1)) - at;
+        }
+        int32_t n = u4(p + 4);
+        if (n < 0)
+            return 0;
+        return (p + 8 + 8u * (uint32_t)n) - at;
+    }
+
+    /* wide: the next instruction's operand is two bytes instead of one, and iinc gains two. */
+    if (op == 0xC4) {
+        if (at + 1 >= len)
+            return 0;
+        return (code[at + 1] == 0x84) ? 6u : 4u;
+    }
+
+    /* Everything else, by opcode. Indexed by the opcode itself so there is nothing to keep in
+    step; a zero means "not an opcode this reads", which stops the walk rather than guessing. */
+    /* Checked opcode by opcode against the JVM specification's table. Two rows were wrong the
+    first time - getstatic read as one byte and ireturn as unknown - and the symptom was not a
+    crash but SILENCE: the walk desynchronised, hit something it could not size, stopped, and every
+    recipe after that point simply did not exist. A table like this is worth reading twice. */
+    static const uint8_t LEN[256] = {
+        /* 0x00 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        /* 0x10 */ 2,3,2,3,3,2,2,2,2,2,1,1,1,1,1,1,
+        /* 0x20 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        /* 0x30 */ 1,1,1,1,1,1,2,2,2,2,2,1,1,1,1,1,
+        /* 0x40 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        /* 0x50 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        /* 0x60 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        /* 0x70 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        /* 0x80 */ 1,1,1,1,3,1,1,1,1,1,1,1,1,1,1,1,
+        /* 0x90 */ 1,1,1,1,1,1,1,1,1,1,3,3,3,3,3,3,
+        /* 0xA0 */ 3,3,3,3,3,3,3,3,3,2,0,0,1,1,1,1,
+        /* 0xB0 */ 1,1,3,3,3,3,3,3,3,5,5,3,2,3,1,1,
+        /* 0xC0 */ 3,3,1,1,0,4,3,3,5,5,1,1,1,1,1,1,
+        /* 0xD0 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        /* 0xE0 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        /* 0xF0 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+    };
+    uint32_t n = LEN[op];
+    return (n && at + n <= len) ? n : 0;
+}
+
+/*! One method's name and its code. @date 2026-09-17 */
+struct method_code_t {
+    std::string name;
+    const uint8_t *code = nullptr;
+    uint32_t len = 0;
+};
+
+/*! Reads a class and hands back EVERY method's code.
+ *
+ * read_class() takes the first method of a given name, which is what reading a static initialiser
+ * wants. This is for the other case: a mod scatters its recipe registrations across whatever
+ * methods it likes, and which ones they are is not knowable in advance - so all of them are walked.
+ *
+ * The returned pointers are into `data`, which must outlive them.
+ * @date 2026-09-17 */
+inline std::vector<method_code_t> read_methods(const std::vector<uint8_t> &data,
+        class_file_t &cf_out) {
+    std::vector<method_code_t> out;
+    cf_out = read_class(data, "");
+    if (!cf_out.ok || data.size() < 24)
+        return out;
+
+    const uint8_t *d = data.data();
+    size_t len = data.size();
+    auto u2 = [&](size_t at) -> uint32_t {
+        return (at + 1 < len) ? (uint32_t)((d[at] << 8) | d[at + 1]) : 0;
+    };
+    auto u4 = [&](size_t at) -> uint32_t {
+        if (at + 3 >= len) return 0;
+        return (uint32_t)((d[at] << 24) | (d[at + 1] << 16) | (d[at + 2] << 8) | d[at + 3]);
+    };
+
+    /* Walk to the methods again. The pool parse in read_class left no cursor behind, and a second
+    walk is cheaper than threading one out of it. */
+    size_t p = 10;
+    uint32_t count = u2(8);
+    for (uint32_t n = 1; n < count && p < len; n++) {
+        uint8_t tag = d[p];
+        switch (tag) {
+            case 1: p += 3 + u2(p + 1); break;
+            case 5: case 6: p += 9; n++; break;
+            case 7: case 8: p += 3; break;
+            case 15: p += 4; break;
+            case 16: case 19: case 20: p += 3; break;
+            default: p += 5; break;
+        }
+    }
+    p += 6;
+    p += 2 + 2u * u2(p);
+
+    uint32_t fcount = u2(p);
+    p += 2;
+    for (uint32_t i = 0; i < fcount && p < len; i++) {
+        p += 6;
+        uint32_t ac = u2(p);
+        p += 2;
+        for (uint32_t k = 0; k < ac && p < len; k++)
+            p += 6 + u4(p + 2);
+    }
+
+    uint32_t mcount = u2(p);
+    p += 2;
+    for (uint32_t i = 0; i < mcount && p < len; i++) {
+        p += 2;
+        method_code_t m;
+        m.name = cf_out.utf8(u2(p));
+        p += 4;
+        uint32_t ac = u2(p);
+        p += 2;
+        for (uint32_t k = 0; k < ac && p < len; k++) {
+            const std::string &aname = cf_out.utf8(u2(p));
+            uint32_t alen = u4(p + 2);
+            if (aname == "Code") {
+                m.len = u4(p + 6 + 4);
+                if (p + 6 + 8 + m.len <= len)
+                    m.code = d + p + 6 + 8;
+                else
+                    m.len = 0;
+            }
+            p += 6 + alen;
+        }
+        if (m.code && m.len)
+            out.push_back(m);
+    }
+    return out;
 }
 
 } /* namespace class_reader */
