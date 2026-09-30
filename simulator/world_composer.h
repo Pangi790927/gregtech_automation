@@ -48,7 +48,10 @@ namespace worldc = world_composer;
  * Minecraft itself uses, keeping the coordinates readable against the game they model.
  * @date 2026-09-16 */
 constexpr int WORLD_X = 64;
-constexpr int WORLD_Y = 32;
+/* Sixty-four tall as well as wide, asked for 2026-09-18 so a real factory fits: the author's is
+fifty-three blocks from its machine floor to its quantum bridges, which a thirty-two tall map could
+only ever show a slice of. */
+constexpr int WORLD_Y = 64;
 constexpr int WORLD_Z = 64;
 
 /*! What a cell is. Zero is reserved for "nothing", so a kind is never confused with an empty slot,
@@ -71,7 +74,41 @@ enum cell_kind_e : int {
     CELL_KIND_EXPORT_BUS = 13, /*!< An ME export bus. Scenery: it has no behaviour yet. */
     CELL_KIND_QTANK = 14,      /*!< A quantum tank. A tank, but far bigger and not see-through. */
     CELL_KIND_SIGN = 15,       /*!< A sign. Holds a line of text, which the interface draws. */
+
+    /* Applied Energistics, for looking at a real world's networks rather than running one. These
+    exist because a diagram built out of tanks says nothing about what a device IS - and which
+    device it is happens to be the whole question when a network misbehaves. Their art is AE2's
+    own, read out of the jar like everything else here. @date 2026-09-18 */
+    CELL_KIND_AE_CONTROLLER = 16, /*!< An ME Controller. What an ad-hoc network is missing. */
+    CELL_KIND_AE_DRIVE = 17,      /*!< An ME Drive. Where a network's cells live. */
+    CELL_KIND_AE_INTERFACE = 18,  /*!< An ME Interface. */
+    CELL_KIND_AE_FLUID_IF = 19,   /*!< An ME Fluid or Dual Interface, from AE2 Fluid Crafting. */
+    CELL_KIND_AE_QUANTUM = 20,    /*!< A Quantum Link Chamber - half of a bridge between grids. */
+    CELL_KIND_AE_WIRELESS = 21,   /*!< A Wireless Access Point. */
+    CELL_KIND_AE_ENERGY = 22,     /*!< An energy cell of some sort. Carries no channel. */
+    CELL_KIND_AE_DEVICE = 23,     /*!< Anything else on a grid - a machine, a bus, a chest. */
+    CELL_KIND_AE_CABLE = 24,      /*!< An AE2 cable: glass, covered or smart. Eight channels. */
+    CELL_KIND_AE_DENSE = 25,      /*!< An AE2 dense cable. Thirty-two. */
+    CELL_KIND_EIO_ME = 26,        /*!< EnderIO's ME conduit, which is NOT an AE2 cable. */
+    CELL_KIND_GT_ME = 27,         /*!< A GregTech machine on the network - a stocking bus, say. */
+    CELL_KIND_EIO_DENSE = 28,     /*!< EnderIO's DENSE ME conduit. Thirty-two channels. */
 };
+
+/*! Is this kind drawn as a thin run through the middle of a block rather than as a cube?
+ *
+ * The OpenComputers cable and the three ME carriers. All of them join onto whatever is beside them
+ * and none of them fills its cell, which is one rule in two places - the picture and the links.
+ * @date 2026-09-18 */
+inline bool kind_is_cable(int kind) {
+    return kind == CELL_KIND_CABLE || kind == CELL_KIND_AE_CABLE
+            || kind == CELL_KIND_AE_DENSE || kind == CELL_KIND_EIO_ME
+            || kind == CELL_KIND_EIO_DENSE;
+}
+
+/*! Is this kind one of the Applied Energistics markers? @date 2026-09-18 */
+inline bool kind_is_ae(int kind) {
+    return kind >= CELL_KIND_AE_CONTROLLER && kind <= CELL_KIND_AE_DEVICE;
+}
 
 /*! Does this kind sit on the component network?
  *
@@ -80,6 +117,11 @@ enum cell_kind_e : int {
  * not a component the computer can see, so a cable running past one connects to nothing there.
  * @date 2026-09-17 */
 inline bool kind_on_network(int kind) {
+    /* THE AE2 MARKERS JOIN ONTO CABLE TOO. Without them a network drawn from a real world has its
+    cable stopping a block short of every device it feeds - which is precisely what it looked like:
+    cables running past interfaces and controllers without touching them. @date 2026-09-18 */
+    if (kind >= CELL_KIND_AE_CONTROLLER && kind <= CELL_KIND_EIO_DENSE)
+        return true;
     return kind == CELL_KIND_CASE || kind == CELL_KIND_SCREEN
             || kind == CELL_KIND_DRIVE || kind == CELL_KIND_CABLE
             || kind == CELL_KIND_TRANSPOSER || kind == CELL_KIND_REDSTONE;
@@ -87,13 +129,19 @@ inline bool kind_on_network(int kind) {
 
 /*! Does this kind live on a face rather than filling a slot?
  *
- * Two things do: a redstone wire and a keyboard. Both are flat, both cling to the surface of
- * something else, and neither can be built upon. Everything that treats them alike - the placement
- * refusal, the breaking order, the face map they are stored in - asks this rather than listing the
- * two kinds again.
- * @date 2026-09-16 */
+ * A wire, a keyboard, and Applied Energistics' buses. All of them cling to the surface of something
+ * else, none can be built upon, and all are stored in the face map rather than in a cell.
+ *
+ * THE BUSES WERE CUBES AND THAT WAS WRONG TWICE OVER. The author, 2026-09-18: "the import export
+ * busses are bad, they completely ignore that they can be part of a multi-item block and are huge
+ * in comparison to their real model, those are also cubes when the real model is not". An AE2 bus
+ * is a PART: a small thing on one face of a cable, and six of them plus the cable share one block.
+ * Drawing one as a whole cube overstates its size by an order of magnitude and makes the six-to-a-
+ * block arrangement impossible to show at all.
+ * @date 2026-09-18 */
 inline bool kind_is_flat(int kind) {
-    return kind == CELL_KIND_WIRE || kind == CELL_KIND_KEYBOARD;
+    return kind == CELL_KIND_WIRE || kind == CELL_KIND_KEYBOARD
+            || kind == CELL_KIND_IMPORT_BUS || kind == CELL_KIND_EXPORT_BUS;
 }
 
 /*! Is this kind a tank of some sort? Both hold one fluid and both are read the same way by a
@@ -116,7 +164,7 @@ inline bool kind_is_tank(int kind) {
  * and the tank did the moment it existed.
  * @date 2026-09-17 */
 inline bool kind_is_full_cube(int kind) {
-    return kind != CELL_KIND_NONE && kind != CELL_KIND_CABLE && !kind_is_tank(kind)
+    return kind != CELL_KIND_NONE && !kind_is_cable(kind) && !kind_is_tank(kind)
             && !kind_is_flat(kind);
 }
 
@@ -778,6 +826,33 @@ struct world_t : public vc::object_t {
     }
 
     /*! Takes the wire off a face. Returns true when one was there. @date 2026-09-16 */
+    /*! Puts a flat thing on a face WITHOUT asking whether that face is open.
+     *
+     * Core: A STORAGE BUS POINTS AT SOMETHING. face_set refuses a face with a solid block in front
+     * of it, which is the right rule for a person placing a keyboard and exactly the wrong one for
+     * reconstructing a real world - an Applied Energistics bus attaches to a cable precisely so it
+     * can face the machine it reads, so the useful ones are all "blocked" by definition. A hundred
+     * and thirty of them vanished from the debugger's first drawing for that reason.
+     *
+     * Still needs a host: a part with no block behind it is floating, not attached.
+     * @date 2026-09-18 */
+    bool face_put(int x, int y, int z, int face, cell_p cell) {
+        if (!face_in_bounds(x, y, z, face) || !cell || !get(x, y, z))
+            return false;
+        uint32_t key = face_key(x, y, z, face);
+        if (faces.find(key) != faces.end())
+            return false;
+
+        cell->owner = this;
+        cell->x = x; cell->y = y; cell->z = z;
+        cell->facing = face;
+        faces[key] = cell;
+        face_count++;
+        version++;
+        topo_version++;
+        return true;
+    }
+
     bool face_clear(int x, int y, int z, int face) {
         return face_set(x, y, z, face, nullptr);
     }
@@ -1137,6 +1212,7 @@ inline int register_meta(vc::virt_state_t *vs) {
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, get, int, int, int);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, set, int, int, int, cell_p);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, clear, int, int, int);
+    VC_REGISTER_MEMBER_FUNCTION(vs, world_t, wipe);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, size);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, count);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, get_version);
@@ -1147,6 +1223,7 @@ inline int register_meta(vc::virt_state_t *vs) {
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, wire_at, int, int, int, int);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, cable_links, int, int, int);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, face_set, int, int, int, int, cell_p);
+    VC_REGISTER_MEMBER_FUNCTION(vs, world_t, face_put, int, int, int, int, cell_p);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, face_clear, int, int, int, int);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, face_exposed, int, int, int, int);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, face_links, int, int, int, int);

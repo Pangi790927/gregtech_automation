@@ -1,2 +1,7 @@
 emulator
 ocelot-desktop-v1.11.1.jar
+
+# Local only: the server's save, and work built on it. See CLAUDE.md, rule 4.
+world-debug/
+ae2-stall/
+simulator/scenes/aedbg/

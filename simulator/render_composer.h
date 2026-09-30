@@ -155,6 +155,16 @@ struct renderer_t {
     int tile_cable = 0;
     int tile_cable_cap = 0;
 
+    /*! The three ME carriers, each with its own art so they are never mistaken for one another.
+     *
+     * The author, 2026-09-18: "be sure to not confuse the glass cable with the Dense ME Conduit
+     * from Ender IO". They carry the same network and are different objects with different
+     * capacities, and the picture has to say which is which. @date 2026-09-18 */
+    int tile_ae_cable = 0;
+    int tile_ae_dense = 0;
+    int tile_eio_me = 0, tile_eio_me_core = 0;
+    int tile_eio_dense = 0, tile_eio_dense_core = 0;
+
     /*! A flat white square, which exists only to be tinted. Everything else in the atlas is a
      * picture; this is the one tile whose whole purpose is to carry a colour. @date 2026-09-18 */
     int tile_solid = 0;
@@ -772,6 +782,87 @@ inline void build_atlas(renderer_t &r) {
         }
     }
 
+    /* The ME carriers. AE2 keeps its cable art beside its block art, as ItemPart.Cable*. */
+    {
+        mca::tile_t t;
+        r.tile_ae_cable = src.ae2_tile("ItemPart.CableGlass", t)
+                ? push(t) : push(mca::fallback_panel(150, 190, 220, 41));
+        r.tile_ae_dense = src.ae2_tile("ItemPart.CableDense", t)
+                ? push(t) : push(mca::fallback_panel(90, 120, 200, 43));
+        /* EnderIO's own, out of EnderIO's jar. A conduit's LENGTH and its CORE are separate
+        pictures there, which is exactly the pair the cable renderer wants. */
+        r.tile_eio_me = src.eio_tile("meConduit", t)
+                ? push(t) : push(mca::fallback_panel(200, 140, 60, 47));
+        r.tile_eio_me_core = src.eio_tile("meConduitCore", t)
+                ? push(t) : r.tile_eio_me;
+        r.tile_eio_dense = src.eio_tile("meConduitDense", t)
+                ? push(t) : push(mca::fallback_panel(220, 110, 40, 49));
+        r.tile_eio_dense_core = src.eio_tile("meConduitCoreDense", t)
+                ? push(t) : r.tile_eio_dense;
+    }
+
+    DBG("render: carriers oc=%d/%d ae=%d dense=%d eio=%d/%d eiodense=%d/%d",
+            r.tile_cable, r.tile_cable_cap, r.tile_ae_cable, r.tile_ae_dense,
+            r.tile_eio_me, r.tile_eio_me_core, r.tile_eio_dense, r.tile_eio_dense_core);
+
+    /*! APPLIED ENERGISTICS' OWN ART, for the network debugger.
+     *
+     * Every one of these is a real texture out of the AE2 jar, so a controller looks like a
+     * controller and a quantum link chamber is unmistakable at a glance. That is the entire point:
+     * the first version of the debugger drew every node as a coloured tank, and a wall of tanks
+     * tells you where the devices are but never what any of them IS.
+     *
+     * A fallback panel per kind for when the jar is absent, in the colours AE2 uses itself, so the
+     * view still reads when somebody has no modpack installed. */
+    {
+        struct ae_kind_t {
+            int kind;
+            const char *face;           /* the distinctive face */
+            const char *side;           /* everything else */
+            int r, g, b;                /* the stand-in, when there is no jar */
+        };
+        static const ae_kind_t AE[] = {
+            {worldc::CELL_KIND_AE_CONTROLLER, "BlockControllerPowered", "BlockController",
+                    70, 130, 180},
+            {worldc::CELL_KIND_AE_DRIVE,      "BlockDriveFront",  "BlockDriveSide",  90, 96, 104},
+            {worldc::CELL_KIND_AE_INTERFACE,  "BlockInterface",   "BlockInterface", 120, 126, 134},
+            {worldc::CELL_KIND_AE_FLUID_IF,   "BlockInterfaceAlternate",
+                    "BlockInterfaceAlternate", 100, 150, 190},
+            {worldc::CELL_KIND_AE_QUANTUM,    "BlockQuantumLinkChamber",
+                    "BlockQuantumLinkChamber", 150, 110, 200},
+            {worldc::CELL_KIND_AE_WIRELESS,   "BlockWirelessOn",  "BlockWireless",  190, 170, 90},
+            {worldc::CELL_KIND_AE_ENERGY,     "BlockEnergyCell",  "BlockEnergyCell", 60, 170, 120},
+            {worldc::CELL_KIND_AE_DEVICE,     "BlockChestSide",   "BlockChestSide", 140, 140, 145},
+            /* A GregTech machine that speaks ME - a stocking bus, an output hatch - is not an AE2
+            block and should not wear AE2's paint. The author, 2026-09-18: "stocking input bus is an
+            me-capable item from gregtech and it's wrongly textured". GregTech's own casing is what
+            it actually looks like. */
+            {worldc::CELL_KIND_GT_ME,         nullptr,            nullptr,          120, 120, 125},
+        };
+
+        for (const ae_kind_t &k : AE) {
+            mca::tile_t face, side;
+            if (!k.face || !src.ae2_tile(k.face, face)) {
+                /* GregTech's machine casing where there is one, and a plain panel otherwise. */
+                if (!k.face && src.gt_block_tile("MACHINE_CASINGS/LV/1", face)) {
+                    /* taken */
+                }
+                else {
+                    face = mca::fallback_panel(k.r, k.g, k.b, 60 + k.kind);
+                }
+            }
+            if (!k.side || !src.ae2_tile(k.side, side))
+                side = face;
+
+            for (int st = 0; st < 4; st++) {
+                r.tile_cell[k.kind][st][ROLE_FRONT] = push(face);
+                r.tile_cell[k.kind][st][ROLE_BACK]  = push(side);
+                r.tile_cell[k.kind][st][ROLE_TOP]   = push(side);
+                r.tile_cell[k.kind][st][ROLE_SIDE]  = push(side);
+            }
+        }
+    }
+
     /* The three stand-ins, and every material's colour, for the fluids that have no picture of
     their own - which is most of them. */
     {
@@ -1046,6 +1137,42 @@ constexpr float WIRE_HALF_W = 0.0625f;
  *
  * Params: `links` the four-bit mask from world_t::face_links, `tile` the wire colour for its state.
  * @date 2026-09-16 */
+/*! Draws an Applied Energistics part - a bus, an interface - on one face of a block.
+ *
+ * Core: A PART IS SMALL AND IT IS NOT A CUBE. Six of them fit on one cable bus along with the cable
+ * itself, so anything drawn at the size of a block is not merely ugly, it makes the arrangement
+ * impossible to see. AE2's own model is a wide flat plate against the surface with a narrower body
+ * standing off it, and that is what this is: ten pixels across and two deep for the plate, six
+ * across and five deep for the body.
+ *
+ * The lift off the surface is the wire's, for the same reason - a part sitting exactly on the face
+ * fights it for the depth buffer.
+ * @date 2026-09-18 */
+inline void emit_part(std::vector<glu::vertex_t> &verts, std::vector<uint32_t> &indices,
+        int cx, int cy, int cz, int face, int tile, int tile_count)
+{
+    int axis = face / 2;
+    const int axes[2] = {(axis + 1) % 3, (axis + 2) % 3};
+    int cell[3] = {cx, cy, cz};
+    bool positive = worldc::FACE_DIR[face][axis] > 0;
+    float plane = (float)cell[axis] + (positive ? 1.0f : 0.0f);
+
+    /* plate and body, in sixteenths: how far in from the block's edge, and how far out. */
+    const float SHAPE[2][2] = {{3.0f / 16.0f, 2.0f / 16.0f}, {5.0f / 16.0f, 5.0f / 16.0f}};
+
+    for (const float *s : SHAPE) {
+        float inset = s[0], depth = s[1];
+        float lo[3], hi[3];
+        lo[axis] = positive ? plane + WIRE_LIFT : plane - (WIRE_LIFT + depth);
+        hi[axis] = positive ? plane + (WIRE_LIFT + depth) : plane - WIRE_LIFT;
+        for (int i = 0; i < 2; i++) {
+            lo[axes[i]] = (float)cell[axes[i]] + inset;
+            hi[axes[i]] = (float)cell[axes[i]] + 1.0f - inset;
+        }
+        emit_box(verts, indices, lo, hi, tile, tile_count);
+    }
+}
+
 inline void emit_wire(std::vector<glu::vertex_t> &verts, std::vector<uint32_t> &indices,
         int cx, int cy, int cz, int face, int links, int tile, int tile_count)
 {
@@ -1209,9 +1336,18 @@ inline void rebuild_world_mesh(renderer_t &r, const worldc::world_t &w) {
 
         /* A cable is not a cube: its shape follows what it joins onto, so it is built whole and
         the per-face walk below is skipped entirely. */
-        if (kind == worldc::CELL_KIND_CABLE) {
+        if (worldc::kind_is_cable(kind)) {
+            int tile = r.tile_cable, cap = r.tile_cable_cap;
+            if (kind == worldc::CELL_KIND_AE_CABLE)      { tile = cap = r.tile_ae_cable; }
+            else if (kind == worldc::CELL_KIND_AE_DENSE) { tile = cap = r.tile_ae_dense; }
+            else if (kind == worldc::CELL_KIND_EIO_ME) {
+                tile = r.tile_eio_me; cap = r.tile_eio_me_core;
+            }
+            else if (kind == worldc::CELL_KIND_EIO_DENSE) {
+                tile = r.tile_eio_dense; cap = r.tile_eio_dense_core;
+            }
             emit_cable(verts, indices, c->x, c->y, c->z,
-                    w.cable_links(c->x, c->y, c->z), r.tile_cable, r.tile_cable_cap, r.tile_count);
+                    w.cable_links(c->x, c->y, c->z), tile, cap, r.tile_count);
             continue;
         }
 
@@ -1305,11 +1441,18 @@ inline void rebuild_world_mesh(renderer_t &r, const worldc::world_t &w) {
             state = worldc::CELL_STATE_OFF;
 
         auto [wx, wy, wz, wface] = w.face_unkey((double)kv.first);
-        if (wire->kind == worldc::CELL_KIND_KEYBOARD)
+        if (wire->kind == worldc::CELL_KIND_KEYBOARD) {
             emit_keyboard(verts, indices, wx, wy, wz, wface, r.tile_keyboard, r.tile_count);
-        else
+        }
+        else if (wire->kind == worldc::CELL_KIND_IMPORT_BUS
+                || wire->kind == worldc::CELL_KIND_EXPORT_BUS) {
+            emit_part(verts, indices, wx, wy, wz, wface,
+                    r.tile_cell[wire->kind][state][ROLE_FRONT], r.tile_count);
+        }
+        else {
             emit_wire(verts, indices, wx, wy, wz, wface,
                     w.face_links(wx, wy, wz, wface), r.tile_wire[state], r.tile_count);
+        }
     }
 
     r.world_mesh.upload(verts, indices);

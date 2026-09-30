@@ -32,6 +32,7 @@
 
 #include "virt_composer.h"
 #include "mc_assets.h"
+#include "mca_reader.h"
 #include "oc_filesystem.h"
 #include "oc_rom.h"
 #include "oc_screen.h"
@@ -2462,6 +2463,47 @@ inline double machine_hdd_used(machine_p mp) {
  * code each time it is asked for; see mc_assets.h's gt_fusion_recipes for why that rather than a
  * table written here.
  * @date 2026-09-17 */
+/*! Every Applied Energistics node in a rectangle of chunks of a real world's region file.
+ *
+ * Core: FOR LOOKING AT A SERVER, not for running one. A scenario points this at an `r.X.Z.mca`
+ * lifted off a server and gets back what is actually built there - which is the difference between
+ * arguing about why an ME network stops and measuring it.
+ *
+ * Rows are {x, y, z, id, grid}, as strings the way every other list this file hands to Lua is, and
+ * only tiles that carry an AE2 grid id are returned - `proxy/g` in the tile's NBT. Everything else
+ * in the chunk is skipped here rather than in Lua, because a chunk holds thousands of tiles and
+ * almost none of them are on a network.
+ *
+ * @date 2026-09-18 */
+inline std::vector<std::vector<std::string>> ae_nodes(const char *region_path,
+        int cx0, int cz0, int cx1, int cz1)
+{
+    std::vector<std::vector<std::string>> out;
+    if (!region_path)
+        return out;
+
+    for (const mca_reader::tile_t &t :
+            mca_reader::region_tiles(region_path, cx0, cz0, cx1, cz1)) {
+        /*! What to keep, decided by SHAPE rather than by name.
+         *
+         * A carrier has no grid of its own in some mods' saves - an EnderIO conduit does not write
+         * one - and is still part of the picture. What is dropped is the thousands of tiles with
+         * nothing to do with any network.
+         *
+         * This tested the id against an "ae:"/"eio:" prefix once, and then the parts were given
+         * their real names - Glass Cable, EIO Dense ME - and every carrier silently disappeared
+         * from the output. A filter that depends on a naming convention breaks the moment the names
+         * get better. A part has a slot; a conduit has a capacity; a device has a grid. */
+        if (t.grid < 0 && t.slot < 0 && t.cap < 0)
+            continue;
+        out.push_back({std::to_string(t.x), std::to_string(t.y), std::to_string(t.z),
+                t.id, std::to_string(t.grid), std::to_string(t.slot), std::to_string(t.chan),
+                std::to_string(t.cap), std::to_string(t.facing)});
+    }
+    DBG("mca: %zu of them are on an ae2 grid", out.size());
+    return out;
+}
+
 inline std::vector<std::vector<std::string>> fusion_recipes(const char *mc_path) {
     std::vector<std::vector<std::string>> out;
     if (!mc_path)
@@ -2959,6 +3001,10 @@ inline int register_meta(vc::virt_state_t *vs) {
         {"machine_hdd_write", vc::luaw_function_wrapper<
                /* FN:    */ machc::machine_hdd_write,
                /* PARAMS:*/ machine_p, const char *, const char *
+        >},
+        {"ae_nodes", vc::luaw_function_wrapper<
+               /* FN:    */ machc::ae_nodes,
+               /* PARAMS:*/ const char *, int, int, int, int
         >},
         {"fusion_recipes", vc::luaw_function_wrapper<
                /* FN:    */ machc::fusion_recipes,

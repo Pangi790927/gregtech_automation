@@ -695,6 +695,25 @@ struct mc_source_t {
 
     bool ae2_open() const { return !ae2.empty(); }
 
+    /*! EnderIO, opened for its ME conduit art.
+     *
+     * Its conduit carries an Applied Energistics network and is not an AE2 block - so borrowing
+     * AE2's cable picture for it would state something false about what is standing there. The
+     * author, 2026-09-18: "open the enderio jar for the conduit textures -- same idea as the rest".
+     * @date 2026-09-18 */
+    std::vector<uint8_t> eio;
+    std::string eio_path;
+
+    bool eio_open() const { return !eio.empty(); }
+
+    /*! One EnderIO block texture, such as "meConduitDense". @date 2026-09-18 */
+    bool eio_tile(const char *name, tile_t &out) const {
+        if (!eio_open())
+            return false;
+        std::string entry = std::string("assets/enderio/textures/blocks/") + name + ".png";
+        return png_to_tile(zip_extract(eio, entry), out);
+    }
+
     /*! One AE2 block texture, such as "ItemPart.ImportBus". @date 2026-09-17 */
     bool ae2_tile(const char *name, tile_t &out) const {
         if (!ae2_open())
@@ -766,6 +785,20 @@ struct mc_source_t {
             if (!ae2.empty()) {
                 ae2_path = base + n;
                 DBG("mc_assets: opened %s (%zu bytes)", ae2_path.c_str(), ae2.size());
+                break;
+            }
+        }
+
+        static const char *eio_names[] = {
+            "mods/EnderIO-2.3.1.68.jar",
+            "mods/EnderIO-2.3.1.67.jar",
+            "mods/EnderIO.jar",
+        };
+        for (const char *n : eio_names) {
+            eio = read_file(base + n);
+            if (!eio.empty()) {
+                eio_path = base + n;
+                DBG("mc_assets: opened %s (%zu bytes)", eio_path.c_str(), eio.size());
                 break;
             }
         }

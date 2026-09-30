@@ -92,9 +92,9 @@ local TOOLS = {
     {name = "quantum tank", kind = blocks.KIND.QTANK,
             place = function(st) return world.place(st, blocks.make_qtank) end},
     {name = "ME import bus", kind = blocks.KIND.IMPORT_BUS,
-            place = function(st) return world.place(st, blocks.make_import_bus) end},
+            place = function(st) return world.place_flat(st, blocks.make_import_bus) end},
     {name = "ME export bus", kind = blocks.KIND.EXPORT_BUS,
-            place = function(st) return world.place(st, blocks.make_export_bus) end},
+            place = function(st) return world.place_flat(st, blocks.make_export_bus) end},
 }
 local selected = 1
 
@@ -628,6 +628,7 @@ function test_draw()
         ui.screen_focus(state.world, focus)
     else
         ui.crosshair()
+    ui.position(scene_controller and scene_controller.origin and scene_controller.origin() or nil)
         ui.signs(state.world)
         ui.hotbar(TOOLS, selected)
         if scene_controller then

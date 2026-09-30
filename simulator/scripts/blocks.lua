@@ -84,7 +84,63 @@ blocks.KIND = {
     EXPORT_BUS = 13,
     QTANK = 14,
     SIGN = 15,
+
+    --[[ Applied Energistics, for the network debugger. These are markers rather than machines:
+    nothing simulates them, they exist so a real world's grid can be DRAWN with each device
+    looking like what it is. Their art is AE2's own, out of the jar. @date 2026-09-18 ]]
+    AE_CONTROLLER = 16,
+    AE_DRIVE = 17,
+    AE_INTERFACE = 18,
+    AE_FLUID_IF = 19,
+    AE_QUANTUM = 20,
+    AE_WIRELESS = 21,
+    AE_ENERGY = 22,
+    AE_DEVICE = 23,
+    AE_CABLE = 24,
+    AE_DENSE = 25,
+    EIO_ME = 26,
+    GT_ME = 27,
+    EIO_DENSE = 28,
 }
+
+--[[ @brief Which marker to draw a real world's tile entity as.
+-- |
+-- | Core: THE NAMES ARE THE MOD'S, not ours. These are the tile entity ids Minecraft writes into a
+-- | region file, and matching on them is how a device out of somebody's server becomes a block in
+-- | here. `fluid_interface` is AE2 Fluid Crafting's, the rest are AE2's own.
+-- |
+-- | Anything on a grid that is not named here is still drawn - as AE_DEVICE - because a network's
+-- | shape matters even where the device is a GregTech machine this simulator knows nothing about.
+-- | @date 2026-09-18 ]]
+--[[ @brief The marker for a carrier, by the name the reader gives it and its capacity.
+-- |
+-- | The three are kept apart deliberately: an AE2 glass cable carries eight channels, an AE2 dense
+-- | cable and an EnderIO ME conduit carry thirty-two, and the last is not an AE2 block at all.
+-- | @date 2026-09-18 ]]
+function blocks.carrier_kind(name, cap)
+    if name:find("^EIO") then
+        return (cap or 0) >= 32 and blocks.KIND.EIO_DENSE or blocks.KIND.EIO_ME
+    end
+    return (cap or 0) >= 32 and blocks.KIND.AE_DENSE or blocks.KIND.AE_CABLE
+end
+
+blocks.AE_TILE_KIND = {
+    BlockController          = 16,
+    BlockDrive               = 17,
+    BlockInterface           = 18,
+    fluid_interface          = 19,
+    BlockQuantumLinkChamber  = 20,
+    BlockWireless            = 21,
+    BlockEnergyCell          = 22,
+    BlockDenseEnergyCell     = 22,
+    BlockCreativeEnergyCell  = 22,
+    BaseMetaTileEntity       = 27,      -- a GregTech machine that speaks ME
+}
+
+--[[ @brief The AE2 marker for a tile entity id. @date 2026-09-18 ]]
+function blocks.ae_kind(tile_id)
+    return blocks.AE_TILE_KIND[tile_id] or blocks.KIND.AE_DEVICE
+end
 
 --[[ @brief What a cell is doing. Mirrors `cell_state_e` in world_composer.h.
 -- |
@@ -152,9 +208,9 @@ end
 moves items around already expects. @date 2026-09-17 06:00 ]]
 blocks.CHEST_SLOTS = 27
 
---[[ @brief Which kinds lie on a face instead of filling a slot - a wire and a keyboard.
+--[[ @brief Which kinds lie on a face instead of filling a slot.
 -- |
--- | Mirrors `kind_is_flat` in world_composer.h. Both are flat, both cling to a surface, and neither
+-- | Mirrors `kind_is_flat` in world_composer.h. All of them are flat, cling to a surface, and neither
 -- | can be built upon; everything that treats the two alike asks this rather than naming them.
 -- |
 -- | @param kind  number
@@ -163,7 +219,13 @@ blocks.CHEST_SLOTS = 27
 -- | @date 2026-09-16 20:00
 --]]
 function blocks.is_flat(kind)
+    --[[ THE BUSES ARE PARTS, NOT BLOCKS. The author, 2026-09-18: "the import export busses are bad,
+    they completely ignore that they can be part of a multi-item block and are huge in comparison to
+    their real model, those are also cubes when the real model is not". Six AE2 parts and a cable
+    share one block, so a bus that fills a cell is both the wrong size and the wrong shape to show
+    that at all. ]]
     return kind == blocks.KIND.WIRE or kind == blocks.KIND.KEYBOARD
+            or kind == blocks.KIND.IMPORT_BUS or kind == blocks.KIND.EXPORT_BUS
 end
 
 --[[ @brief Which kinds a keyboard will bolt onto.
@@ -541,6 +603,8 @@ function blocks.make_kind(kind)
         [blocks.KIND.QTANK]      = blocks.make_qtank,
         [blocks.KIND.SIGN]       = blocks.make_sign,
     }
+    -- The AE2 markers carry nothing of their own, so the plain constructor is right for all of
+    -- them and listing each one would say nothing.
     local make = makers[kind]
     if make then
         return make()

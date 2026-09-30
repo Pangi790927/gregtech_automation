@@ -1439,6 +1439,107 @@ local function balancer_case(mc)
     end
 end
 
+--[[ @brief The region reader: can it find a real server's ME network?
+-- |
+-- | Core: THIS READS SOMEBODY ELSE'S WORLD. Everything else in the suite exercises the simulator's
+-- | own map; this one points mca_reader at an `r.X.Z.mca` lifted off a server and checks that what
+-- | comes back is the network that is actually built there.
+-- |
+-- | It is skipped when there is no such file, because the file is somebody's save and does not
+-- | belong in the repository - so this is a case that runs on the author's machine and quietly
+-- | passes everywhere else.
+-- |
+-- | @date 2026-09-18
+--]]
+local function region_case()
+    local path = "../world-debug/r.1.-1.mca"
+    local f = io.open(vc.path_resolve(path), "rb")
+    if not f then
+        return
+    end
+    f:close()
+
+    print("reading a real world's region file")
+    local rows = vc.ae_nodes(vc.path_resolve(path), 40, -12, 42, -10)
+    check("it finds ae2 nodes in the region", #rows > 100, #rows)
+
+    local grids, kinds = {}, {}
+    for _, r in ipairs(rows) do
+        local g = r[5]
+        grids[g] = (grids[g] or 0) + 1
+        kinds[g] = kinds[g] or {}
+        kinds[g][r[4]] = (kinds[g][r[4]] or 0) + 1
+    end
+
+    local n = 0
+    for _ in pairs(grids) do n = n + 1 end
+    check("and they fall into separate grids", n > 1, n)
+
+    -- THE ONE THE AUTHOR IS CHASING. A network with no controller and more than eight channels is
+    -- one AE2 switches off entirely rather than degrading - so finding it by shape, here, is the
+    -- whole reason this reader exists.
+    local worst, worst_g = 0, nil
+    for g, k in pairs(kinds) do
+        if not k["BlockController"] then
+            local want = 0
+            for id, c in pairs(k) do
+                if id ~= "BlockCableBus" and not id:find("EnergyCell") then
+                    want = want + c
+                end
+            end
+            if want > worst then
+                worst, worst_g = want, g
+            end
+        end
+    end
+    check("it spots a controllerless network over eight channels", worst > 8,
+            string.format("worst is grid %s with %d", tostring(worst_g), worst))
+    print(string.format("  --   grid %s: no controller, %d channels wanted, cap is 8",
+            tostring(worst_g), worst))
+
+    --[[ AND THE SCENE THAT DRAWS IT. Loading the aedbg scene the way the application does, so a
+    broken scene fails here rather than as an empty window somebody has to interpret. ]]
+    -- dofile, not require: `scene` and `controller` are already cached under those names from the
+    -- fusion scenario, and require would hand back the wrong scene entirely - which it did, and the
+    -- symptom was a debugger that read nought nodes from a region file called "?".
+    local oks, ascene = pcall(dofile, vc.path_resolve("scenes/aedbg/scene.lua"))
+    local okc, actrl = pcall(dofile, vc.path_resolve("scenes/aedbg/controller.lua"))
+    check("the aedbg scene loads", oks and okc, tostring(ascene) .. " / " .. tostring(actrl))
+    if not (oks and okc) then
+        return
+    end
+
+    local st2 = world.new()
+    local log = actrl.init(st2.world, ascene, "")
+    local placed, ctrl = 0, 0
+    for _, cell in ipairs(st2.world:occupied()) do
+        if cell.kind >= blocks.KIND.AE_CONTROLLER and cell.kind <= blocks.KIND.AE_DEVICE then
+            placed = placed + 1
+            if cell.kind == blocks.KIND.AE_CONTROLLER then
+                ctrl = ctrl + 1
+            end
+        end
+    end
+    -- AS THE DEVICES THEY ARE, not as coloured tanks: the whole point of the markers is that a
+    -- controller is identifiable, and a controller is the thing whose absence is the bug.
+    local bykind = {}
+    for _, cell in ipairs(st2.world:occupied()) do
+        bykind[cell.kind] = (bykind[cell.kind] or 0) + 1
+    end
+    local ks = {}
+    for k in pairs(bykind) do ks[#ks + 1] = k end
+    table.sort(ks)
+    for _, k in ipairs(ks) do
+        print(string.format("  DIAG kind %2d x%-5d %s", k, bykind[k],
+                blocks.KIND_NAME and blocks.KIND_NAME[k] or "?"))
+    end
+    check("it draws the networks as ae2 devices", placed > 100, placed)
+    check("and controllers are drawn as controllers", ctrl > 5, ctrl)
+    for _, line in ipairs(log) do
+        print("  --   " .. line)
+    end
+end
+
 --[[ @brief The cases. @date 2026-09-17 12:00 ]]
 local function run_cases(mc)
     -- From nothing every time. A suite that starts on whatever the last run left behind passes and
@@ -1450,6 +1551,7 @@ local function run_cases(mc)
     fusion_recipe_case(mc)
     bank_case(mc)
     controller_case(mc)
+    region_case()
     balancer_case(mc)
     legacy_save_case()
 

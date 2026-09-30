@@ -97,6 +97,64 @@ function ui.crosshair()
     vc.ImGui_SetDrawForeground(false)
 end
 
+--[[ @brief Where the camera is and which way it looks, in the top right corner.
+-- |
+-- | Core: THE NUMBERS HAVE TO MATCH THE GAME. That is the whole reason for it - the author wants to
+-- | stand in the same place in Minecraft and compare - so the compass letters follow Minecraft's
+-- | own convention rather than any convention of ours: SOUTH is +Z, NORTH is -Z, EAST is +X and
+-- | WEST is -X. F3 says the same thing in the same words.
+-- |
+-- | The heading comes from the camera's forward vector rather than from its yaw, for the same
+-- | reason camera.look does: the view matrix is built from that vector, so a letter derived from it
+-- | cannot disagree with what is on screen. Deriving it from yaw would be a second copy of a
+-- | trigonometric convention, and one of the two would eventually be wrong.
+-- |
+-- | `offset` shifts the reported position by a fixed amount, for a scene whose little world stands
+-- | in for somewhere else - the ae debugger draws a factory that really lives at x 640 and up, and
+-- | a readout saying 8, 4, 21 would be worse than none at all.
+-- |
+-- | @param offset  table | nil - {x, y, z} added to the camera's position before it is shown
+-- |
+-- | @date 2026-09-18
+--]]
+function ui.position(offset)
+    -- Asked of C++ directly, which is also where camera.lua gets it: the view matrix is built from
+    -- these, so a letter derived from them cannot disagree with what is on the screen. Requiring
+    -- camera here instead would only add a module edge for the same two calls.
+    local c = vc.cam_get()
+    local f = vc.cam_forward()
+    local x, y, z = c[1], c[2], c[3]
+    local fx, fz = f[1], f[3]
+
+    if offset then
+        x = x + (offset[1] or 0)
+        y = y + (offset[2] or 0)
+        z = z + (offset[3] or 0)
+    end
+
+    -- Whichever horizontal axis the camera leans along the most, and its sign.
+    local dir
+    if math.abs(fx) > math.abs(fz) then
+        dir = fx > 0 and "east" or "west"
+    else
+        dir = fz > 0 and "south" or "north"
+    end
+
+    local text = string.format("%.0f %.0f %.0f  %s", x, y, z, dir)
+
+    vc.ImGui_SetDrawForeground(true)
+    local disp = vc.ImGui_GetDisplaySize()
+    local size = vc.ImGui_CalcTextSize(text)
+    local pad = 6
+    local rx = disp.x - size.x - pad * 2 - 10
+    local ry = 10
+
+    vc.ImGui_AddRectFilled({x = rx, y = ry},
+            {x = rx + size.x + pad * 2, y = ry + size.y + pad}, 0xa0000000, 4)
+    vc.ImGui_AddText({x = rx + pad, y = ry + pad * 0.5}, 0xffffffff, text)
+    vc.ImGui_SetDrawForeground(false)
+end
+
 --[[ @brief Draws a block as a small angled model, textured from the world atlas.
 -- |
 -- | Core: three faces of a cube seen from above and to one side - top, left and right - each drawn

@@ -186,6 +186,26 @@ Local `unzip` on Windows silently extracted 27 of 179 files once. Use python's `
   their limit, because the program has no line of sight to the bank and everything else it works
   with is its own bookkeeping.
 
+## Looking at somebody else's world
+
+`mca_reader.h` reads a real Minecraft 1.7.10 region file: the header, one chunk's zlib stream, and a
+real NBT walk for the TileEntities. `vc.ae_nodes(path, cx0, cz0, cx1, cz1)` hands Lua every tile
+carrying an Applied Energistics grid id. `scenes/aedbg` draws the result — one marker per device,
+AE2's own textures, a window listing every grid with its channel count and what is wrong with it.
+
+- **The region file is somebody's save and does not belong in this repository.** The test for it
+  runs when `../world-debug/r.1.-1.mca` happens to be there and skips silently otherwise.
+- **`scenes/aedbg` is local only**, gitignored like `world-debug/`: it is built on one server's save.
+- **Chunk coordinates are absolute**, the numbers F3 shows; the file has to be the region they fall
+  in, which is `floor(chunk / 32)`.
+- **A mis-sized NBT payload desynchronises everything after it** and what comes out is plausible
+  nonsense rather than an error — the same trap the class-file opcode table set. The walk was
+  checked against an independent Python implementation of the same file: both find 15,294 tile
+  entities and the same fifteen grids.
+- Facts about AE2 come out of the jar, never memory. `proxy/g` is the grid id, `p` is the owning
+  PLAYER and not a power flag (that one nearly became a false diagnosis), and an ad-hoc network over
+  eight channels has `channelsInUse` set to **nought** rather than trimmed — `PathGridCache`.
+
 ## Where a save lives
 
 A save is a DIRECTORY, laid out the way the game's is. `scripts/saves.lua` owns its shape and is the
