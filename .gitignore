@@ -5,3 +5,7 @@ ocelot-desktop-v1.11.1.jar
 world-debug/
 ae2-stall/
 simulator/scenes/aedbg/
+# what the server answered to a script-request
+server-requests/*.out
+# this PC's own addresses (config-example.ini is the committed layout)
+config.ini

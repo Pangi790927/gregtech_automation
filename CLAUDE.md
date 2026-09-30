@@ -8,7 +8,12 @@ reach them. This file is kept to 100 lines: about 40 for how we work, the rest f
 
 1. **The Minecraft server is reached only through the user.** Claude has no login and no key for
 it. Anything to be done there is written as a **script-request**: a script in `server-requests/`
-that the user reads, runs if they agree, and whose output they paste back. Nothing else goes there.
+that the user reads and, if they agree, runs with `./doreq`. Its output lands in
+`<request>.out` beside it, where Claude reads it. Nothing else goes there. **Claude never modifies
+`server-requests/doreq.ps1`**; it is the user's, and Claude is not allowed to change it.
+The server's LAN address and login are in `config.ini` (this PC's own addresses, not committed;
+`config-example.ini` is its layout); Minecraft lives in `~/servers/gtnh/`, the world in
+`~/servers/gtnh/World`.
 
 2. A script-request states at its top **what it reads, what it changes, and how to undo it**. It
 does one thing. Read-only requests come first; a change is asked for only once the facts it rests
@@ -39,11 +44,13 @@ The per-subject documentation. Claude may add, change and remove entries here; k
 or two, and the whole file within 100 lines.
 
 - `README.md` -- what the repo is, licensing, and the promise that it ships no game content
+- `config-example.ini` -- the layout of `config.ini`: this PC's addresses, local only, gitignored
 - `ae2ex_manual.txt` -- the user guide for `gtnh_ae2ex.lua`, the AE2 extension on the base
 - `simulator/OBJECTIVE.md` -- what the Minecraft/OpenComputers simulator is for (user)
 - `simulator/CLAUDE.md` -- how the simulator is built, tested, and kept faithful to the mod
-- `console/DESIGN.md` -- the remote console: a colib relay on the server, so the OpenComputers
-  computer in the base becomes a terminal on the user's PC
-- `server-requests/` -- script-requests for the server, numbered, one per request (Claude)
+- `console/DESIGN.md` -- the base's OC computers from the PC: octerm, zones, relay, install, test;
+  agents in `console/<agent>/DESIGN.md` (term); Claude may use it when the relay is up, else says so
+- `server-requests/` -- script-requests for the server, numbered, one per request (Claude);
+  `doreq.ps1` copies one to the server and runs it; `<request>.out` keeps the result (gitignored)
 - `ae2-stall/NOTES.md` -- the AE2 network stall on the server; not seen for days by 2026-09-30,
   kept only until the user calls it gone. Local only, gitignored
