@@ -1,8 +1,9 @@
 /*! relay.h - the relay: keeps every computer's connection, and forwards between computers and
  * the connectors attached to them.
  *
- * Computers connect on the computer port (7777) from anywhere the firewall lets through, and
- * connectors (term.exe, tools) on the connector port (7778), on 127.0.0.1 only. A computer's
+ * Computers connect on the computer port (7777), and connectors (term.exe, tools) on the
+ * connector port (7778): on the PC, from anywhere the firewall lets through and from 127.0.0.1;
+ * on the Minecraft server, on 127.0.0.2 and from the PC's address alone (relay.cpp). A computer's
  * first frame gives its address, which is all the relay learns about it, and the hash of the
  * extension it has cached; the relay answers with octerm_ext.lua, the rest of octerm, read anew
  * for every hello and sent only when that hash differs. A connector is told the
@@ -12,15 +13,13 @@
  *
  * A connector leaving is told to the computer ('G'), which ends that connector's zone: a
  * session does not outlive its connector. A computer leaving closes its connectors. Stopping the
- * relay (Ctrl+C in its window) drops everything.
+ * relay (Ctrl+C) drops everything.
  *
  * Needs colib.h included first.
  *
  * @date 2026-09-30 */
 
 #pragma once
-
-#include <ws2tcpip.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -58,6 +57,8 @@ struct relay_t {
     std::set<connector_p> connectors;
     std::vector<SOCKET> to_end;             /*!< sessions to end, by waking their reads */
     std::string ext_file;                   /*!< octerm_ext.lua, beside relay.exe */
+    uint32_t connectors_from = 0;           /*!< the one address connectors may come from, in
+                                                 host order; 0 lets any in */
     bool quiet = false;                     /*!< no log lines: the self-tests */
 };
 inline relay_t relay;
@@ -79,20 +80,23 @@ inline bool read_ext(std::string &code) {
 
 /*! Ends the sessions queued in relay.to_end. shutdown() alone is not enough: a session's own
  * pending read ends only when the other side closes too, and a computer that rebooted, or a
- * connector that hangs, never does. stop_handle wakes that read, and the session closes up. */
+ * connector that hangs, never does. sock_stop wakes that read, and the session closes up. */
 inline colib::task_t end_queued() {
     std::vector<SOCKET> sockets;
     sockets.swap(relay.to_end);
     for (SOCKET s : sockets)
-        co_await colib::stop_handle((HANDLE)s);
+        co_await sock_stop(s);
     co_return 0;
 }
 
+/*! Shows the counts in the window's title; on Linux the relay runs in screen, with no title. */
 inline void relay_title() {
+#if COLIB_OS_WINDOWS
     if (relay.quiet)
         return;
     SetConsoleTitleA(("relay - " + std::to_string(relay.computers.size()) + " computer(s), "
             + std::to_string(relay.connectors.size()) + " connector(s)").c_str());
+#endif
 }
 
 /*! Prints one line to the relay's window, with the time. */
@@ -240,7 +244,7 @@ inline colib::task_t computer_session(SOCKET s, std::string ip) {
     std::string buf, why;
     std::vector<char> chunk(16384);
     while (true) {
-        SSIZE_T n = co_await colib::read((HANDLE)s, chunk.data(), chunk.size());
+        int64_t n = co_await sock_read(s, chunk.data(), chunk.size());
         if (n <= 0) {
             why = n == 0 ? "it closed the connection" : "the connection broke";
             break;
@@ -254,7 +258,7 @@ inline colib::task_t computer_session(SOCKET s, std::string ip) {
     computer_left(c, why);
     co_await end_queued();
     close_sender(c->out);
-    co_await colib::stop_handle((HANDLE)s);
+    co_await sock_stop(s);
     closesocket(s);
     co_return 0;
 }
@@ -312,7 +316,7 @@ inline colib::task_t connector_session(SOCKET s) {
     std::string buf;
     std::vector<char> chunk(16384);
     while (true) {
-        SSIZE_T n = co_await colib::read((HANDLE)s, chunk.data(), chunk.size());
+        int64_t n = co_await sock_read(s, chunk.data(), chunk.size());
         if (n <= 0)
             break;
         buf.append(chunk.data(), size_t(n));
@@ -327,23 +331,31 @@ inline colib::task_t connector_session(SOCKET s) {
     relay.connectors.erase(k);
     relay_title();
     close_sender(k->out);
-    co_await colib::stop_handle((HANDLE)s);
+    co_await sock_stop(s);
     closesocket(s);
     co_return 0;
 }
 
-/*! Takes connections on `listener`; each gets a computer or a connector session. */
+/*! Takes connections on `listener`; each gets a computer or a connector session. On the server
+ * the connector port faces the LAN, and a connector can make a computer run anything, so with
+ * relay.connectors_from set, a connector from any other address is closed unread. */
 inline colib::task_t relay_accept(SOCKET listener, bool connectors) {
     while (true) {
         sockaddr_in addr = {};
-        uint32_t len = sizeof(addr);
-        SOCKET s = co_await colib::accept(listener, (sockaddr *)&addr, &len);
+        SOCKET s = co_await sock_accept(listener, addr);
         if (s == INVALID_SOCKET) {
             co_await colib::sleep_ms(500);
             continue;
         }
         char ip[INET_ADDRSTRLEN] = "?";
         inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
+        if (connectors && relay.connectors_from
+                && ntohl(addr.sin_addr.s_addr) != relay.connectors_from) {
+            relay_log(std::string("refused a connector from ") + ip
+                    + ": connectors may come only from the PC");
+            closesocket(s);
+            continue;
+        }
         if (connectors)
             co_await colib::sched(connector_session(s));
         else

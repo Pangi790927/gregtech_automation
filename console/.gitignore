@@ -2,3 +2,7 @@
 *.exe
 *.ilk
 *.pdb
+# where claude-oc runs claude: the last prompt, its errors
+claude-oc/work/
+# the relay built for the server (linux.makefile)
+/relay

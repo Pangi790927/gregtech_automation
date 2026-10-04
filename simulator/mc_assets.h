@@ -623,6 +623,7 @@ struct mc_source_t {
         are tried. Nothing here globs - the C++ standard library's directory iterator would do it,
         but a fixed list keeps the lookup honest about which versions have actually been seen. */
         static const char *candidates[] = {
+            "mods/OpenComputers-1.9.14-GTNH.jar",        /* GTNH 2.4.0 */
             "mods/OpenComputers-1.8.0.13-GTNH.jar",
             "mods/OpenComputers-1.8.0.12-GTNH.jar",
             "mods/OpenComputers-1.8.0.11-GTNH.jar",
@@ -762,6 +763,7 @@ struct mc_source_t {
         }
 
         static const char *gt_names[] = {
+            "mods/gregtech-5.09.43.192.jar",             /* GTNH 2.4.0 */
             "mods/gregtech-5.09.41.317.jar",
             "mods/gregtech-5.09.41.316.jar",
             "mods/gregtech.jar",
@@ -776,6 +778,7 @@ struct mc_source_t {
         }
 
         static const char *ae2_names[] = {
+            "mods/appliedenergistics2-rv3-beta-250-GTNH.jar",    /* GTNH 2.4.0 */
             "mods/appliedenergistics2-rv3-beta-175-GTNH.jar",
             "mods/appliedenergistics2-rv3-beta-174-GTNH.jar",
             "mods/appliedenergistics2.jar",
@@ -790,6 +793,7 @@ struct mc_source_t {
         }
 
         static const char *eio_names[] = {
+            "mods/EnderIO-2.4.24.jar",                   /* GTNH 2.4.0 */
             "mods/EnderIO-2.3.1.68.jar",
             "mods/EnderIO-2.3.1.67.jar",
             "mods/EnderIO.jar",
@@ -1535,6 +1539,85 @@ struct mc_source_t {
      *
      * @return the recipes, in the order the mods register them
      * @date 2026-09-17 */
+    /*! What each `TierEU` constant is worth, by its name: "RECIPE_LuV" -> 30720.
+     *
+     * GTNH 2.4.0's recipes say `.eut(TierEU.RECIPE_LuV)` where 2.3.0's wrote the number, so a
+     * recipe read out of the jar needs this table. Read, not written here: `GT_Values.V` is a long
+     * array literal in GT_Values' static initialiser; `GT_Values.VP` is `V` mapped through a lambda
+     * that is `x * 30 / 32` (BigInteger, so integer division) - read from lambda$static$0 in
+     * gregtech-5.09.43.192; and each TierEU field is `GT_Values.V[i]` or `GT_Values.VP[i]` in
+     * TierEU's own static initialiser. Empty when the jar or the classes are not there.
+     * @date 2026-10-04 */
+    std::map<std::string, long long> gt_tier_eu(const std::string &jar) const {
+        std::map<std::string, long long> out;
+        std::vector<zip_entry_t> dir = zip_dir(jar);
+        std::vector<uint8_t> values, tiers;
+        for (const zip_entry_t &e : dir) {
+            if (e.name == "gregtech/api/enums/GT_Values.class") values = zip_read(jar, e);
+            if (e.name == "gregtech/api/enums/TierEU.class") tiers = zip_read(jar, e);
+        }
+        if (values.empty() || tiers.empty())
+            return out;
+
+        namespace cr = class_reader;
+        std::vector<long long> v, vp;
+        cr::class_file_t cf = cr::read_class(values, "<clinit>");
+        if (!cf.ok || !cf.code)
+            return out;
+        std::vector<long long> longs;
+        for (uint32_t at = 0; at < cf.code_len; ) {
+            uint32_t size = cr::insn_length(cf.code, cf.code_len, at);
+            if (!size)
+                break;
+            uint8_t op = cf.code[at];
+            if (op == 0xBC)                                 /* newarray: a new literal */
+                longs.clear();
+            else if (op == 0x14)                            /* ldc2_w */
+                longs.push_back(cf.longv((uint32_t)((cf.code[at + 1] << 8) | cf.code[at + 2]), 0));
+            else if (op == 0xB3) {                          /* putstatic */
+                std::string c, n, d;
+                cf.ref((uint32_t)((cf.code[at + 1] << 8) | cf.code[at + 2]), c, n, d);
+                if (n == "V" && d == "[J" && v.empty())
+                    v = longs;
+            }
+            at += size;
+        }
+        for (long long x : v)
+            vp.push_back(x * 30 / 32);
+
+        cr::class_file_t tf = cr::read_class(tiers, "<clinit>");
+        if (!tf.ok || !tf.code)
+            return out;
+        const std::vector<long long> *arr = nullptr;
+        int index = -1;
+        for (uint32_t at = 0; at < tf.code_len; ) {
+            uint32_t size = cr::insn_length(tf.code, tf.code_len, at);
+            if (!size)
+                break;
+            uint8_t op = tf.code[at];
+            int32_t iv = 0;
+            uint32_t isize = 0;
+            if (op == 0xB2) {                               /* getstatic GT_Values.V / VP */
+                std::string c, n, d;
+                tf.ref((uint32_t)((tf.code[at + 1] << 8) | tf.code[at + 2]), c, n, d);
+                arr = (n == "VP") ? &vp : (n == "V") ? &v : nullptr;
+                index = -1;
+            }
+            else if (cr::int_push(tf, tf.code, tf.code_len, at, iv, isize)) {
+                index = iv;
+            }
+            else if (op == 0xB3) {                          /* putstatic TierEU.<name> */
+                std::string c, n, d;
+                tf.ref((uint32_t)((tf.code[at + 1] << 8) | tf.code[at + 2]), c, n, d);
+                if (d == "J" && arr && index >= 0 && index < (int)arr->size())
+                    out[n] = (*arr)[index];
+                arr = nullptr;
+            }
+            at += size;
+        }
+        return out;
+    }
+
     std::vector<fusion_recipe_t> gt_fusion_recipes(const std::string &instance_dir) const {
         std::vector<fusion_recipe_t> out;
         if (instance_dir.empty())
@@ -1548,6 +1631,16 @@ struct mc_source_t {
         list so a lookup is cheap, and a name that is not there is simply skipped. */
         struct where_t { const char *jar; const char *cls; };
         static const where_t PLACES[] = {
+            /* GTNH 2.4.0: the same classes, written with GT_RecipeBuilder (see below). */
+            {"mods/gregtech-5.09.43.192.jar",
+             "gregtech/loaders/postload/recipes/FusionReactorRecipes.class"},
+            {"mods/GTNewHorizonsCoreMod-2.1.113.jar",
+             "com/dreammaster/bartworksHandler/BacteriaRegistry.class"},
+            {"mods/GT-PlusPlus-1.9.85.jar",
+             "gtPlusPlus/core/recipe/RECIPES_GREGTECH.class"},
+            {"mods/GoodGenerator-0.6.41.jar",
+             "goodgenerator/loader/RecipeLoader.class"},
+            /* GTNH 2.3.0 */
             {"mods/gregtech-5.09.41.317.jar",
              "gregtech/loaders/postload/recipes/FusionReactorRecipes.class"},
             {"mods/GTNewHorizonsCoreMod-1.9.171.jar",
@@ -1559,6 +1652,8 @@ struct mc_source_t {
         };
 
         namespace cr = class_reader;
+        std::map<std::string, long long> tier_eu =
+                gt_tier_eu(base + "mods/gregtech-5.09.43.192.jar");
         for (const where_t &w : PLACES) {
             std::vector<zip_entry_t> dir = zip_dir(base + w.jar);
             if (dir.empty())
@@ -1583,6 +1678,16 @@ struct mc_source_t {
                 std::vector<stack_t> stacks;
                 std::vector<long long> nums;
 
+                /* GT_RecipeBuilder (GTNH 2.4.0): one recipe is a chain of calls on a builder,
+                each carrying one part, and `addTo` a recipe map ends it. `last_long` is the last
+                long pushed: an ldc2_w, an lconst, or a TierEU field; `fusion_meta` that the
+                metadata about to be set is FUSION_THRESHOLD, the start energy; `map` the recipe
+                map last named. */
+                std::vector<stack_t> b_in, b_out;
+                long long b_ticks = 0, b_eut = 0, b_start = 0, last_long = 0;
+                bool fusion_meta = false;
+                std::string map;
+
                 uint32_t at = 0;
                 while (at < m.len) {
                     uint32_t size = cr::insn_length(m.code, m.len, at);
@@ -1598,9 +1703,20 @@ struct mc_source_t {
                         cf.ref((uint32_t)((m.code[at + 1] << 8) | m.code[at + 2]), c, n, d);
                         if (c == "gregtech/api/enums/Materials")
                             mat = n;
+                        else if (c == "gregtech/api/enums/TierEU" && tier_eu.count(n))
+                            last_long = tier_eu[n];
+                        else if (c == "gregtech/api/util/GT_RecipeConstants")
+                            fusion_meta = (n == "FUSION_THRESHOLD");
+                        else if (c.find("Recipe_Map") != std::string::npos
+                                || c.find("RecipeMap") != std::string::npos)
+                            map = n;
                     }
                     else if (op == 0x14) {                  /* ldc2_w - the amount, a long */
                         amt = cf.longv((uint32_t)((m.code[at + 1] << 8) | m.code[at + 2]), 0);
+                        last_long = amt;
+                    }
+                    else if (op == 0x09 || op == 0x0A) {    /* lconst_0 / lconst_1 */
+                        amt = last_long = op - 0x09;
                     }
                     else if (cr::int_push(cf, m.code, m.len, at, iv, isize)) {
                         amt = iv;
@@ -1613,6 +1729,36 @@ struct mc_source_t {
                                 && !mat.empty()) {
                             stacks.push_back({gt_fluid_name(mat, n.substr(3)), (int)amt});
                             mat.clear();
+                        }
+                        else if (c == "gregtech/api/util/GT_RecipeBuilder") {
+                            if (n == "fluidInputs") { b_in = stacks; stacks.clear(); }
+                            else if (n == "fluidOutputs") { b_out = stacks; stacks.clear(); }
+                            else if (n == "duration" && !nums.empty()) b_ticks = nums.back();
+                            else if (n == "eut")
+                                b_eut = (d == "(J)Lgregtech/api/util/GT_RecipeBuilder;")
+                                        ? last_long : (nums.empty() ? 0 : nums.back());
+                            else if (n == "metadata" && fusion_meta) {
+                                b_start = nums.empty() ? last_long : nums.back();
+                                fusion_meta = false;
+                            }
+                            else if (n == "addTo") {
+                                if (map.find("Fusion") != std::string::npos
+                                        && b_in.size() == 2 && b_out.size() == 1 && b_ticks > 0) {
+                                    fusion_recipe_t r;
+                                    r.in_a = b_in[0].fluid;   r.amt_a = b_in[0].amount;
+                                    r.in_b = b_in[1].fluid;   r.amt_b = b_in[1].amount;
+                                    r.out = b_out[0].fluid;   r.amt_out = b_out[0].amount;
+                                    r.ticks = (int)b_ticks;
+                                    r.eut = b_eut;
+                                    r.start_eu = b_start;
+                                    r.source = w.jar;
+                                    if (!r.in_a.empty() && !r.in_b.empty() && !r.out.empty())
+                                        out.push_back(r);
+                                }
+                                b_in.clear(); b_out.clear();
+                                b_ticks = b_eut = b_start = 0;
+                                stacks.clear(); nums.clear(); mat.clear(); map.clear();
+                            }
                         }
                     }
                     else if (op == 0xB9 || op == 0xB6 || op == 0xB8 || op == 0xB7) {
@@ -1800,9 +1946,12 @@ struct mc_source_t {
      * the obvious shape - would have read those four hundred megabytes thousands of times over.
      *
      * @param instance_dir  the instance, the one holding mods/
-     * @param wanted        lower-cased `namespace:name` keys to look for
+     * @param wanted        lower-cased `namespace:name` keys to look for; a name may carry its
+     *                      folder under textures/blocks/ or items/ (`chisel:planks-spruce/
+     *                      chaotic-hor`), which picks that one file where several folders
+     *                      share a name; without one, the first such file found answers
      * @return the ones that were found
-     * @date 2026-09-17 */
+     * @date 2026-09-17, the folder key 2026-10-04 */
     std::map<std::string, tile_t> mod_textures(const std::string &instance_dir,
             const std::unordered_set<std::string> &wanted) const {
         std::map<std::string, tile_t> out;
@@ -1850,13 +1999,32 @@ struct mc_source_t {
                 for (char &ch : key)
                     ch = (char)tolower((unsigned char)ch);
 
-                if (!wanted.count(key) || out.count(key))
+                /* The same picture keyed with its folder too: `ns:<path under textures/blocks/
+                or items/>`, such as chisel:planks-spruce/chaotic-hor. Six chisel folders hold a
+                chaotic-hor.png and the folder-less key takes the first in the jar (dark oak), so
+                3d-draw's spruce windmill and plain cobblestone came out dark oak and mossy
+                (2026-10-04). A file directly in blocks/ has no second key: both are the same. */
+                size_t sub = ns1 + 1 + (rest.compare(0, 15, "textures/items/") == 0 ? 15 : 16);
+                std::string path_key;
+                if (name.find('/', sub) != std::string::npos) {
+                    path_key = name.substr(7, ns1 - 7) + ":"
+                            + name.substr(sub, name.size() - 4 - sub);
+                    for (char &ch : path_key)
+                        ch = (char)tolower((unsigned char)ch);
+                }
+
+                bool want_key = wanted.count(key) && !out.count(key);
+                bool want_path = !path_key.empty() && wanted.count(path_key)
+                        && !out.count(path_key);
+                if (!want_key && !want_path)
                     continue;
 
                 /* Only now is anything actually read, and only this one entry. */
                 tile_t t;
-                if (png_to_tile(zip_read(jar_path, entry), t))
-                    out.emplace(key, t);
+                if (png_to_tile(zip_read(jar_path, entry), t)) {
+                    if (want_key) out.emplace(key, t);
+                    if (want_path) out.emplace(path_key, t);
+                }
             }
         }
 

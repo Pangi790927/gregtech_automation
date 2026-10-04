@@ -1,6 +1,6 @@
-/*! tests.cpp - tests.exe: checks the screen, the frames, the keys, the relay with real sockets,
- * and the terminal against a stand-in loader; prints one line per check, and exits with the
- * number that failed.
+/*! tests.cpp - tests.exe: checks the screen, the frames, the keys, claude-oc's MCP server and
+ * zone frames, the relay with real sockets, and the terminal against a stand-in loader; prints
+ * one line per check, and exits with the number that failed.
  *
  * The relay tests run relay.h's own accept loops and sessions on 127.0.0.1, on ports Windows
  * picks, never 7777 or 7778: a relay the user has running must not be touched. Computers and
@@ -17,6 +17,8 @@
 
 #include "relay.h"
 #include "term.h"
+#include "claude-oc.h"
+#include "ocscp.h"
 
 static int failures = 0;
 
@@ -253,6 +255,15 @@ static colib::task_t relay_story(uint16_t cport, uint16_t kport) {
     check(co_await until([&] { return b.closed; }) && relay.computers.size() == 1,
           "a computer connecting again replaces its old connection");
 
+    peer_t k4;
+    size_t connectors = relay.connectors.size();
+    relay.connectors_from = 0x7F000009;     /* 127.0.0.9: the connectors here come from .1 */
+    co_await dial(&k4, kport);
+    check(co_await until([&] { return k4.closed; }) && k4.got.empty()
+          && relay.connectors.size() == connectors,
+          "with --allow, a connector from another address is closed unanswered");
+    relay.connectors_from = 0;
+
     co_await hang_up(&k3);
     co_await hang_up(&b2);
     /* Every socket closed before the next story: a pool must not be left with reads pending
@@ -274,10 +285,11 @@ static colib::task_t relay_story(uint16_t cport, uint16_t kport) {
 static colib::task_t stand_in_loader(peer_t *oc, std::string *seen_key) {
     co_await say(oc, enc_hello("dddd"));
     std::string ask = enc_ext(payload_hash(test_ext), &test_ext)
-                    + enc_data(0, enc_open("terminal", term.hash, nullptr));
+                    + enc_data(0, enc_open("terminal", term.conn.hash, nullptr));
     co_await until([&] { return oc->got == ask; });
     co_await say(oc, enc_data(0, enc_opened(1, false, "not cached")));
-    std::string with_code = ask + enc_data(0, enc_open("terminal", term.hash, &term.code));
+    std::string with_code = ask + enc_data(0, enc_open("terminal", term.conn.hash,
+                                                       &term.conn.code));
     co_await until([&] { return oc->got == with_code; });
     co_await say(oc, enc_data(0, enc_opened(0, false, "")));
     co_await say(oc, enc_data(0, enc_zone_data(enc_resize(12, 2)
@@ -291,8 +303,8 @@ static colib::task_t stand_in_loader(peer_t *oc, std::string *seen_key) {
 
 /*! Stands in for term_input: once the zone runs, types one key, as the window would. */
 static colib::task_t type_a_key() {
-    co_await until([&] { return term.state == term_state::running && term.screen.w == 12; });
-    post(term.out, enc_zone_data(key_frame({true, 'a', 0x1E})));
+    co_await until([&] { return term.conn.state == conn_state::running && term.screen.w == 12; });
+    post(term.conn.out, enc_zone_data(key_frame({true, 'a', 0x1E})));
     co_return 0;
 }
 
@@ -302,10 +314,243 @@ static colib::task_t term_story(uint16_t cport, uint16_t kport, std::string *see
     co_await colib::sched(stand_in_loader(&oc, seen_key));
     co_await until([&] { return relay.computers.size() == 1; });
     co_await dial(&k, kport, false);
-    term.out = co_await open_sender(k.s);
+    term.conn.out = co_await open_sender(k.s);
     co_await colib::sched(type_a_key());
     co_await colib::sched(relay_session(k.s));      /* ends the pool when the zone ends */
     co_return 0;
+}
+
+/*! Checks that HTTP requests come out whole however the bytes are cut, two in a row. */
+static void test_http() {
+    std::string one = "POST /mcp HTTP/1.1\r\nHost: x\r\ncontent-length: 7\r\n\r\n{\"a\":1}";
+    std::string two = "GET /mcp HTTP/1.1\r\nAccept: text/event-stream\r\n\r\n";
+    std::string stream = one + two, detail;
+    bool all = true;
+    for (size_t cut = 0; cut <= stream.size() && all; cut++) {
+        std::string buf = stream.substr(0, cut), got;
+        http_req_t req;
+        int rc = 0;
+        for (int part = 0; part < 2; part++) {
+            while ((rc = take_http_request(buf, req)) == 1)
+                got += req.method + " " + req.path + " [" + req.body + "] ";
+            buf += part == 0 ? stream.substr(cut) : "";
+        }
+        if (rc < 0 || got != "POST /mcp [{\"a\":1}] GET /mcp [] ") {
+            all = false;
+            detail = "cut at " + std::to_string(cut) + ": " + got;
+        }
+    }
+    check(all, "HTTP requests come out whole however they are cut", detail);
+}
+
+/*! Stands in for claude-oc's call_tool: answers from the arguments alone. */
+static colib::task<tool_answer_t> echo_tool(std::string path, std::string name, json args) {
+    co_return tool_answer_t{true, name + " got " + args.value("command", "") + " at " + path};
+}
+
+/*! Checks the MCP answers. */
+static colib::task_t mcp_story() {
+    mcp_server_t mcp;
+    mcp.tools = tool_list();
+    mcp.call = echo_tool;
+    json init = json::parse(co_await mcp_answer(mcp, "/mcp/x", R"({"jsonrpc":"2.0","id":0,
+        "method":"initialize","params":{"protocolVersion":"2025-11-25"}})"));
+    check(init["result"]["protocolVersion"] == "2025-11-25", "initialize answers in the "
+          "client's protocol version", init.dump());
+    std::string note = co_await mcp_answer(mcp, "/mcp/x", R"({"jsonrpc":"2.0",
+        "method":"notifications/initialized"})");
+    check(note.empty(), "a notification gets no answer", note);
+    json list = json::parse(co_await mcp_answer(mcp, "/mcp/x", R"({"jsonrpc":"2.0","id":1,
+        "method":"tools/list"})"));
+    check(list["result"]["tools"].size() == 6 && list["result"]["tools"][0]["name"] == "oc_run"
+          && list["result"]["tools"][4]["name"] == "oc_send", "tools/list gives the six tools",
+          list.dump().substr(0, 80));
+    json call = json::parse(co_await mcp_answer(mcp, "/mcp/abc", R"({"jsonrpc":"2.0","id":2,
+        "method":"tools/call","params":{"name":"oc_run","arguments":{"command":"ls /"}}})"));
+    check(call["result"]["content"][0]["text"] == "oc_run got ls / at /mcp/abc"
+          && call["result"]["isError"] == false, "tools/call answers with the tool's text, "
+          "told the path it came to", call.dump());
+    json nope = json::parse(co_await mcp_answer(mcp, "/mcp/x", R"({"jsonrpc":"2.0","id":"p",
+        "method":"server/discover"})"));
+    check(nope["error"]["code"] == -32601 && nope["id"] == "p", "an unknown method is an "
+          "error, which Claude Code's discovery probe expects", nope.dump());
+    co_return 0;
+}
+
+/*! Returns a node for a test computer, attached and with a session, sending nowhere. */
+static colib::task<node_p> test_node(std::string addr) {
+    node_p n = make_node(addr);
+    n->prompt_ready = co_await colib::create_sem(0);
+    n->conn.state = conn_state::running;        /* its sender is unset: nothing goes out */
+    n->has_session = true;
+    co_return n;
+}
+
+/*! Checks a computer's zone frames however they are cut. */
+static colib::task_t frames_story(node_p n) {
+    std::string stream = enc_reset() + enc_begin("/home/lua") + enc_dir("/home/lua/x")
+                       + enc_prompt(7, "what is here?") + enc_result(3, true, "ok");
+    std::string detail;
+    bool all = true;
+    for (size_t cut = 0; cut <= stream.size() && all; cut++) {
+        auto w = std::make_shared<tool_wait_t>();
+        w->done = co_await colib::create_sem(0);
+        n->waiting = {{3, w}};
+        n->prompts.clear();
+        n->zone_buf.clear();
+        n->has_session = true;
+        n->session = "old";
+        n->cwd = "/old";
+        bool ok = take_cloc_bytes(*n, stream.substr(0, cut))
+               && take_cloc_bytes(*n, stream.substr(cut));
+        if (!ok || !n->has_session || n->session != "" || n->cwd != "/home/lua/x"
+                || n->prompts.size() != 1 || n->prompts[0].id != 7
+                || n->prompts[0].text != "what is here?" || !w->finished
+                || w->answer.text != "ok" || !n->zone_buf.empty()) {
+            all = false;
+            detail = "cut at " + std::to_string(cut) + ", session '" + n->session + "' in "
+                   + n->cwd;
+        }
+    }
+    n->waiting.clear();
+    n->prompts.clear();
+    check(all, "claude-oc takes a computer's frames however they are cut: a session ended, a "
+          "new one begun in its directory, the directory moved, a prompt, a tool's result",
+          detail);
+    co_return 0;
+}
+
+static std::string first_prompt(node_p n) {
+    std::string text = n->prompts.empty() ? "(none)" : n->prompts[0].text;
+    n->prompts.clear();
+    return text;
+}
+
+/*! Checks the window: prompts typed, its cursor, and choosing the computer it talks to. */
+static void window_story(node_p a, node_p b) {
+    cloc.target = a->addr;
+    take_typed("abx\x08 \\\rcd\r");
+    bool from_pc = !a->prompts.empty() && a->prompts[0].from_pc;
+    std::string sent = first_prompt(a);
+    check(sent == "ab \ncd" && from_pc && win.row.empty() && win.rows.empty(), "a line typed "
+          "in claude-oc's window is a prompt: Backspace takes a letter back, \\ and Enter start "
+          "a new row", sent);
+    /* "xac", Home, Delete, End, Left, "b", Right, "d", Enter: "abcd" */
+    take_typed("xac\x1b[H\x1b[3~\x1b[F\x1b[Db\x1b[Cd\r");
+    sent = first_prompt(a);
+    check(sent == "abcd", "the window's cursor moves with Left, Right, Home and End, and Delete "
+          "takes out the letter at it", sent);
+    std::string seen;
+    for (const char *key : {"\x1b[1;5C", "\x1b[1;5C", "\x1b[1;5D"}) {
+        take_typed(key);
+        seen += short_addr(cloc.target) + " ";
+    }
+    check(seen == "bbbb2222 aaaa1111 bbbb2222 ", "Ctrl+Right and Ctrl+Left step the window "
+          "through the computers, round", seen);
+    take_typed("@aaaa hello there\r");
+    sent = first_prompt(a);
+    check(sent == "hello there" && cloc.target == a->addr, "@<address start> sends a line to "
+          "that computer, which the window then keeps", sent + " to " + cloc.target);
+}
+
+/*! Checks the mail: sent by the start of an address, kept, given to Claude once, listed. */
+static void mail_story(node_p a, node_p b) {
+    char tmp[MAX_PATH];
+    GetTempPathA(MAX_PATH, tmp);
+    cloc.work = std::string(tmp) + "claude_oc_mail_test\\";
+    CreateDirectoryA(cloc.work.c_str(), NULL);
+    DeleteFileA(mailbox_file(b->addr).c_str());
+    std::string msg;
+    bool sent = send_mail(a->addr, "bbbb", "the fusion list is ready", msg);
+    check(sent && msg == "sent to " + b->addr, "mail goes to the one computer whose address "
+          "starts as given", msg);
+    take_cloc_bytes(*a, enc_mail_send(5, "bbbb2222", "second letter"));
+    std::string unseen = take_unseen_mail(b->addr);
+    check(unseen.find("from " + a->addr + ":\nthe fusion list is ready") != std::string::npos
+          && unseen.find("second letter") != std::string::npos
+          && take_unseen_mail(b->addr).empty(), "a computer's Claude is given its new mail "
+          "once, with the senders' addresses, `claude send`'s too", unseen);
+    std::string first = list_mail(b->addr), again = list_mail(b->addr);
+    check(first.find("(new)") != std::string::npos && again.find("(new)") == std::string::npos,
+          "`claude mail` lists the mailbox, marking what it had not shown before", first);
+    check(!send_mail(a->addr, "cc", "x", msg) && msg.find("no computer") != std::string::npos,
+          "mail to an address no computer has is refused, saying why", msg);
+    DeleteFileA(mailbox_file(MAIN_SRV).c_str());
+    DeleteFileA(mailbox_file(a->addr).c_str());
+    bool asked = send_mail(a->addr, "main-srv", "the Neutronium fusion recipe?", msg);
+    std::string questions = main_srv_tool("oc_mail", json::object()).text;
+    tool_answer_t reply = main_srv_tool("oc_send", {{"to", "aaaa1111"}, {"text", "Americium "
+                                        "+ Naquadria"}});
+    std::string answer = take_unseen_mail(a->addr);
+    check(asked && questions.find("Neutronium fusion") != std::string::npos && reply.ok
+          && answer.find("from main-srv:\nAmericium + Naquadria") != std::string::npos,
+          "main-srv takes a computer's question by its name, and its answer goes back as mail "
+          "from main-srv", answer);
+    DeleteFileA(mailbox_file(MAIN_SRV).c_str());
+    DeleteFileA(mailbox_file(a->addr).c_str());
+    DeleteFileA(mailbox_file(b->addr).c_str());
+    RemoveDirectoryA(cloc.work.c_str());
+    cloc.work.clear();
+}
+
+/*! Runs claude-oc's checks; the computers are two made up, never on a relay. */
+static colib::task_t claude_oc_story() {
+    co_await mcp_story();
+    node_p a = co_await test_node("aaaa1111-0000-0000-0000-000000000000");
+    node_p b = co_await test_node("bbbb2222-0000-0000-0000-000000000000");
+    co_await frames_story(a);
+    window_story(a, b);
+    mail_story(a, b);
+    cloc.nodes.clear();
+    cloc.target.clear();
+    co_return 0;
+}
+
+/*! Checks ocscp's side of a copy: a file taken in pieces however the zone's bytes are cut, and
+ * the answer to one sent. */
+static void test_ocscp() {
+    char tmp[MAX_PATH];
+    GetTempPathA(MAX_PATH, tmp);
+    std::string file(70000, 'x');                   /* three pieces: 32768, 32768, 4464 */
+    file[0] = '\0';
+    file[40000] = '\n';
+    std::string stream = enc_file_open(true, uint32_t(file.size()), "");
+    for (size_t at = 0; at < file.size(); at += SCP_PIECE)
+        stream += enc_piece(file.substr(at, SCP_PIECE));
+    stream += enc_file_end();
+    std::string detail;
+    bool all = true;
+    for (size_t cut = 0; cut <= stream.size() && all; cut += 997) {
+        scp = scp_t{};
+        scp.oc_path = "/home/f";
+        scp.local_path = std::string(tmp) + "ocscp_test.bin";
+        take_scp_bytes(stream.substr(0, cut)) && take_scp_bytes(stream.substr(cut));
+        std::string saved;
+        read_file(scp.local_path, saved);
+        if (!scp.done || saved != file) {
+            all = false;
+            detail = "cut at " + std::to_string(cut) + ": " + scp.conn.goodbye;
+        }
+    }
+    DeleteFileA((std::string(tmp) + "ocscp_test.bin").c_str());
+    check(all, "ocscp takes a file in pieces, byte for byte, however the stream is cut", detail);
+    scp = scp_t{};
+    take_scp_bytes(enc_written(false, "no such directory"));
+    check(!scp.done && scp.conn.goodbye.find("no such directory") != std::string::npos,
+          "ocscp says why a file could not be written", scp.conn.goodbye);
+    scp = scp_t{};
+    take_scp_bytes(enc_file_open(false, 0, "no such file"));
+    check(!scp.done && scp.conn.goodbye.find("cannot read") != std::string::npos,
+          "ocscp says why a file could not be read", scp.conn.goodbye);
+}
+
+static void test_claude_oc() {
+    win.quiet = true;
+    cloc_init();
+    test_http();
+    colib::pool_p pool = colib::create_pool();
+    pool->sched(claude_oc_story());
+    pool->run();
 }
 
 static colib::task_t watchdog() {
@@ -331,8 +576,9 @@ static void test_sockets() {
     FILE *f = fopen(relay.ext_file.c_str(), "wb");
     fwrite(test_ext.data(), 1, test_ext.size(), f);
     fclose(f);
-    term.code = "local zone = ... -- a stand-in payload";
-    term.hash = payload_hash(term.code);
+    term_init();
+    term.conn.code = "local zone = ... -- a stand-in payload";
+    term.conn.hash = payload_hash(term.conn.code);
     std::string seen_key;
     uint16_t cport = 0, kport = 0;
     SOCKET cl = listen_on(INADDR_LOOPBACK, cport), kl = listen_on(INADDR_LOOPBACK, kport);
@@ -346,8 +592,8 @@ static void test_sockets() {
           "term.exe opens the zone (a cache miss, then the code) and shows what it draws",
           row(term.screen, 1));
     check(seen_key == "yes", "its keys reach the zone");
-    check(term.goodbye == "the terminal zone ended: it returned",
-          "the zone ending ends the terminal, saying why", term.goodbye);
+    check(term.conn.goodbye == "the terminal zone ended: it returned",
+          "the zone ending ends the terminal, saying why", term.conn.goodbye);
 }
 
 int main() {
@@ -357,6 +603,8 @@ int main() {
     test_screen();
     test_frames();
     test_keys();
+    test_claude_oc();
+    test_ocscp();
     test_sockets();
     printf("%d failed\n", failures);
     return failures;

@@ -30,6 +30,8 @@
 #include <map>
 #include <string>
 #include <tuple>
+#include <unordered_set>
+#include <array>
 #include <vector>
 
 namespace render_composer {
@@ -99,11 +101,14 @@ void main() {
 }
 )";
 
-/*! Fragment source for the world pass: the atlas sample, darkened by the baked face brightness.
+/*! Fragment source for the world pass: the atlas sample, darkened by the baked face brightness, at
+ * u_alpha_pct of its opacity (100 but in the see-through pass, 2026-10-05: an int, since the
+ * stripped loader carries glUniform1i and not glUniform1f).
  * A fully transparent texel is discarded so the selection frame can be a mostly empty tile.
  * @date 2026-09-16 */
 inline const char *WORLD_FRAG_SRC = R"(#version 130
 uniform sampler2D u_atlas;
+uniform int u_alpha_pct;
 in vec2 v_uv;
 in vec3 v_tint;
 out vec4 o_color;
@@ -111,7 +116,7 @@ void main() {
     vec4 t = texture(u_atlas, v_uv);
     if (t.a < 0.02)
         discard;
-    o_color = vec4(t.rgb * v_tint, t.a);
+    o_color = vec4(t.rgb * v_tint, t.a * float(u_alpha_pct) / 100.0);
 }
 )";
 
@@ -125,13 +130,21 @@ void main() {
 struct renderer_t {
     glu::shader_t shader;
     glu::texture_t atlas;
-    glu::mesh_t world_mesh;
+    /* One mesh per 16-cube section of the map (world_t::dirty_sections), rebuilt only where the
+    world says something changed. @date 2026-10-05 */
+    std::array<glu::mesh_t, 64> world_meshes;
+    /* The see-through blocks of each section (a Minecraft block with ghost 2), drawn after the
+    rest at ghost_alpha. @date 2026-10-05 */
+    std::array<glu::mesh_t, 64> ghost_meshes;
     glu::mesh_t ground_mesh;
     glu::mesh_t highlight_mesh;
     glu::mesh_t marker_mesh;
 
     int loc_mvp = -1;
     int loc_atlas = -1;
+    int loc_alpha = -1;
+    /* How opaque the see-through blocks are, in percent (render_ghost_alpha). @date 2026-10-05 */
+    int ghost_alpha = 30;
     int attr_pos = -1;
     int attr_uv = -1;
     int attr_tint = -1;
@@ -168,6 +181,15 @@ struct renderer_t {
     /*! A flat white square, which exists only to be tinted. Everything else in the atlas is a
      * picture; this is the one tile whose whole purpose is to carry a colour. @date 2026-09-18 */
     int tile_solid = 0;
+
+    /*! Every tile in the atlas, kept after the upload so a scene can add more later without
+     * opening the jars for the whole atlas again (render_block_tiles). @date 2026-10-04 */
+    std::vector<mca::tile_t> tiles;
+
+    /*! The block textures render_block_tiles has looked for, by key, and the tile each one got:
+     * -1 for one that was looked for and not found, so it is not looked for again. @date 2026-10-04
+     */
+    std::map<std::string, int> block_tiles;
 
     /*! The fluids GregTech ships, in the order they are offered, and where each one's picture
      * landed in the atlas.
@@ -415,6 +437,26 @@ inline void build_item_atlas(renderer_t &r, const mca::mc_source_t &src) {
             w, h);
 }
 
+/*! Uploads r.tiles as the atlas texture: one row, so a tile's atlas coordinate is its index and
+ * nothing has to divide. Every mesh built before has its coordinates for the old row length, so
+ * whoever adds tiles after the first upload rebuilds them (render_block_tiles does).
+ * @date 2026-10-04, out of build_atlas */
+inline void upload_atlas(renderer_t &r) {
+    r.tile_count = (int)r.tiles.size();
+    r.atlas_w = r.tile_count * mca::TILE_PX;
+
+    std::vector<uint8_t> pixels((size_t)r.atlas_w * mca::TILE_PX * 4, 0);
+    for (int i = 0; i < r.tile_count; i++)
+        for (int y = 0; y < mca::TILE_PX; y++)
+            for (int x = 0; x < mca::TILE_PX; x++) {
+                const uint8_t *s = r.tiles[i].at(x, y);
+                uint8_t *d = &pixels[((size_t)y * r.atlas_w + i * mca::TILE_PX + x) * 4];
+                d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
+            }
+
+    r.atlas.upload(r.atlas_w, mca::TILE_PX, pixels.data());
+}
+
 inline void build_atlas(renderer_t &r) {
     mca::mc_source_t src;
     r.mc_loaded = src.open(r.mc_path);
@@ -426,8 +468,10 @@ inline void build_atlas(renderer_t &r) {
     r.fluid_names.clear();
     r.fluid_labels.clear();
     r.fluid_tile.clear();
+    r.block_tiles.clear();
 
-    std::vector<mca::tile_t> tiles;
+    std::vector<mca::tile_t> &tiles = r.tiles;
+    tiles.clear();
 
     auto push = [&](const mca::tile_t &t) {
         tiles.push_back(t);
@@ -906,20 +950,7 @@ inline void build_atlas(renderer_t &r) {
         r.tile_solid = push(solid);
     }
 
-    /* One row, so a tile's atlas coordinate is its index and nothing has to divide. */
-    r.tile_count = (int)tiles.size();
-    r.atlas_w = r.tile_count * mca::TILE_PX;
-
-    std::vector<uint8_t> pixels((size_t)r.atlas_w * mca::TILE_PX * 4, 0);
-    for (int i = 0; i < r.tile_count; i++)
-        for (int y = 0; y < mca::TILE_PX; y++)
-            for (int x = 0; x < mca::TILE_PX; x++) {
-                const uint8_t *s = tiles[i].at(x, y);
-                uint8_t *d = &pixels[((size_t)y * r.atlas_w + i * mca::TILE_PX + x) * 4];
-                d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
-            }
-
-    r.atlas.upload(r.atlas_w, mca::TILE_PX, pixels.data());
+    upload_atlas(r);
 
     build_item_atlas(r, src);
     DBG("render: atlas %dx%d, %d tiles, minecraft textures %s",
@@ -987,6 +1018,133 @@ inline void emit_face(std::vector<glu::vertex_t> &verts, std::vector<uint32_t> &
 
     indices.push_back(base + 0); indices.push_back(base + 1); indices.push_back(base + 2);
     indices.push_back(base + 0); indices.push_back(base + 2); indices.push_back(base + 3);
+}
+
+/*! The same as emit_face, with the texel also multiplied by a colour: a Minecraft block's own
+ * tint, such as grass green on the game's grey grass picture. @date 2026-10-04 */
+inline void emit_face_tinted(std::vector<glu::vertex_t> &verts, std::vector<uint32_t> &indices,
+        int cx, int cy, int cz, int face, int tile, int tile_count, float shade,
+        float tr, float tg, float tb)
+{
+    size_t first = verts.size();
+    emit_face(verts, indices, cx, cy, cz, face, tile, tile_count, shade, 0.0f);
+    for (size_t i = first; i < verts.size(); i++) {
+        verts[i].tr *= tr; verts[i].tg *= tg; verts[i].tb *= tb;
+    }
+}
+
+/*! Appends a cross: two quads through the cell's diagonals, upright, carrying the whole tile -
+ * how Minecraft draws a flower, tall grass or a torch. Nothing culls faces here, so each quad is
+ * seen from both sides. @date 2026-10-04 */
+inline void emit_cross_tinted(std::vector<glu::vertex_t> &verts, std::vector<uint32_t> &indices,
+        int cx, int cy, int cz, int tile, int tile_count, float tr, float tg, float tb)
+{
+    static const float QUADS[2][4][3] = {
+        {{0, 0, 0}, {1, 0, 1}, {1, 1, 1}, {0, 1, 0}},
+        {{1, 0, 0}, {0, 0, 1}, {0, 1, 1}, {1, 1, 0}},
+    };
+    float u0 = (float)tile / (float)tile_count;
+    float du = 1.0f / (float)tile_count;
+    for (int q = 0; q < 2; q++) {
+        uint32_t base = (uint32_t)verts.size();
+        for (int i = 0; i < 4; i++) {
+            glu::vertex_t v;
+            v.x = cx + QUADS[q][i][0];
+            v.y = cy + QUADS[q][i][1];
+            v.z = cz + QUADS[q][i][2];
+            v.u = u0 + FACE_UV[i][0] * du;
+            v.v = FACE_UV[i][1];
+            v.tr = tr; v.tg = tg; v.tb = tb;
+            verts.push_back(v);
+        }
+        indices.push_back(base + 0); indices.push_back(base + 1); indices.push_back(base + 2);
+        indices.push_back(base + 0); indices.push_back(base + 2); indices.push_back(base + 3);
+    }
+}
+
+inline void emit_box_tinted(std::vector<glu::vertex_t> &verts, std::vector<uint32_t> &indices,
+        const float lo[3], const float hi[3], int tile, int tile_count,
+        float tr, float tg, float tb);
+
+/*! The building blocks that are not whole cubes, as boxes inside the cell - slabs, stairs, fences,
+ * panes, gates, trapdoors and doors (cell_t::shape 3..12). The tile is stretched over each box's
+ * faces rather than cut to it, which is close enough to read what the block is.
+ *
+ * Fences and panes look at their four neighbours and reach toward a fence, a gate or a pane like
+ * themselves, or a whole cube, as the game joins them. @date 2026-10-04 */
+inline void emit_part_shape(std::vector<glu::vertex_t> &verts, std::vector<uint32_t> &indices,
+        const worldc::world_t &w, const worldc::cell_t &c, int tile, int tile_count,
+        float tr, float tg, float tb)
+{
+    const float X = (float)c.x, Y = (float)c.y, Z = (float)c.z;
+    auto box = [&](float x0, float y0, float z0, float x1, float y1, float z1) {
+        float lo[3] = {X + x0, Y + y0, Z + z0};
+        float hi[3] = {X + x1, Y + y1, Z + z1};
+        emit_box_tinted(verts, indices, lo, hi, tile, tile_count, tr, tg, tb);
+    };
+    /* The horizontal facings as a step: -x, +x, -z, +z. */
+    int dx = c.facing == worldc::FACE_XNEG ? -1 : c.facing == worldc::FACE_XPOS ? 1 : 0;
+    int dz = c.facing == worldc::FACE_ZNEG ? -1 : c.facing == worldc::FACE_ZPOS ? 1 : 0;
+
+    switch (c.shape) {
+    case 3: box(0, 0, 0, 1, 0.5f, 1); break;
+    case 4: box(0, 0.5f, 0, 1, 1, 1); break;
+    case 5: case 6: {
+        bool down = c.shape == 6;
+        box(0, down ? 0.5f : 0, 0, 1, down ? 1 : 0.5f, 1);
+        float x0 = dx > 0 ? 0.5f : 0, x1 = dx < 0 ? 0.5f : 1;
+        float z0 = dz > 0 ? 0.5f : 0, z1 = dz < 0 ? 0.5f : 1;
+        box(x0, down ? 0 : 0.5f, z0, x1, down ? 0.5f : 1, z1);
+        break;
+    }
+    case 7: case 8: {
+        bool pane = c.shape == 8;
+        float t0 = pane ? 0.4375f : 0.375f, t1 = pane ? 0.5625f : 0.625f;
+        auto joins = [&](int ox, int oz) {
+            worldc::cell_p n = w.get(c.x + ox, c.y, c.z + oz);
+            if (!n) return false;
+            if (n->kind != worldc::CELL_KIND_MC_BLOCK) return worldc::kind_is_full_cube(n->kind);
+            if (n->ghost) return false;
+            return n->shape == 0 || n->shape == c.shape || (!pane && n->shape == 9);
+        };
+        bool e = joins(1, 0), wst = joins(-1, 0), s = joins(0, 1), nth = joins(0, -1);
+        if (pane && !e && !wst && !s && !nth) e = wst = s = nth = true;
+        box(t0, 0, t0, t1, 1, t1);                              /* the post, or the pane's middle */
+        const float r0[2] = {pane ? 0.0f : 0.375f, pane ? 0.0f : 0.75f};
+        const float r1[2] = {pane ? 1.0f : 0.5625f, pane ? 1.0f : 0.9375f};
+        int rails = pane ? 1 : 2;
+        for (int k = 0; k < rails; k++) {
+            float a = r0[k], b = r1[k];
+            float u0 = pane ? t0 : 0.4375f, u1 = pane ? t1 : 0.5625f;
+            if (e)   box(t1, a, u0, 1, b, u1);
+            if (wst) box(0, a, u0, t0, b, u1);
+            if (s)   box(u0, a, t1, u1, b, 1);
+            if (nth) box(u0, a, 0, u1, b, t0);
+        }
+        break;
+    }
+    case 9: {
+        bool across_x = dz != 0;                    /* a gate facing north or south spans x */
+        auto span = [&](float a0, float b0, float a1, float b1, float y0, float y1) {
+            if (across_x) box(a0, y0, b0, a1, y1, b1); else box(b0, y0, a0, b1, y1, a1);
+        };
+        span(0, 0.4375f, 0.125f, 0.5625f, 0.3125f, 1);          /* the posts */
+        span(0.875f, 0.4375f, 1, 0.5625f, 0.3125f, 1);
+        span(0.125f, 0.4375f, 0.875f, 0.5625f, 0.375f, 0.5625f);  /* the rails */
+        span(0.125f, 0.4375f, 0.875f, 0.5625f, 0.75f, 0.9375f);
+        break;
+    }
+    case 10: box(0, 0, 0, 1, 0.1875f, 1); break;
+    case 11: box(0, 0.8125f, 0, 1, 1, 1); break;
+    case 12: {
+        if (dx > 0)      box(0.8125f, 0, 0, 1, 1, 1);
+        else if (dx < 0) box(0, 0, 0, 0.1875f, 1, 1);
+        else if (dz < 0) box(0, 0, 0, 1, 1, 0.1875f);
+        else             box(0, 0, 0.8125f, 1, 1, 1);
+        break;
+    }
+    default: box(0, 0, 0, 1, 1, 1);
+    }
 }
 
 /*! Appends an axis-aligned box, six quads, each shaded by the direction it faces.
@@ -1314,18 +1472,41 @@ inline int face_role(int facing, int face) {
     return ROLE_SIDE;
 }
 
-/*! Rebuilds the mesh of every placed cell, emitting only the faces that something can see.
+/*! Rebuilds the mesh of one 16-cube section of the map (world_t::SECTION), emitting only the faces
+ * something can see. Section `s` counts as world_t::section_bit does, x fastest; its cells, its
+ * redstone lamps and the wires on its cells' faces are its own. The whole map was one mesh until
+ * 2026-10-05, rebuilt on every change - 0.08 s for one cell (3d-draw/redesign/08-order.md).
+ *
+ * What follows is that mesher's rule, unchanged:
  *
  * A face is emitted when the neighbour in that direction is empty, which for a lone block means all
  * six and for a wall means only its outside. The bottom face of a cell resting on the floor is the
  * one exception: it is dropped because it is coplanar with the ground quad underneath and the two
  * would otherwise fight over the same depth.
  * @date 2026-09-16 */
-inline void rebuild_world_mesh(renderer_t &r, const worldc::world_t &w) {
+inline void rebuild_world_section(renderer_t &r, const worldc::world_t &w, int s) {
     std::vector<glu::vertex_t> verts;
     std::vector<uint32_t> indices;
+    std::vector<glu::vertex_t> gverts;             /* the see-through blocks, ghost 2 */
+    std::vector<uint32_t> gindices;
 
-    for (const worldc::cell_p &c : w.cells) {
+    const int S = worldc::world_t::SECTION;
+    const int sx = s % worldc::world_t::SECTIONS_X;
+    const int sy = (s / worldc::world_t::SECTIONS_X) % worldc::world_t::SECTIONS_Y;
+    const int sz = s / (worldc::world_t::SECTIONS_X * worldc::world_t::SECTIONS_Y);
+    const int x0 = sx * S, y0 = sy * S, z0 = sz * S;
+    auto inside = [&](int x, int y, int z) {
+        return x >= x0 && x < x0 + S && y >= y0 && y < y0 + S && z >= z0 && z < z0 + S;
+    };
+    /* The section's cells, in the order the whole map's were walked. */
+    std::vector<worldc::cell_p> here;
+    for (int z = z0; z < z0 + S; z++)
+        for (int y = y0; y < y0 + S; y++)
+            for (int x = x0; x < x0 + S; x++)
+                if (worldc::cell_p c = w.get(x, y, z))
+                    here.push_back(c);
+
+    for (const worldc::cell_p &c : here) {
         if (!c)
             continue;
 
@@ -1333,6 +1514,54 @@ inline void rebuild_world_mesh(renderer_t &r, const worldc::world_t &w) {
         int state = c->state;
         if (kind < 0 || kind >= KIND_MAX) kind = worldc::CELL_KIND_CASE;
         if (state < 0 || state > 3) state = worldc::CELL_STATE_OFF;
+
+        /* A Minecraft block a scene named (3d-draw): its own tile and tint, a plain cube of the
+        tint when it has no tile, and a guess (ghost 1) drawn as a smaller box so it reads as one.
+        A face is hidden only by a neighbour that is a whole, seen block. Ghost 2 is whole but
+        see-through - what a build still has to place (3d-draw's J, the user, 2026-10-05: "the
+        rest as ghostly blocks, with say 30% alpha") - and goes to the section's second mesh;
+        between two of those the faces are hidden too, so only their outside is drawn. */
+        if (c->kind == worldc::CELL_KIND_MC_BLOCK) {
+            const bool see = c->ghost == 2;
+            std::vector<glu::vertex_t> &V = see ? gverts : verts;
+            std::vector<uint32_t> &I = see ? gindices : indices;
+            int tile = (c->tile >= 0 && c->tile < r.tile_count) ? c->tile : r.tile_solid;
+            float tr = (float)((c->tint >> 16) & 0xff) / 255.0f;
+            float tg = (float)((c->tint >> 8) & 0xff) / 255.0f;
+            float tb = (float)(c->tint & 0xff) / 255.0f;
+            if (c->ghost == 1) {
+                float lo[3] = {c->x + 0.3f, c->y + 0.3f, c->z + 0.3f};
+                float hi[3] = {c->x + 0.7f, c->y + 0.7f, c->z + 0.7f};
+                emit_box_tinted(V, I, lo, hi, tile, r.tile_count, tr, tg, tb);
+                continue;
+            }
+            if (c->shape == 1) {
+                emit_cross_tinted(V, I, c->x, c->y, c->z, tile, r.tile_count,
+                        tr, tg, tb);
+                continue;
+            }
+            if (c->shape >= 3) {
+                emit_part_shape(V, I, w, *c, tile, r.tile_count, tr, tg, tb);
+                continue;
+            }
+            for (int f = 0; f < worldc::FACE_COUNT; f++) {
+                worldc::cell_p n = w.get(c->x + worldc::FACE_DIR[f][0],
+                        c->y + worldc::FACE_DIR[f][1], c->z + worldc::FACE_DIR[f][2]);
+                bool hides = n && worldc::kind_is_full_cube(n->kind)
+                        && !(n->kind == worldc::CELL_KIND_MC_BLOCK
+                             && (n->ghost || n->shape != 0));
+                if (see && n && n->kind == worldc::CELL_KIND_MC_BLOCK && n->ghost == 2
+                        && n->shape == 0)
+                    hides = true;
+                if (hides && c->shape == 0)
+                    continue;
+                if (f == worldc::FACE_YNEG && c->y == 0)
+                    continue;
+                emit_face_tinted(V, I, c->x, c->y, c->z, f, tile, r.tile_count,
+                        FACE_SHADE[f], tr, tg, tb);
+            }
+            continue;
+        }
 
         /* A cable is not a cube: its shape follows what it joins onto, so it is built whole and
         the per-face walk below is skipped entirely. */
@@ -1406,7 +1635,7 @@ inline void rebuild_world_mesh(renderer_t &r, const worldc::world_t &w) {
     -- active". It sits on the face rather than in the block because that is what it reports - what
     -- is coming IN on that side - and a face with nothing wired to it shows nothing at all, so the
     -- board reads as four lamps rather than as twenty-four. */
-    for (const worldc::cell_p &c : w.cells) {
+    for (const worldc::cell_p &c : here) {
         if (!c || c->kind != worldc::CELL_KIND_REDSTONE)
             continue;
         for (int f = 0; f < worldc::FACE_COUNT; f++) {
@@ -1441,6 +1670,8 @@ inline void rebuild_world_mesh(renderer_t &r, const worldc::world_t &w) {
             state = worldc::CELL_STATE_OFF;
 
         auto [wx, wy, wz, wface] = w.face_unkey((double)kv.first);
+        if (!inside(wx, wy, wz))
+            continue;
         if (wire->kind == worldc::CELL_KIND_KEYBOARD) {
             emit_keyboard(verts, indices, wx, wy, wz, wface, r.tile_keyboard, r.tile_count);
         }
@@ -1455,7 +1686,22 @@ inline void rebuild_world_mesh(renderer_t &r, const worldc::world_t &w) {
         }
     }
 
-    r.world_mesh.upload(verts, indices);
+    r.world_meshes[(size_t)s].upload(verts, indices);
+    r.ghost_meshes[(size_t)s].upload(gverts, gindices);
+}
+
+/*! Brings the sections' meshes up to date: every one for a world not meshed before, else those
+ * the world marked. A change that marked nothing (none should) rebuilds them all.
+ * @date 2026-10-05 */
+inline void rebuild_world_mesh(renderer_t &r, worldc::world_t &w) {
+    const int n = worldc::world_t::SECTIONS_X * worldc::world_t::SECTIONS_Y
+            * worldc::world_t::SECTIONS_Z;
+    uint64_t dirty = w.take_dirty();
+    if (r.mesh_world != &w || dirty == 0)
+        dirty = ~0ull;
+    for (int s = 0; s < n; s++)
+        if (dirty & (1ull << s))
+            rebuild_world_section(r, w, s);
     r.mesh_version = w.version;
     r.mesh_world = &w;
 }
@@ -1571,6 +1817,7 @@ inline bool render_init(const char *mc_path, const char *vanilla_path) {
     }
     r.loc_mvp    = r.shader.uniform("u_mvp");
     r.loc_atlas  = r.shader.uniform("u_atlas");
+    r.loc_alpha  = r.shader.uniform("u_alpha_pct");
     r.attr_pos   = r.shader.attribute("a_pos");
     r.attr_uv    = r.shader.attribute("a_uv");
     r.attr_tint = r.shader.attribute("a_tint");
@@ -1595,6 +1842,7 @@ inline bool render_set_mc_path(const char *mc_path, const char *vanilla_path) {
     renderc::build_ground_mesh(r);
     renderc::build_marker_mesh(r);
     r.mesh_version = 0;
+    r.mesh_world = nullptr;       /* every section again, not only those marked */
     renderc::rebuild_highlight_mesh(r);
     return r.mc_loaded;
 }
@@ -1709,6 +1957,85 @@ inline std::vector<double> render_tile_uv_at(int tile) {
         return {0.0, 0.0, 1.0, 1.0};
     double du = 1.0 / (double)r.tile_count;
     return {(double)tile * du, 0.0, (double)(tile + 1) * du, 1.0};
+}
+
+/*! Finds block textures for a scene that names arbitrary Minecraft blocks (3d-draw), adds the
+ * ones found to the atlas, and answers each key's tile, or -1.
+ *
+ * `keys` is one per line, lower case: `minecraft:<file>` is a vanilla block texture, any other
+ * `<namespace>:<file>` is looked for in every jar under mods/, the way mod_textures keys them
+ * (its subfolder dropped), and `<namespace>:<folder>/<file>` is that one file in that folder. 1.7.10 has no block models, so which file draws a block is the
+ * scene's guess, and the scene falls back to a colour for a -1.
+ *
+ * Every key is looked for once: the answer, -1 too, is kept in block_tiles. The jars are read
+ * in one pass for all the keys of a call, so a scene should ask for a batch. Adding tiles
+ * changes the atlas's row length, so the meshes are rebuilt.
+ * @date 2026-10-04 */
+inline std::vector<double> render_block_tiles(const char *keys) {
+    renderer_t &r = renderc::g_rend;
+    std::vector<std::string> list;
+    std::string cur;
+    for (const char *p = keys ? keys : ""; ; p++) {
+        if (*p == '\n' || *p == 0) {
+            if (!cur.empty()) list.push_back(cur);
+            cur.clear();
+            if (*p == 0) break;
+        }
+        else if (*p != '\r') {
+            cur += (char)tolower((unsigned char)*p);
+        }
+    }
+
+    std::vector<std::string> vanilla;
+    std::unordered_set<std::string> wanted;
+    for (const std::string &k : list) {
+        if (r.block_tiles.count(k))
+            continue;
+        if (k.rfind("minecraft:", 0) == 0) vanilla.push_back(k);
+        else wanted.insert(k);
+    }
+    if (!vanilla.empty() || !wanted.empty()) {
+        mca::mc_source_t src;
+        src.open(r.mc_path);
+        src.open_vanilla(r.vanilla_path);
+        size_t before = r.tiles.size();
+        for (const std::string &k : vanilla) {
+            mca::tile_t t;
+            if (src.vanilla_tile(k.c_str() + 10, t)) {
+                r.block_tiles[k] = (int)r.tiles.size();
+                r.tiles.push_back(t);
+            }
+            else {
+                r.block_tiles[k] = -1;
+            }
+        }
+        std::map<std::string, mca::tile_t> found = src.mod_textures(r.mc_path, wanted);
+        for (const std::string &k : wanted) {
+            auto it = found.find(k);
+            if (it != found.end()) {
+                r.block_tiles[k] = (int)r.tiles.size();
+                r.tiles.push_back(it->second);
+            }
+            else {
+                r.block_tiles[k] = -1;
+            }
+        }
+        if (r.tiles.size() != before) {
+            upload_atlas(r);
+            build_ground_mesh(r);
+            build_marker_mesh(r);
+            rebuild_highlight_mesh(r);
+            r.mesh_version = 0;
+            r.mesh_world = nullptr;   /* every section again, not only those marked */
+        }
+        DBG("render: block textures, %zu asked, %zu new tiles", list.size(),
+                r.tiles.size() - before);
+    }
+
+    std::vector<double> out;
+    for (const std::string &k : list)
+        out.push_back((double)r.block_tiles[k]);
+    return out;
 }
 
 /*! What a liquid tank holds when it is full, in litres. GregTech's Super Tank IV.
@@ -1874,6 +2201,11 @@ inline void render_highlight(int x, int y, int z) {
     renderc::rebuild_highlight_mesh(r);
 }
 
+/*! How opaque the see-through blocks (ghost 2) are drawn, in percent, 0 to 100. @date 2026-10-05 */
+inline void render_ghost_alpha(int pct) {
+    renderc::g_rend.ghost_alpha = pct < 0 ? 0 : pct > 100 ? 100 : pct;
+}
+
 /*! Clears the selection frame. @date 2026-09-16 */
 inline void render_highlight_off() {
     renderer_t &r = renderc::g_rend;
@@ -1946,9 +2278,23 @@ inline void render_world(vc::ref_t<worldc::world_t> w, int width, int height) {
     r.atlas.bind(0);
     if (r.loc_atlas >= 0)
         glUniform1i(r.loc_atlas, 0);
+    if (r.loc_alpha >= 0)
+        glUniform1i(r.loc_alpha, 100);
 
     r.ground_mesh.draw(r.attr_pos, r.attr_uv, r.attr_tint);
-    r.world_mesh.draw(r.attr_pos, r.attr_uv, r.attr_tint);
+    for (const glu::mesh_t &m : r.world_meshes)
+        m.draw(r.attr_pos, r.attr_uv, r.attr_tint);
+
+    /* The see-through blocks last of the world, tested against the depth the solid ones left but
+    writing none, so one does not hide another behind it. @date 2026-10-05 */
+    if (r.loc_alpha >= 0)
+        glUniform1i(r.loc_alpha, r.ghost_alpha);
+    glDepthMask(GL_FALSE);
+    for (const glu::mesh_t &m : r.ghost_meshes)
+        m.draw(r.attr_pos, r.attr_uv, r.attr_tint);
+    glDepthMask(GL_TRUE);
+    if (r.loc_alpha >= 0)
+        glUniform1i(r.loc_alpha, 100);
     r.highlight_mesh.draw(r.attr_pos, r.attr_uv, r.attr_tint);
 
     /* The marker goes last and with its own matrix: the sphere is a unit ball at the origin, so the
@@ -2008,6 +2354,10 @@ inline int register_meta(vc::virt_state_t *vs) {
                /* FN:    */ renderc::render_tile_uv_at,
                /* PARAMS:*/ int
         >},
+        {"render_block_tiles", vc::luaw_function_wrapper<
+               /* FN:    */ renderc::render_block_tiles,
+               /* PARAMS:*/ const char *
+        >},
         {"render_tank_capacity", vc::luaw_function_wrapper<
                /* FN:    */ renderc::render_tank_capacity
         >},
@@ -2047,6 +2397,10 @@ inline int register_meta(vc::virt_state_t *vs) {
         >},
         {"render_highlight_off", vc::luaw_function_wrapper<
                /* FN:    */ renderc::render_highlight_off
+        >},
+        {"render_ghost_alpha", vc::luaw_function_wrapper<
+               /* FN:    */ renderc::render_ghost_alpha,
+               /* PARAMS:*/ int
         >},
         {"render_marker", vc::luaw_function_wrapper<
                /* FN:    */ renderc::render_marker,

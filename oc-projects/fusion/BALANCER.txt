@@ -1,0 +1,174 @@
+# BALANCER - design notes + everything learned (2026-10-01). Read with README.txt.
+
+== STATUS ==
+All 16 plasmas made and tested (1000-1008 L each), with fuslib.lua run():
+  MK2: Ti, Sn, B, Zn, Nb, O(plasma), S, N    MK3: Rn, Fe, Ca, Am, Bi, Ag, Ni (and He on both)
+Raw inputs are all in the fusion ME (player supplies them).
+
+== HARDWARE (see layout.txt FEED SETUP) ==
+MK3: interface 8de6c195 -> transposer 784f7532 -> gt 7510f90f
+MK2: interface a223482e -> transposer 21fd1d86 -> gt 7be89c69
+transposer sides: 4 = dual interface (6 fluid tanks, 16000 L each, 0-based tank = config slot)
+                  2 = NORTH buffer 256000 L, 3 = SOUTH buffer 256000 L
+Buffers are piped (1-slot pipes, keep order) into the reactor's 2 input hatches.
+Buffers do not drain instantly, but are large.
+On/off: gt_machine.setWorkAllowed(bool). Fluid list: me_interface.getFluidsInNetwork() (safe:
+  small own network ~60 AE/t; NEVER item-list calls on the main ME).
+Set interface fluid: database entry = IC2:itemFluidCell {Fluid:{FluidName:"<name>",Amount:1000}},
+  setFluidInterfaceConfiguration(slot, db, entry); read back getFluidInterfaceConfiguration (true lies).
+
+== RULES LEARNED (the hard way) ==
+1. Each reactor has 2 input hatches, 1 fluid each -> ONE recipe at a time per reactor.
+2. Fixed sides: input A always NORTH, input B always SOUTH. Never split a fluid over both
+   buffers (that jammed MK3: Pu ended in both hatches).
+3. Exact amounts = whole runs. Next recipe only after both buffers drained.
+   Leftover of one input in a hatch blocks every other recipe -> manual emptying.
+4. Stall guard: if buffers do not go down for ~30 s, stop that reactor and report.
+5. Timeouts: count real loop steps, not uptime (server lag makes game time slow).
+   Always switch reactors off + clear interface config at the end, also on error.
+6. Start energy (40M-500M EU) is paid when a reactor starts; during continuous operation
+   the cost is only EU/t. -> BIG BATCHES per start (player, 2026-10-01).
+7. Interface tanks hold only 16000 L per slot: for a big batch, feed in several transfers,
+   all of A to NORTH, all of B to SOUTH (buffers 256000 L), reactor stays on.
+
+== RECIPES: reactor, A (north) / B (south) per run -> out ==
+He  MK2/3  deuterium 125 / tritium 125 -> 125     (or deuterium 125 / helium-3 125)
+B   MK2/3  plasma.helium 144 / molten.lithium 144 -> 144
+O   MK2/3  plasma.boron 144 / molten.lithium 144 -> 144
+Ti  MK2/3  molten.aluminium 144 / fluorine 144 -> 144
+Ca  MK2/3  molten.magnesium 128 / oxygen 128 -> 16
+N   MK2/3  molten.beryllium 16 / deuterium 375 -> 125
+Zn  MK2/3  molten.copper 72 / tritium 250 -> 72
+Nb  MK2/3  molten.cobalt 144 / molten.silicon 144 -> 144
+S   MK2/3  molten.aluminium 16 / molten.lithium 16 -> 144
+Sn  MK2/3  molten.silver 144 / helium-3 375 -> 144
+Fe  MK3    molten.silicon 16 / molten.magnesium 16 -> 144
+Rn  MK3    molten.iridium 144 / fluorine 500 -> 144
+Ni  MK3    molten.potassium 16 / fluorine 144 -> 144
+Ag  MK3    molten.gold 144 / molten.arsenic 144 -> 144
+Bi  MK3    molten.tantalum 144 / plasma.zinc 72 -> 144
+Am  MK3    molten.plutonium241 144 / hydrogen 2000 -> 144
+Plasma inputs (B needs He, O needs B, Bi needs Zn): make those first.
+
+== CATALYSTS (goal: produce all 4) ==
+C1 Crude = He Fe Ca Nb plasma 1000 L each
+C2 Prosaic = Crude + Rn Ni B S       C3 Resplendent = Prosaic + N Zn Ag Ti
+C4 Exotic = Resplendent + Am Bi O Sn   each step 1000 L -> 1000 L, 2500 s in a mixer
+  (EU/t 125k / 500k / 2M / 8M = ZPM / UV / UHV / UEV). Excite steps E1-E4 separate.
+Mixers are NOT connected to this computer yet (need interface+transposer or AE patterns).
+Raw needs per 1000 L Exotic: ~66,400 L of 20 fluids (see chat 2026-10-01 / recipes.txt).
+
+== BALANCER PLAN (not written yet) ==
+loop:
+  read ME plasma levels (getFluidsInNetwork)
+  for each free reactor: pick the plasma furthest below its target that this reactor can make
+    and whose inputs are in stock (plasma inputs count too: B, O, Zn)
+  batch = PARALLELS x 4 runs (player 2026-10-01), whole machine used every run; buffer size
+    (256000 L) is NOT a limit to care about. parallels: MK2 128 if start<160M else 64;
+    MK3 192 if start<160M, 128 if <320M, else 64 (main-srv), also capped by EU input
+    (read 'Running Parallel' from getSensorInformation during a run to get the real number).
+    whole runs only; reactor on, feed A north / B south in 16000-L chunks, wait drained,
+    then next recipe (reactor may stay on between recipes -> no new start energy?)
+  stall guard, always-off on exit, log to file
+  later: start catalyst steps when 1000 L of each needed plasma is there (needs mixers)
+open questions: targets per plasma; does a reactor pay start energy again after idle
+  between recipes? (watch getEUStored); mixer hookup.
+
+== BALANCER GOAL (player, 2026-10-01) ==
+- Keep all 16 plasmas at about the same level, use the fusion reactors as much as possible.
+- Only BATCH runs: batch = max(parallels x 4, runs needed so start energy <= 10% of batch energy).
+- If stock is not enough for a full batch: do NOT run that recipe (skip it).
+- Pick next recipe per free reactor: lowest plasma level among recipes whose full batch is in stock.
+
+== ENERGY MEASUREMENT (Titanium x4 on MK2, 2026-10-01, after player's energy update) ==
+- Running Parallel = 85 (not 128): parallels are sized to the hatch capacity (85 x 49152 x2 ~ 8.4M EU/t).
+- Real supply is lower: running drains stored EU 320M -> 0 in ~6 s, then the reactor STOPS.
+  Each cycle makes ~24,480 L Ti (2 x 85 x 144). Recharge 0 -> full in ~3 s (~6.5M EU/t in).
+- It does NOT restart by itself: setWorkAllowed(false) then (true) restarts it (works).
+- No separate start cost seen: the stored EU is a working buffer; start value = minimum charge.
+- So the limit is EU supply rate, not start energy. Balancer must: restart when inactive with
+  EU full and inputs still in the hatches (track made vs expected = runs x out).
+- Server lag: loops with os.sleep(1) take ~3 s real per step; keep each oc_lua call short
+  (<= ~40 steps) or run the balancer as its own program on the computer.
+- Left at end of session: ~24,480 L each Al + F in MK2 hatches (finishes with one more restart).
+== after energy upgrade (MK2 128A ZPM, MK3 128A UV), 2026-10-01 ==
+MK3 Calcium x4 (768 runs, 98304 Mg + 98304 O): reached 192 parallels, stored EU stayed >= 633M/640M
+  (supply OK), batch done in ~9 s, 12288 L Ca. Parallels dipped (125, 18) when hatches ran low:
+  feeding speed (16000 L/step from interface) limits, not power.
+MK2: would not start (par=2 shown = last run); hatches likely hold a one-sided leftover from the
+  Ti batch. Not tested after upgrade yet.
+MK2 address changed to 7be89c69 (adapter re-placed; came back with workAllowed=true). Files updated.
+MK2 Boron x4 (512 runs, 73728 He plasma + 73728 Li): complete, +73728 B, EU full at end.
+  Parallels/EU per step not captured (call timed out: server lag). Earlier "MK2 won't start" was
+  my bookkeeping error: hatches were empty (player checked), Ti batch had finished.
+
+== PROGRAM: /home/fusion/balancer.lua (written 2026-10-01, launcher /home/bin/balancer.lua) ==
+  balancer plan   dry run: batch sizes, stock OK/short, what each reactor would start
+  balancer        run (blocks the shell); stop: echo > /home/fusion/balancer.stop  or Ctrl+C
+  log: balancer.log, status: balancer.status (every 5 steps)
+  picks per free reactor the lowest plasma whose full batch is in stock (reserves the other
+  reactor's unfed inputs, avoids same output / input-output conflicts), restarts on EU stop,
+  stall guard 45 steps -> that reactor 'error' (no new batches). On stop: reactors off, configs
+  cleared; a batch stopped midway leaves inputs in hatches (finish it before other recipes!).
+  Not yet: resume after stop, mixers/catalysts.
+2026-10-01 balancer changes (player): same plasma may run on both reactors (each picks the lowest
+  it can make); stall = report only after 90 s, reactor stays on. Completion no longer uses ME
+  levels: done = all fed + buffers empty + idle with EU full and 2 restarts did nothing.
+  Started detached (thread) and tested: mk3 zinc 2176 runs -> +156672 (complete; last cycle reached
+  ME just after DONE), mk2 oxygen 512 runs -> only +61488 of 73728 (12240 = one 85-par cycle missing,
+  cause unknown), then both started tin (works). Feed rate 16000 L/fluid/step is the limit for big
+  batches; steps take ~3-5 s real with server lag.
+== v2 (balancer2.lua, launcher 'balancer' now runs v2), started 2026-10-01 ==
+Queue of 2 batches per reactor, tight 50 ms feed with 3 interface slots per fluid, reactors stay on,
+choice by projected levels, stall = report only (90 s), state in balancer.state (resume on start).
+Feed speed: oxygen 2x73728 L in 9 s; radon 193536 Ir + 672000 F in 16 s (old: minutes).
+"DONE" of batch 1 = batch 2 fully fed and buffers empty; output can still arrive after that.
+Open: MK2 oxygen plasma again ended 12240 L (= 85 x 144, one cycle) short of 73728, both times.
+FACT (player, certain): the start (restart) cost is paid when the reactor CHANGES recipe.
+  A after A after A ... pays no restart cost. That is why we send big batches.
+  -> chaining the same recipe is free; only a recipe switch needs the 10% amortization.
+== main-srv code reading (GoodGenerator 0.4.88), 2026-10-01 ==
+Start energy (start - EU/t) is CONSUMED on every start from idle. Runs back to back (next recipe found
+at the tick the last run ends) pay nothing extra, even A->B, but with 1 fluid per hatch a switch always
+leaves a gap -> pays B's start. Any gap (hatches dry) = start from idle = pays again.
+EU store empty mid-run -> machine disables itself (needs setWorkAllowed(true)); that run's inputs and
+output are LOST. Idle machine checks for recipes every 100 ticks or on input change.
+== rules v2.1 (player) ==
+MAX_LEVEL 250,000,000 L per plasma. Switch batch = 10% rule. Repeat of the current recipe = parallels x4,
+chosen while its projected level <= lowest other + one switch batch of it.
+Autostart: /etc/rc.d/balancer.lua, enabled in /etc/rc.cfg -> starts headless 10 s after boot.
+  'rc balancer stop' or 'balancer stop' to stop for maintenance. Screen: 'balancer'.
+Fixed: false STALL/'stuck' right after QUEUE (timers were from the idle time before); restart only
+  if inputs wait 30 s; real fault shown = reactor disabled itself (EU empty, run lost).
+Reservation (player): a low plasma blocked by missing inputs reserves its full-batch inputs; higher plasmas can't use them.
+Reservation (player): a low plasma blocked by missing inputs reserves its full-batch inputs; higher plasmas can't use them.
+== NEW FEED MODEL (2026-10-01, after rebuild) ==
+MK3: interface 0b044448 -> pump -> aux tank side 0 (below) of tp 1b039114 -> N(2)/S(3) -> MK3
+MK2: interface 5db4f90d -> pump -> aux tank side 1 (above) of tp 68b0376b -> N(2)/S(3) -> MK2
+tanks are 256M L; pump ~400k L/s; one transferFluid moves any amount. Cycle: set interface slot 0 to
+one fluid, wait until aux >= chunk (600k) or 3 s, clear slot, move chunk to N (A) or S (B), return
+rest aux -> interface (side 4). A/B alternate. Hatches now accept the next batch while one runs.
+DONE = production tracking (ME growth + plasma fed out, FIFO to batches), fallback: idle 15 s.
+Screen: balancer draws the status every 3 s itself (no keyboard). Off: create /home/fusion/display.off
+EU rules (player, 2026-10-01): watch for EU spikes (drop > 15% of store in 1 s -> log 'EU SPIKE',
+  marked expected if within 15 s of a recipe change, else shown as problem). A recipe change
+  (switch batch) is fed only when the previous batches are DONE and the store is >= 99% full,
+  so no double change without refill. Repeats still fed ahead.
+Observed before: MK2 'ran out of EU' 5x, always on oxygen/titanium at 128 par (~12.6M EU/t needed).
+Player decision 2026-10-01: oxygen plasma + titanium MK3 only (MK2 ran out of EU at 128 par, steady drain, not at switch).
+Fix: a low plasma feasible only for the OTHER reactor now also reserves its inputs (MK3 took D for helium while nitrogen waited for MK2).
+HARD reservations (player): RES[plasma] holds full-batch inputs for a low plasma that can't start; no other recipe may use them; released when its batch is queued. Log: RESERVE/RELEASE. Screen: * in NEEDS.
+== ALLOCATION MODEL (player, 2026-10-01; replaces RES) ==
+priority = projected level (lowest first). RESERVED (#): stock taken for a recipe, gone for others,
+kept until scheduled. DESIRED (!): one missing input per recipe; blocks lower priorities from
+reserving/starting with it; incoming stock goes to the desirer first; ends when complete (then it
+may desire its other input); never touches others' reservations. Schedulable = both inputs fully
+reserved (batch size = larger reactor's). Repeats (x4) only from free, undesired stock.
+No deadlock: recipes only wait for supply, never for each other. Screen: PRIORITY list.
+Spike labels: 'start from idle (gap)' when the reactor was idle the second before. A repeat batch that starts after the reactor went idle is gated like a switch (EU full).
+2026-10-03: interfaces re-placed -> MK2 iface 3ae3a8df, MK3 iface 7aae4e0e (autostart had crashed on old addresses).
+  fuslib L.autodetect() now runs at balancer start: reactors by name, interfaces by a pump test
+  (deuterium into slot 0, which aux fills, all returned). Logs 'addresses changed, found: ...'.
+2026-10-03: boot crash = database not there at load time; fuslib/balancer now look it up lazily (L.getdb). rc service waits for components, retries 5x with traceback + component list in the log.
+Disk audit 2026-10-03: only balancer.log grows; balancer AND rc service rotate it at 100 KB -> .old. Max ~200 KB. status/view/state overwritten. Memory: all tables capped.
+Batch minimum (player 2026-10-03): every batch (repeat or switch) >= 10 s of reactor work (cycle = ticks/speed/20 s), and >= parallels x4. Reason: x4 Nickel repeats = 3.2 s, feeding took longer -> gaps -> start energy paid each time.

@@ -1,0 +1,52 @@
+# fluids map - updated 2026-10-01. Verified facts; read before redoing experiments.
+# sides: 0=DOWN 1=UP 2=NORTH 3=SOUTH 4=WEST 5=EAST
+# see also: README.txt (how-to), patterns.txt (decoded patterns), recipes.txt
+
+== RECIPE NAME -> INTERNAL FLUID NAME -> DISPLAY NAME ==
+(source: decoded AE2 pattern NBT, tag.Fluid; * = also seen in a real tank)
+plasmas (plasma.<x>, display "<X> Plasma"):
+  helium boron oxygen titanium calcium nitrogen* zinc niobium
+  sulfur tin silver bismuth iron radon nickel americium
+gases (plain name):
+  Deuterium -> deuterium*    "Deuterium"
+  Tritium   -> tritium       "Tritium"
+  Helium-3  -> helium-3      "Helium-3"
+  Fluorine  -> fluorine      "Fluorine"
+  Hydrogen  -> hydrogen      "Hydrogen Gas"
+  Oxygen    -> oxygen        "Oxygen Gas"
+molten (molten.<x>, display "Molten <X>"):
+  lithium aluminium magnesium beryllium* copper cobalt silver gold
+  arsenic tantalum iridium potassium
+  Silicon -> molten.silicon   display "Molten Raw Silicon" (!)
+  Plutonium 241 -> molten.plutonium241 (no space/dash)
+catalysts:
+  dimensionallytranscendentcrudecatalyst / ...prosaiccatalyst /
+  ...resplendentcatalyst / ...exoticcatalyst
+  excited: exciteddtcc exciteddtpc exciteddtrc exciteddtec
+not in any pattern (unverified): molten.carbon molten.manganese molten.iron
+
+== TANK BLOCK (north of PC) ==
+transposers 77b09801 915fe992 3476f483 e39e0980 (NOT connected 2026-10-01), each touches 5 tanks
+(U,N,S,W,E) of 64000 L, 1 tank per side.
+UP tank = VOID (auto-emptied by player). Tested 2026-09-30 on e39e0980:
+  transferFluid(2,1,1) -> 1 L arrived UP, gone within 2 s.
+So storage = N,S,W,E = 16 tanks. To discard fluid: push it UP.
+Contents 2026-09-30 (player samples of recipe 15):
+  e39e0980 N plasma.nitrogen 999 L, S deuterium 375 L, W molten.beryllium 16 L
+
+== AE2 PATTERN CHEST ==
+extrautils chestFull, 27 slots, at 3 0 1 (geo). Was UP of tp 61501976, later eb4c38a9;
+no transposer on it since 2026-10-01 (eb4c38a9 removed), so unreadable now.
+25 ae2fc:fluid_encoded_pattern (slots 1-25). Full decoded list: patterns.txt
+(regenerate: lua /home/fusion/patterns.lua /home/fusion/patterns.txt)
+slot -> recipes.txt #:
+  1->7 2->33 3->40 4->6 5->1 6->9 7->36 8->3 9->27 10->32 11->17
+  12->24 13->37 14->22 15->34 16->4 17->15 18..25 -> C1..C4,E1..E4
+2026-10-01 check: ALL fusion amounts in patterns == recipes.txt.
+Helium plasma has 2 patterns (slot 5 D+T, slot 16 D+He3).
+Chain: tiers built stepwise (C1..C4), each excited separately (E1..E4).
+Excite patterns list only the catalyst as input.
+
+== DECISIONS BY PLAYER ==
+recipes.txt #5 (Carbon+He3->Oxygen) deleted 2026-10-01: does not exist.
+recipes.txt #8 (Mn+H->molten Iron): not needed, no pattern; kept in file.

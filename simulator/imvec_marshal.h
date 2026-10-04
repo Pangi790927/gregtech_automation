@@ -20,9 +20,11 @@
 
 namespace virt_composer {
 
-template <ssize_t index>
-struct luaw_param_t<ImVec2, index> {
-    ImVec2 luaw_single_param(lua_State *L);
+/* The stack index is an argument, not a template parameter, since virt_composer's "wip
+coroutines" change (../utils c2612eb); the base carries how a conversion reports an error. */
+template <>
+struct luaw_param_t<ImVec2> : luaw_param_base_t {
+    ImVec2 luaw_single_param(lua_State *L, ssize_t index);
 };
 
 template <>
@@ -33,8 +35,7 @@ struct luaw_returner_t<ImVec2> {
 /*! Reads `{x = , y = }` off the stack. A nil argument answers (0, 0) rather than raising: an
  * optional position is common on the ImGui calls this serves, and zero is what they mean by it.
  * @date 2026-09-16 */
-template <ssize_t index>
-inline ImVec2 luaw_param_t<ImVec2, index>::luaw_single_param(lua_State *L) {
+inline ImVec2 luaw_param_t<ImVec2>::luaw_single_param(lua_State *L, ssize_t index) {
     ImVec2 ret;
     if (lua_isnil(L, index))
         return ret;

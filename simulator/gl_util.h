@@ -41,6 +41,20 @@ Their values are fixed by the GL specification and are the same on every impleme
 #ifndef GL_DEPTH_BUFFER_BIT
 #define GL_DEPTH_BUFFER_BIT 0x00000100
 #endif
+/* glDepthMask is OpenGL 1.0, which opengl32.dll (and libGL) export themselves, so it is declared
+here and linked, not loaded: the stripped loader keeps only what ImGui references, and ImGui never
+masks depth. The see-through pass needs it (render_composer.h, 2026-10-05). */
+#ifndef GL_FALSE
+#define GL_FALSE 0
+#endif
+#ifndef GL_TRUE
+#define GL_TRUE 1
+#endif
+#if defined(_WIN32)
+extern "C" __declspec(dllimport) void __stdcall glDepthMask(GLboolean flag);
+#else
+extern "C" void glDepthMask(GLboolean flag);
+#endif
 #ifndef GL_STATIC_DRAW
 #define GL_STATIC_DRAW 0x88E4
 #endif

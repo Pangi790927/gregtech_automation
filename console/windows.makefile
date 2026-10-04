@@ -9,7 +9,7 @@ LIBS      := /link ws2_32.lib mswsock.lib user32.lib
 
 # The agents: connectors, each in its own folder with its payload, built there as <name>.exe,
 # because it reads its payload from beside itself.
-AGENTS    := term
+AGENTS    := term claude-oc ocscp
 
 # Header-only apart from one .cpp per program; colib is a single header.
 DEPS      := $(wildcard ./*.h)

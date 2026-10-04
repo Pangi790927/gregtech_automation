@@ -6,8 +6,9 @@ restarts it.
 A connector, like term.exe: it attaches to the only computer on the relay and opens a one-off
 zone whose code keeps /home/octerm.lua as /home/octerm.old.lua (to undo: move it back), writes
 this folder's octerm.lua in its place, writes the relay's address from the repo's config.ini
-(`pc`, `computer_port`) to /home/.octerm/relay, where a bare `octerm` reads it, and restarts
-octerm. It restarts it by closing the running one, then typing `octerm` and Enter, which wait in
+(`relay_for_computers` or else `pc`, and `computer_port`) to /home/.octerm/relay, where a bare
+`octerm` reads it, and restarts octerm. It restarts it by closing the running one, then typing
+`octerm` and Enter, which wait in
 the signal queue for the shell octerm returns to. Closing takes two pushes: a Ctrl+C from the
 computer's own keyboard, which the single-file octerm (protocol 1) closed on, and octerm_stop,
 which stage 1 and its extension close on (their Ctrl+C belongs to the monitor's console, where it
@@ -37,7 +38,8 @@ def read_config():
 
 
 CONFIG = read_config()
-RELAY = f"{CONFIG['pc']} {CONFIG.get('computer_port', '7777')}"
+# the relay on the server is at 127.0.0.2 for the computers (docs/install.md), on this PC at `pc`
+RELAY = f"{CONFIG.get('relay_for_computers', CONFIG['pc'])} {CONFIG.get('computer_port', '7777')}"
 
 level = 1
 while "]" + "=" * level + "]" in NEW:

@@ -1,0 +1,13 @@
+# what the build makes and what the program writes as it runs; data/ is in the root .gitignore
+*.obj
+*.exe
+*.ilk
+*.pdb
+*.lib
+*.exp
+*.dll
+logfile*.log
+imgui.ini
+settings.save
+test_run/
+__pycache__/

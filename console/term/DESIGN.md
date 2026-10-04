@@ -5,7 +5,8 @@ build and run everything). Asked for by the user on 2026-09-30.
 
 ## What it is
 
-- **term.exe** (this folder, built here by `make` in `console/`) is a connector: it opens the
+- **term.exe** (this folder, built here by `make` in `console/`) is a connector
+  (`console/connector.h` does the choosing, attaching and opening; term.h the rest): it opens the
   `terminal` zone on a computer with **term.lua**, its payload (beside it, read from there, sent
   first by hash only and in full on a cache miss), and shows that zone's screen in its window.
   With one computer it attaches at once; with several, a number picks one. Every key goes to the
@@ -31,8 +32,9 @@ build and run everything). Asked for by the user on 2026-09-30.
   computer; `K`, `W` to it).
 - **colib, no threads.** term.exe reads its window like any handle: `CONIN$` opened with
   `FILE_FLAG_OVERLAPPED` completes on the IOCP (tried in a scratch program first). That read gives
-  characters and VT sequences, so `keys.h` maps them to OpenOS's `keyboard.keys`, US layout.
-  `winconsole.h` takes the window over and gives it back.
+  characters and VT sequences, so `console/keys.h` (shared with claude-oc's window) maps them
+  to OpenOS's `keyboard.keys`, US layout. `winconsole.h` takes the window over and gives it
+  back.
 
 ## Using it from Claude
 

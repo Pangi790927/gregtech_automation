@@ -9,3 +9,5 @@ simulator/scenes/aedbg/
 server-requests/*.out
 # this PC's own addresses (config-example.ini is the committed layout)
 config.ini
+# what the robots read from the world: contours, maps (3d-draw/DESIGN.md); never committed
+3d-draw/data/

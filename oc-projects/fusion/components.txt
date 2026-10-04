@@ -1,0 +1,35 @@
+Components survey - 2026-09-30 (read-only)
+
+FUSION CONTROLLERS (gt_machine, full GT API, have getCoordinates)
+- 363fa1af-4cf6-4d34-8dc3-92e3c2c2c707  largefusioncomputer3 (Mk3)  x24 y68 z8
+  EU 640,057,344 / 640,060,000 (getEUStored); idle
+- 791e0959-0f2c-4c6a-ad71-3b600f14eb10  largefusioncomputer2 (Mk2)  x24 y78 z8
+  EU 320,002,304 / 320,006,000; idle
+- Methods: getCoordinates, getName, isMachineActive, hasWork,
+  getWorkProgress, getWorkMaxProgress, isWorkAllowed, setWorkAllowed,
+  getEUStored, getEUMaxStored, getSensorInformation, getInput/OutputVoltage, ...
+- NOTE: sensor text says "Stored Energy: 0 EU" while getEUStored is full.
+  Sensor energy line is not reliable; use getEUStored.
+- Sensor lines: name, Running Parallel, EU Required (EU/t), Stored Energy,
+  Plasma Output (L/t)
+
+TRANSVECTOR INTERFACE (adapter component, named largefusioncomputer3)
+- 12ff8731-9ba2-4ef5-ab59-07ccfbaa97fc
+- Generic methods only: IC2/RF energy, Thaumcraft essentia, conduit.
+  No GT methods, no coordinates.
+- Energy reads 0/0 even though Mk3 is full -> energy view useless.
+- Its component name suggests it points at the Mk3, but it has no coordinates to confirm.
+
+TRANSPOSERS
+- 61501976-29b4-4cd7-a018-0813218aca0b
+  side 0: gt.blockmachines, 3 slots, 1 tank
+  side 3: gt.blockmachines, 3 slots, 1 tank
+- 882347e5-e3fb-4cb6-88a8-96d49d54a69c
+  side 5: no inventory, 60 tanks x 1,024,000 mB, all empty (unknown block)
+
+REDSTONE
+- 10149c38-ce26-487c-b7e1-27568ef45a4d  all inputs 0
+
+OTHER
+- 4x EnderIO conduit bundle (energy methods only)
+- internet card, 2 gpu, screen, keyboard

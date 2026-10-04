@@ -1,0 +1,56 @@
+# layout snapshot 2026-10-01 (one entry per line, diffable)
+# sides: 0=DOWN 1=UP 2=NORTH 3=SOUTH 4=WEST 5=EAST
+# coords: x y z relative to geolyzer 2882078f (x=E y=UP z=S)
+# POSITIONS (geo coords, verified by snap/corr + hardness 2026-10-01):
+pos mk3-input-A 3 -2 1  (2048000 L hatch; transposer spot above: 3 -1 1)
+pos mk3-input-B 3 -2 -1 (2048000 L hatch; transposer spot above: 3 -1 -1, now air)
+pos pattern-chest 3 0 1 (extrautils chestFull, AE2 patterns)
+pos cable-reroute 3 0 0, 4 0 -1, 4 0 -2, 4 0 -3 (player confirmed cable)
+pos mk2-input-A 3 2 -1 (player confirmed Mk2 input; gt.blockmachines, 1 tank 1024000 L, empty 2026-10-01; hardness ~1.0)
+# tp 910e0a73 (was 3 1 1, under mk2-input-B) and its cable 3 1 0 removed by player 2026-10-01
+# tp a5b7ded1 (was 3 1 -1) and cable 3 0 -1 removed by player; new cable 3 1 0
+pos new solid 4 0 0 (added with a5b7ded1, probably cable; not confirmed)
+# the 4 inputs form a rectangle (player): Mk3 at y-2, Mk2 at y2, z = 1 and -1, x = 3
+pos mk2-input-B 3 2 1 (confirmed 2026-10-01 via tp 910e0a73 below it; 1 tank 1024000 L)
+pos redstone 89eef88e 2 -1 0 (probable: under new cable 2 0 0, as player said; replaced a hardness-2 block there, so not seen by diff)
+pos cable 2 0 0 (new, above redstone)
+pos hardness 3 -2 0 = 15 (between Mk3 inputs), 2 -2 0 = 5
+# OLD FEED SETUP, OBSOLETE since rebuild 2026-10-01 (see BALANCER.txt NEW FEED MODEL) (tested 2026-10-01, Helium plasma D+He3 made on both):
+feed MK3: interface 8de6c195 (dual, adapter) -> tp 784f7532 side4=interface, side2 N / side3 S = 256000 L buffer tanks, piped into MK3 hatches
+feed MK2: interface a223482e (dual, adapter) -> tp 21fd1d86 same sides, piped into MK2 hatches
+feed how: database slot = IC2:itemFluidCell {Fluid:{FluidName:"<name>",Amount:1000}}; setFluidInterfaceConfiguration(0..5, db, entry) (read back to check; drop items silently fail);
+  interface stocks 16000 L per slot; transferFluid(4, 2|3, amount, tank) tank is 0-based = config slot; machine on/off: gt_machine.setWorkAllowed
+  ME network (own, ~60 AE/t idle) reached via me_interface; plasma output returns to it. getFluidsInNetwork is safe here.
+# connected now (comp_snapshot.txt):
+ctrl 7510f90f gt_machine largefusioncomputer3 (Mk3 at x24 y68 z8, same machine; was 363fa1af until 2026-10-01)
+ctrl 7be89c69 gt_machine largefusioncomputer2 (Mk2)
+conduit 68a526e8 a7e1fd64 7d60309f bbb62e27 (EnderIO conduit bundles)
+redstone 89eef88e (re-placed; old addr 10149c38 was at 2 -1 -2), internet 25017819
+# removed:
+#   2026-10-01 player removed transvector + tp 882347e5 + adapter (12ff8731) 'down below'.
+#     882347e5 = 60-tank block by a pipe from an output: player says ignore it.
+#     12ff8731 had generic methods only (no GT control), not needed.
+#     blocks gone: -2 -4 -1, -2 -4 0, -2 -5 -1, 0 -3 0 (which is which: not paired yet)
+#     same scan: column -7 0..15 -7 gone; ~160 new blocks at x-8..-16 y-1..8 z-2..-15 (a build)
+#   tp eb4c38a9 at 3 -1 1, removed by player 2026-10-01 (found by snap/corr).
+#     was above one of the 2 Mk3 inputs: DOWN gt.blockmachines (1 tank, Mk3 input),
+#     UP extrautils chestFull (AE2 pattern chest), SOUTH gt.blockmachines (1 tank)
+#     so pattern chest is at 3 0 1, Mk3 input at 3 -2 1.
+#     (same role as old tp 61501976 in notes of 2026-09-30)
+#   tp d481b1c5 at 3 -1 -1, placed then removed by player 2026-10-01.
+#     DOWN = 2nd Mk3 input (1 tank 2048000 L, empty) -> Mk3 inputs at 3 -2 1 and 3 -2 -1.
+#     same time new solid blocks at 3 0 -1, 3 0 0, 4 0 -1, 4 0 -2, 4 0 -3 (cable reroute, confirmed)
+#   tank-block tps 77b09801 915fe992 3476f483 e39e0980: not connected
+#     (tank block geo x-3..2 y-2..0 z-9..-4)
+geo computer DOWN OpenComputers:cable
+geo scan geo_scan.txt: solid blocks, x y z relative to geolyzer
+# tools: snap.lua (components+geoscan, keeps prev), corr.lua (diff both, pairs
+#   one block change with one component change), geoscan.lua, geodiff.lua
+# fluids, void tanks, pattern chest: see fluids.txt
+# start here: README.txt
+
+# CURRENT (2026-10-01, after rebuild):
+feed MK3: interface 0b044448 -> pump -> aux tank DOWN of tp 1b039114; tp N(2)/S(3) 256M tanks -> MK3 hatches; W(4)=interface
+feed MK2: interface 5db4f90d -> pump -> aux tank UP of tp 68b0376b; tp N(2)/S(3) 256M tanks -> MK2 hatches; W(4)=interface
+ctrl MK3 7510f90f, MK2 7be89c69; database 9585b876. No keyboard (component limit).
+autostart /etc/rc.d/balancer.lua; program /home/fusion/balancer2.lua; screen balview.lua

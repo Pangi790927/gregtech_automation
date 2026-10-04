@@ -1,0 +1,7 @@
+passed 2435380528ca9da81012642bf461d97431a16389f50b08fb6671cd4343334573
+placed field-trial.txt+r1 3382 1 12
+placed field-trial.txt+r1 3382 2 12
+placed field-trial.txt+r1 3382 3 12
+placed field.txt+dig+r1 3355 1 126
+placed field.txt+dig+r1 3355 2 138
+placed field.txt+dig+r1 3355 3 130

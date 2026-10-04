@@ -1,0 +1,20 @@
+# components 15/09/46 00:11:45
+12ef9f73-da87-4305-b0a0-9550de798eef transposer 0=-/t0,1=-/t0,2=-/t0,3=-/t0,4=-/t0,5=-/t0
+19bd2e94-f288-4bb1-ac12-64fdc8847050 transposer 0=-/t0,1=-/t0,2=-/t0,3=-/t0,4=-/t0,5=-/t0
+25017819-a4ee-4b96-9457-6dbcf34775a2 internet
+2882078f-3598-4088-86ea-49d2374bf00c geolyzer
+68a526e8-2ca9-4c43-9093-242d436b3cf4 blockconduitbundletileentity
+7510f90f-6dfc-4dd0-995d-046b2e3c682b gt_machine largefusioncomputer3
+791e0959-0f2c-4c6a-ad71-3b600f14eb10 gt_machine largefusioncomputer2
+7d60309f-347c-4218-babb-a5e97a342aec blockconduitbundletileentity
+7f358e5c-dd70-45f0-a542-847427fb2700 filesystem
+89eef88e-4950-4cfe-9242-51cdf9eb0a2b redstone
+a7e1fd64-0ce4-4361-866d-4919ccd816f5 blockconduitbundletileentity
+bbaea24d-f4b3-4e35-bcab-c49da09618f7 keyboard
+bbb62e27-75d2-4166-901d-ce9b10d49cc2 blockconduitbundletileentity
+c9800342-4743-4524-9150-d3e63e72cd2a eeprom
+dc570905-f2c6-4426-903a-8692b7252aff screen
+df6d47ee-9f99-4948-8189-6463d4e62566 gpu
+ec63cfcd-d5e2-44a3-a501-119d77a930ca computer
+f42328d7-5d64-4671-ac9d-019c27761abd transposer 0=tile.fluid_interface/t6,1=-/t0,2=-/t0,3=-/t0,4=-/t0,5=-/t0
+ff17eaa4-b6bc-479d-b196-38c67099d2d3 filesystem

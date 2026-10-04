@@ -1,5 +1,5 @@
 /*! protocol.h - the frames between octerm.lua (the loader on a computer), the relay, and the
- * connectors (term.exe, and later tools).
+ * connectors (term.exe, claude-oc.exe).
  *
  * Three layers. The relay sits between computers and connectors and understands only the outer
  * one; what a connector says to its zone, it passes on untouched.
@@ -39,6 +39,40 @@
  *                   'C' x:i16 y:i16 w:i16 h:i16 tx:i16 ty:i16               gpu.copy
  *     term -> oc    'K' down:u8 char:u32 code:u16                           a key signal
  *                   'W' w:u16 h:u16                     the window is w x h; the screen follows
+ *
+ *   the claude-oc zone's own conversation (claude-oc.lua), inside 'd'; one Claude session per
+ *   computer, kept on the PC until `claude stop`
+ *     cloc -> oc    'I' n:u32 code[n]              the `claude` program: /home/bin/claude.lua
+ *                   'S' has:u8 n:u16 dir[n]        the computer's session, as the PC keeps it:
+ *                                                  whether there is one, and its working dir
+ *                   'A' id:u16 n:u32 text[n]       the answer to prompt `id`
+ *                   'X' id:u16 n:u16 why[n]        prompt `id` got no answer, and why
+ *                   'N' n:u16 text[n]              a note while a prompt runs: a tool in use
+ *                   'P' n:u32 text[n]              a prompt typed on the PC; its answer is id 0
+ *                   'L' n:u8 from[n] n:u32 text[n] mail has come for this computer, from that one
+ *                   'Y' id:u16 ok:u8 n:u32 text[n] the answer to 'M' or 'G' `id`
+ *                   'T' id:u16 n:u8 tool[n] count:u8 { n:u8 key[n] n:u32 value[n] }
+ *                                                  run a tool; its arguments, all as text
+ *     oc -> cloc    'B' n:u16 dir[n]               the first `claude`: a new session, working in
+ *                                                  the directory it was run in
+ *                   'R'                            `claude stop`: the session has ended
+ *                   'D' n:u16 dir[n]               a tool moved the working directory
+ *                   'Q' id:u16 n:u32 text[n]       a prompt typed into `claude`
+ *                   'U' id:u16 ok:u8 n:u32 text[n] tool `id`'s result; ok 0: it failed
+ *                   'M' id:u16 n:u8 to[n] n:u32 text[n]
+ *                                                  `claude send`: mail for the computer whose
+ *                                                  address starts `to`
+ *                   'G' id:u16                     `claude mail`: this computer's mailbox
+ *
+ *   the ocscp zone's own conversation (ocscp.lua), inside 'd'; one file each time it opens
+ *     scp -> oc     'G' n:u16 path[n]              send that file
+ *                   'P' n:u16 path[n]              write what follows to that file, until 'E'
+ *     both          'B' n:u16 bytes[n]             a piece of the file
+ *                   'E'                            the file's end
+ *     oc -> scp     'O' ok:u8 size:u32 n:u16 why[n]
+ *                                                  the answer to 'G': the file's size, then its
+ *                                                  pieces and 'E'; or, ok 0, why it cannot be read
+ *                   'K' ok:u8 n:u16 msg[n]         the answer to 'P' ... 'E': written, or why not
  *
  * Big-endian throughout, built by hand on the Lua side, so octerm runs on both of
  * OpenComputers' Lua architectures: 5.2 has no string.pack. Coordinates are signed, since a
@@ -165,6 +199,7 @@ inline std::string be(uint32_t v, int bytes) {
 }
 inline std::string str8(const std::string &s) { return be(uint32_t(s.size()), 1) + s; }
 inline std::string str16(const std::string &s) { return be(uint32_t(s.size()), 2) + s; }
+inline std::string str32(const std::string &s) { return be(uint32_t(s.size()), 4) + s; }
 
 /* computer <-> relay, and connector <-> relay */
 inline std::string enc_hello(const std::string &addr, const std::string &cached = "",
@@ -232,6 +267,58 @@ inline std::string enc_window(int w, int h) { return "W" + be(w, 2) + be(h, 2); 
 /*! Returns the 'K' frame that carries one key signal to the computer. */
 inline std::string key_frame(const oc_key_t &k) {
     return "K" + be(k.down ? 1 : 0, 1) + be(k.ch, 4) + be(k.code, 2);
+}
+
+/* the claude-oc zone; 'B', 'Q' and 'U' are the computer's, built here only for the tests */
+inline std::string enc_program(const std::string &code) { return "I" + str32(code); }
+inline std::string enc_answer(int id, const std::string &text) {
+    return "A" + be(id, 2) + str32(text);
+}
+inline std::string enc_no_answer(int id, const std::string &why) {
+    return "X" + be(id, 2) + str16(why.substr(0, 65535));
+}
+inline std::string enc_note(const std::string &text) { return "N" + str16(text.substr(0, 65535)); }
+inline std::string enc_pc_prompt(const std::string &text) { return "P" + str32(text); }
+inline std::string enc_letter(const std::string &from, const std::string &text) {
+    return "L" + str8(from) + str32(text);
+}
+inline std::string enc_reply(int id, bool ok, const std::string &text) {
+    return "Y" + be(id, 2) + be(ok ? 1 : 0, 1) + str32(text);
+}
+inline std::string enc_mail_send(int id, const std::string &to, const std::string &text) {
+    return "M" + be(id, 2) + str8(to) + str32(text);
+}
+inline std::string enc_mail_ask(int id) { return "G" + be(id, 2); }
+inline std::string enc_tool(int id, const std::string &tool,
+                            const std::vector<std::pair<std::string, std::string>> &args) {
+    std::string f = "T" + be(id, 2) + str8(tool) + be(uint32_t(args.size()), 1);
+    for (const auto &[key, value] : args)
+        f += str8(key) + str32(value);
+    return f;
+}
+inline std::string enc_session(bool has, const std::string &dir) {
+    return "S" + be(has ? 1 : 0, 1) + str16(dir);
+}
+inline std::string enc_begin(const std::string &dir) { return "B" + str16(dir); }
+inline std::string enc_reset() { return "R"; }
+inline std::string enc_dir(const std::string &dir) { return "D" + str16(dir); }
+inline std::string enc_prompt(int id, const std::string &text) {
+    return "Q" + be(id, 2) + str32(text);
+}
+inline std::string enc_result(int id, bool ok, const std::string &text) {
+    return "U" + be(id, 2) + be(ok ? 1 : 0, 1) + str32(text);
+}
+
+/* the ocscp zone; 'O' and 'K' are the computer's, built here only for the tests */
+inline std::string enc_get(const std::string &path) { return "G" + str16(path); }
+inline std::string enc_put(const std::string &path) { return "P" + str16(path); }
+inline std::string enc_piece(const std::string &bytes) { return "B" + str16(bytes); }
+inline std::string enc_file_end() { return "E"; }
+inline std::string enc_file_open(bool ok, uint32_t size, const std::string &why) {
+    return "O" + be(ok ? 1 : 0, 1) + be(size, 4) + str16(why);
+}
+inline std::string enc_written(bool ok, const std::string &msg) {
+    return "K" + be(ok ? 1 : 0, 1) + str16(msg);
 }
 
 /*! Returns FNV-1a 64 of `bytes` as 16 hex digits: the name a payload is cached under. The

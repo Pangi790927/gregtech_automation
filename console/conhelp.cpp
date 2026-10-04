@@ -6,10 +6,10 @@
  *                                              writes the window's text to <file>, UTF-8; with
  *                                              tail, the rows that end at the cursor
  *
- * A key is one character, or one of ENTER, SPACE, TAB, ESC, UP, DEL, CTRL+C, CTRL+D, CTRL+S. It is
- * written into the console's input the way the keyboard puts it there, so term.exe reads it
- * through its usual path, VT translation included. It works on any console process, which is
- * also how the relay's log is read.
+ * A key is one character, or one of ENTER, SPACE, TAB, ESC, UP, DEL, BACK (Backspace), CTRL+C,
+ * CTRL+D, CTRL+S. It is written into the console's input the way the keyboard puts it there, so
+ * term.exe reads it through its usual path, VT translation included. It works on any console
+ * process, which is also how the relay's log is read.
  *
  * It detaches from its own console to attach to the target's, so its output goes to <file> and
  * its exit code says what failed: 2 bad arguments, 3 no such console. console/term/DESIGN.md,
@@ -50,6 +50,7 @@ static bool name_key(std::vector<INPUT_RECORD> &v, const std::string &k) {
     else if (k == "ESC")    add_key(v, 0x1B, VK_ESCAPE, 0x01, 0);
     else if (k == "UP")     add_key(v, 0, VK_UP, 0x48, ENHANCED_KEY);
     else if (k == "DEL")    add_key(v, 0, VK_DELETE, 0x53, ENHANCED_KEY);
+    else if (k == "BACK")   add_key(v, 0x08, VK_BACK, 0x0E, 0);
     else if (k == "CTRL+C") add_key(v, 0x03, 'C', 0x2E, LEFT_CTRL_PRESSED);
     else if (k == "CTRL+D") add_key(v, 0x04, 'D', 0x20, LEFT_CTRL_PRESSED);
     else if (k == "CTRL+S") add_key(v, 0x13, 'S', 0x1F, LEFT_CTRL_PRESSED);

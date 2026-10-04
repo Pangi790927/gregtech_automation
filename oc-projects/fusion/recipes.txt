@@ -1,0 +1,40 @@
+ 1. 125 L gas Deuterium + 125 L gas Tritium -> 125 L plasma Helium | 4,096 EU/t | 16 ticks (0.8s) | start 40M EU
+ 4. 125 L gas Deuterium + 125 L gas Helium-3 -> 125 L plasma Helium | 2,048 EU/t | 16 ticks (0.8s) | start 60M EU
+ 3. 144 L plasma Helium + 144 L molten Lithium -> 144 L plasma Boron | 10,240 EU/t | 240 ticks (12s) | start 50M EU
+ 6. 144 L molten Aluminium + 144 L gas Fluorine -> 144 L plasma Titanium | 49,152 EU/t | 160 ticks (8s) | start 100M EU
+ 7. 144 L plasma Boron + 144 L molten Lithium -> 144 L plasma Oxygen | 49,152 EU/t | 240 ticks (12s) | start 100M EU
+ 8. 16 L molten Manganese + 16 L gas Hydrogen -> 16 L molten Iron | 8,192 EU/t | 64 ticks (3.2s) | start 120M EU
+ 9. 128 L molten Magnesium + 128 L gas Oxygen -> 16 L plasma Calcium | 8,192 EU/t | 128 ticks (6.4s) | start 120M EU
+15. 16 L molten Beryllium + 375 L gas Deuterium -> 125 L plasma Nitrogen | 16,384 EU/t | 16 ticks (0.8s) | start 180M EU
+17. 72 L molten Copper + 250 L gas Tritium -> 72 L plasma Zinc | 49,152 EU/t | 16 ticks (0.8s) | start 180M EU
+22. 144 L molten Cobalt + 144 L molten Silicon -> 144 L plasma Niobium | 49,152 EU/t | 16 ticks (0.8s) | start 200M EU
+24. 16 L molten Aluminium + 16 L molten Lithium -> 144 L plasma Sulfur | 10,240 EU/t | 32 ticks (1.6s) | start 240M EU
+27. 144 L molten Silver + 375 L gas Helium-3 -> 144 L plasma Tin | 49,152 EU/t | 16 ticks (0.8s) | start 280M EU
+32. 144 L molten Gold + 144 L molten Arsenic -> 144 L plasma Silver | 49,152 EU/t | 16 ticks (0.8s) | start 350M EU
+33. 144 L molten Tantalum + 72 L plasma Zinc -> 144 L plasma Bismuth | 98,304 EU/t | 16 ticks (0.8s) | start 350M EU
+34. 16 L molten Silicon + 16 L molten Magnesium -> 144 L plasma Iron | 8,192 EU/t | 32 ticks (1.6s) | start 360M EU
+36. 144 L molten Iridium + 500 L gas Fluorine -> 144 L plasma Radon | 98,304 EU/t | 32 ticks (1.6s) | start 450M EU
+37. 16 L molten Potassium + 144 L gas Fluorine -> 144 L plasma Nickel | 32,700 EU/t | 16 ticks (0.8s) | start 480M EU
+40. 144 L molten Plutonium 241 + 2000 L gas Hydrogen -> 144 L plasma Americium | 98,304 EU/t | 64 ticks (3.2s) | start 500M EU
+
+Excited Dimensionally Transcendent Crude Catalyst (1000 L) | circuit 1 | 100 ticks (5s) | 14,514,983 EU per L
+  inputs, 1000 L plasma each: Helium, Iron, Calcium, Niobium
+Excited Dimensionally Transcendent Prosaic Catalyst (1000 L) | circuit 2 | 100 ticks (5s) | 66,768,460 EU per L
+  inputs, 1000 L plasma each: Helium, Iron, Calcium, Niobium, Radon, Nickel, Boron, Sulfur
+Excited Dimensionally Transcendent Resplendent Catalyst (1000 L) | circuit 3 | 100 ticks (5s) | 269,326,451 EU per L
+  inputs, 1000 L plasma each: Helium, Iron, Calcium, Niobium, Radon, Nickel, Boron, Sulfur,
+  Nitrogen, Zinc, Silver, Titanium
+Excited Dimensionally Transcendent Exotic Catalyst (1000 L) | circuit 4 | 100 ticks (5s) | 1,073,007,393 EU per L
+  inputs, 1000 L plasma each: Helium, Iron, Calcium, Niobium, Radon, Nickel, Boron, Sulfur,
+  Nitrogen, Zinc, Silver, Titanium, Americium, Bismuth, Oxygen, Tin
+
+# catalyst chain, as in the AE2 patterns (chest slots 18-25), added 2026-10-01
+# amounts decoded from pattern NBT; machine/circuit/EU not stored in patterns
+C1. 1000 L each plasma Helium, Iron, Calcium, Niobium -> 1000 L Dimensionally Transcendent Crude Catalyst
+C2. 1000 L Crude Catalyst + 1000 L each plasma Radon, Nickel, Boron, Sulfur -> 1000 L DT Prosaic Catalyst
+C3. 1000 L Prosaic Catalyst + 1000 L each plasma Nitrogen, Zinc, Silver, Titanium -> 1000 L DT Resplendent Catalyst
+C4. 1000 L Resplendent Catalyst + 1000 L each plasma Americium, Bismuth, Oxygen, Tin -> 1000 L DT Exotic Catalyst
+E1. 1000 L Crude Catalyst -> 1000 L Excited DT Crude Catalyst (exciteddtcc)
+E2. 1000 L Prosaic Catalyst -> 1000 L Excited DT Prosaic Catalyst (exciteddtpc)
+E3. 1000 L Resplendent Catalyst -> 1000 L Excited DT Resplendent Catalyst (exciteddtrc)
+E4. 1000 L Exotic Catalyst -> 1000 L Excited DT Exotic Catalyst (exciteddtec)

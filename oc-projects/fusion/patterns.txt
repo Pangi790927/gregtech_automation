@@ -1,0 +1,25 @@
+ 1: 144 L plasma.boron + 144 L molten.lithium -> 144 L plasma.oxygen
+ 2: 144 L molten.tantalum + 72 L plasma.zinc -> 144 L plasma.bismuth
+ 3: 144 L molten.plutonium241 + 2000 L hydrogen -> 144 L plasma.americium
+ 4: 144 L molten.aluminium + 144 L fluorine -> 144 L plasma.titanium
+ 5: 125 L deuterium + 125 L tritium -> 125 L plasma.helium
+ 6: 128 L molten.magnesium + 128 L oxygen -> 16 L plasma.calcium
+ 7: 144 L molten.iridium + 500 L fluorine -> 144 L plasma.radon
+ 8: 144 L plasma.helium + 144 L molten.lithium -> 144 L plasma.boron
+ 9: 144 L molten.silver + 375 L helium-3 -> 144 L plasma.tin
+10: 144 L molten.gold + 144 L molten.arsenic -> 144 L plasma.silver
+11: 72 L molten.copper + 250 L tritium -> 72 L plasma.zinc
+12: 16 L molten.aluminium + 16 L molten.lithium -> 144 L plasma.sulfur
+13: 16 L molten.potassium + 144 L fluorine -> 144 L plasma.nickel
+14: 144 L molten.cobalt + 144 L molten.silicon -> 144 L plasma.niobium
+15: 16 L molten.silicon + 16 L molten.magnesium -> 144 L plasma.iron
+16: 125 L deuterium + 125 L helium-3 -> 125 L plasma.helium
+17: 16 L molten.beryllium + 375 L deuterium -> 125 L plasma.nitrogen
+18: 1000 L plasma.helium + 1000 L plasma.iron + 1000 L plasma.calcium + 1000 L plasma.niobium -> 1000 L dimensionallytranscendentcrudecatalyst
+19: 1000 L dimensionallytranscendentresplendentcatalyst + 1000 L plasma.americium + 1000 L plasma.bismuth + 1000 L plasma.oxygen + 1000 L plasma.tin -> 1000 L dimensionallytranscendentexoticcatalyst
+20: 1000 L dimensionallytranscendentprosaiccatalyst + 1000 L plasma.nitrogen + 1000 L plasma.zinc + 1000 L plasma.silver + 1000 L plasma.titanium -> 1000 L dimensionallytranscendentresplendentcatalyst
+21: 1000 L dimensionallytranscendentcrudecatalyst + 1000 L plasma.radon + 1000 L plasma.nickel + 1000 L plasma.boron + 1000 L plasma.sulfur -> 1000 L dimensionallytranscendentprosaiccatalyst
+22: 1000 L dimensionallytranscendentprosaiccatalyst -> 1000 L exciteddtpc
+23: 1000 L dimensionallytranscendentresplendentcatalyst -> 1000 L exciteddtrc
+24: 1000 L dimensionallytranscendentexoticcatalyst -> 1000 L exciteddtec
+25: 1000 L dimensionallytranscendentcrudecatalyst -> 1000 L exciteddtcc

@@ -9,7 +9,9 @@ reach them. This file is kept to 100 lines: about 40 for how we work, the rest f
 1. **The Minecraft server is reached only through the user.** Claude has no login and no key for
 it. Anything to be done there is written as a **script-request**: a script in `server-requests/`
 that the user reads and, if they agree, runs with `./doreq`. Its output lands in
-`<request>.out` beside it, where Claude reads it. Nothing else goes there. **Claude never modifies
+`<request>.out` beside it, where Claude reads it. Nothing else goes there, except, by the user's
+choice (2026-10-03), the console's agents reaching the relay run there (`console/DESIGN.md`),
+which the user deploys and starts. **Claude never modifies
 `server-requests/doreq.ps1`**; it is the user's, and Claude is not allowed to change it.
 The server's LAN address and login are in `config.ini` (this PC's own addresses, not committed;
 `config-example.ini` is its layout); Minecraft lives in `~/servers/gtnh/`, the world in
@@ -38,6 +40,11 @@ must be closed first, or the link fails and the old binary keeps running.
 7. 100 columns, code and comments alike. A comment block stays attached to every function and says
 what it does and why, especially where the why is the mod's behaviour.
 
+8. **Design docs stay short and in a hierarchy.** The user, 2026-10-04: "be sure the design docs
+have a hierarchical structure and are held short enough 100-150 lines, if they grow larger those
+should be split in sub-docs, making sure not to break the architecture, but keep things ordered
+and clean". A doc's top file maps its `docs/` folder; a section moves whole, quotes unchanged.
+
 ## INDEX
 
 The per-subject documentation. Claude may add, change and remove entries here; keep each to a line
@@ -47,9 +54,15 @@ or two, and the whole file within 100 lines.
 - `config-example.ini` -- the layout of `config.ini`: this PC's addresses, local only, gitignored
 - `ae2ex_manual.txt` -- the user guide for `gtnh_ae2ex.lua`, the AE2 extension on the base
 - `simulator/OBJECTIVE.md` -- what the Minecraft/OpenComputers simulator is for (user)
-- `simulator/CLAUDE.md` -- how the simulator is built, tested, and kept faithful to the mod
-- `console/DESIGN.md` -- the base's OC computers from the PC: octerm, zones, relay, install, test;
-  agents in `console/<agent>/DESIGN.md` (term); Claude may use it when the relay is up, else says so
+- `simulator/CLAUDE.md` -- how the simulator is built, tested, and kept faithful to the mod; the
+  case histories behind its rules in `simulator/docs/`
+- `console/DESIGN.md` -- the base's OC computers from the PC: octerm, zones, relay; install, test
+  and facts in `console/docs/`; agents: `console/*/DESIGN.md` (term, claude-oc, ocscp); Claude
+  may use it, says so when it's down
+- `3d-draw/DESIGN.md` -- the top of 3d-draw: robots map a contoured area, the simulator shows it,
+  robots build what the user designs (user, 2026-10-04); a map of `3d-draw/docs/`, by subject
+- `3d-draw/TODO.md` -- what is still to be done on the base, kept by Claude so the user need not
+  keep track (user, 2026-10-04); read it at a session's start, keep it up as things finish
 - `server-requests/` -- script-requests for the server, numbered, one per request (Claude);
   `doreq.ps1` copies one to the server and runs it; `<request>.out` keeps the result (gitignored)
 - `ae2-stall/NOTES.md` -- the AE2 network stall on the server; not seen for days by 2026-09-30,

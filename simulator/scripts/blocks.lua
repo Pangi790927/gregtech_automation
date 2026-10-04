@@ -101,6 +101,11 @@ blocks.KIND = {
     EIO_ME = 26,
     GT_ME = 27,
     EIO_DENSE = 28,
+
+    --[[ Any Minecraft block, named by a scene: what a robot mapped (3d-draw). Its picture is the
+    cell's `tile` (vc.render_block_tiles), tinted by `tint`; `ghost` draws a guess smaller.
+    @date 2026-10-04 ]]
+    MC_BLOCK = 29,
 }
 
 --[[ @brief Which marker to draw a real world's tile entity as.

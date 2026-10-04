@@ -12,3 +12,6 @@ disks.save
 save/
 test_run/
 ocelot-desktop-v1.11.1.jar
+# what the linker leaves beside main.exe
+main.exp
+main.lib

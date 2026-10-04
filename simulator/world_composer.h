@@ -92,6 +92,12 @@ enum cell_kind_e : int {
     CELL_KIND_EIO_ME = 26,        /*!< EnderIO's ME conduit, which is NOT an AE2 cable. */
     CELL_KIND_GT_ME = 27,         /*!< A GregTech machine on the network - a stocking bus, say. */
     CELL_KIND_EIO_DENSE = 28,     /*!< EnderIO's DENSE ME conduit. Thirty-two channels. */
+
+    /*! Any Minecraft block at all, named by the scene rather than known to the simulator: what a
+    robot mapped in a real world (3d-draw, 2026-10-04). Its picture is whatever tile the scene
+    loaded for it (cell_t::tile, from render_block_tiles), tinted by cell_t::tint; with no tile it
+    is a plain cube of that colour. A cell_t::ghost one is a guess and is drawn smaller. */
+    CELL_KIND_MC_BLOCK = 29,
 };
 
 /*! Is this kind drawn as a thin run through the middle of a block rather than as a cube?
@@ -287,6 +293,29 @@ struct cell_t : public vc::object_t {
     int facing = FACE_ZPOS;
 
     int x = -1, y = -1, z = -1;
+
+    /*! For CELL_KIND_MC_BLOCK only: the atlas tile it is drawn with (-1 for none: a plain cube),
+     * the colour that tile is multiplied by as 0xRRGGBB (grass and leaves are grey in the jar and
+     * tinted in the game), and whether the block is a guess rather than seen.
+     *
+     * Here and not in `u` for the reason rs_in is: the renderer cannot read a Lua table.
+     * @date 2026-10-04 */
+    int tile = -1;
+    int tint = 0xffffff;
+    int ghost = 0;
+
+    /*! How a CELL_KIND_MC_BLOCK is drawn, the way Minecraft draws it: 0 a cube; 1 a cross, two
+     * see-through planes through the cell's diagonals (plants, flowers, torches, cobwebs); 2 a
+     * cube with every face drawn, for leaves, which are see-through and would look hollow if the
+     * faces between them were dropped. Only a shape 0 cube hides its neighbours' faces.
+     *
+     * The blocks a house is built of (3d-draw, 2026-10-04), with `facing` saying which way: 3 a
+     * bottom slab, 4 a top slab; 5 stairs, rising toward `facing`, 6 the same upside down; 7 a
+     * fence and 8 a glass pane, which join the neighbours beside them; 9 a fence gate across
+     * `facing`; 10 a trapdoor, closed, at the bottom of its cell, 11 at the top; 12 a door, a
+     * panel on the `facing` side of its cell.
+     * @date 2026-10-04 */
+    int shape = 0;
 
     /*! Free slot for Lua's own per-cell table. Needs lua_object_t's capture()/push() to put a value
      * in, not a bare assignment - see vc::lua_object_t. @date 2026-09-16 */
@@ -590,6 +619,16 @@ struct world_t : public vc::object_t {
 
     uint64_t version = 1;
 
+    /*! Which 16-cube sections of the map changed since the renderer last asked (take_dirty), one
+     * bit each, x fastest: the renderer keeps a mesh per section and rebuilds only these. A change
+     * marks its own section and those of its neighbours across a border, since a cell's faces and a
+     * wire's or cable's links are drawn from its neighbours. Starts all set: nothing is meshed yet.
+     *
+     * Asked for by the user, 2026-10-05, for 3d-draw: one cell changed rebuilt the whole 64-cube
+     * mesh, 0.08 s a change, and a plan turned on froze the view (3d-draw/redesign/08-order.md).
+     * @date 2026-10-05 */
+    uint64_t dirty_sections = ~0ull;
+
     /*! How many times a block has been PLACED OR BROKEN, which is a different question from
      * `version`.
      *
@@ -623,6 +662,34 @@ struct world_t : public vc::object_t {
                 (void *)this, WORLD_X, WORLD_Y, WORLD_Z, placed_count, version);
     }
 
+    static constexpr int SECTION = 16;
+    static constexpr int SECTIONS_X = WORLD_X / SECTION, SECTIONS_Y = WORLD_Y / SECTION,
+                         SECTIONS_Z = WORLD_Z / SECTION;
+    static_assert(SECTIONS_X * SECTIONS_Y * SECTIONS_Z <= 64, "dirty_sections holds 64 bits");
+
+    /*! The bit of the section holding a coordinate. @date 2026-10-05 */
+    static uint64_t section_bit(int x, int y, int z) {
+        int s = ((z / SECTION) * SECTIONS_Y + (y / SECTION)) * SECTIONS_X + (x / SECTION);
+        return 1ull << s;
+    }
+
+    /*! Marks the sections a change at a coordinate shows in: its own, and those of the cells
+     * round it (the 3x3x3 block, clipped to the map). @date 2026-10-05 */
+    void mark(int x, int y, int z) {
+        for (int dz = -1; dz <= 1; dz++)
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                    if (in_bounds(x + dx, y + dy, z + dz))
+                        dirty_sections |= section_bit(x + dx, y + dy, z + dz);
+    }
+
+    /*! The dirty sections, cleared. @date 2026-10-05 */
+    uint64_t take_dirty() {
+        uint64_t d = dirty_sections;
+        dirty_sections = 0;
+        return d;
+    }
+
     /*! The flat index of a cell coordinate. Callers check in_bounds() first; this does not.
      * @date 2026-09-16 */
     static size_t idx(int x, int y, int z) {
@@ -650,7 +717,7 @@ struct world_t : public vc::object_t {
     /*! Declares the world changed. Lua needs this only when it has changed something the registered
      * setters cannot see; ordinary placement and field writes bump the version themselves.
      * @date 2026-09-16 */
-    void touch() { version++; }
+    void touch() { version++; dirty_sections = ~0ull; }
 
     /*! The cell at a coordinate, or nil for an empty slot or a coordinate outside the map.
      *
@@ -689,6 +756,7 @@ struct world_t : public vc::object_t {
         if (cell) {
             /* Moving rather than copying: a cell that is already somewhere leaves that slot. */
             if (cell->owner == this && in_bounds(cell->x, cell->y, cell->z)) {
+                mark(cell->x, cell->y, cell->z);
                 cells[idx(cell->x, cell->y, cell->z)] = nullptr;
                 placed_count--;
             }
@@ -698,6 +766,7 @@ struct world_t : public vc::object_t {
         }
 
         slot = cell;
+        mark(x, y, z);
         version++;
         topo_version++;
         return true;
@@ -807,6 +876,7 @@ struct world_t : public vc::object_t {
             it->second->x = it->second->y = it->second->z = -1;
             faces.erase(it);
             face_count--;
+            mark(x, y, z);
             version++;
             topo_version++;
             return true;
@@ -820,6 +890,7 @@ struct world_t : public vc::object_t {
         cell->facing = face;        /* a wire's facing is the side it lies on */
         faces[key] = cell;
         face_count++;
+        mark(x, y, z);
         version++;
         topo_version++;
         return true;
@@ -848,6 +919,7 @@ struct world_t : public vc::object_t {
         cell->facing = face;
         faces[key] = cell;
         face_count++;
+        mark(x, y, z);
         version++;
         topo_version++;
         return true;
@@ -996,8 +1068,40 @@ struct world_t : public vc::object_t {
         faces.clear();
         placed_count = 0;
         face_count = 0;
+        dirty_sections = ~0ull;
         version++;
         topo_version++;
+    }
+
+    /*! Puts many Minecraft blocks in one call, or empties their slots: `flat` holds eight numbers
+     * a block - x, y, z, tile, tint, shape, facing, ghost - and a shape of -1 empties that slot
+     * instead. Returns how many slots were changed; coordinates outside the map are skipped.
+     *
+     * Core: Lua putting the blocks of a zone one at a time cost half a dozen calls into C++ each -
+     * a cell made, five fields set, the slot set - 0.36 s for a 3d-draw zone of 30,000 blocks
+     * (the user, 2026-10-05: "H is laggy"). One table, one call.
+     * @date 2026-10-05 */
+    int put_blocks(std::vector<int> flat) {
+        int changed = 0;
+        for (size_t i = 0; i + 8 <= flat.size(); i += 8) {
+            int x = flat[i], y = flat[i + 1], z = flat[i + 2];
+            if (!in_bounds(x, y, z))
+                continue;
+            if (flat[i + 5] < 0) {
+                if (clear(x, y, z))
+                    changed++;
+                continue;
+            }
+            cell_p c = cell_t::create(CELL_KIND_MC_BLOCK);
+            c->tile = flat[i + 3];
+            c->tint = flat[i + 4];
+            c->shape = flat[i + 5];
+            c->facing = flat[i + 6];
+            c->ghost = flat[i + 7];
+            if (set(x, y, z, c))
+                changed++;
+        }
+        return changed;
     }
 
     /*! Marches a ray through the map and reports the first thing it meets.
@@ -1120,8 +1224,14 @@ struct world_t : public vc::object_t {
 };
 
 inline void cell_t::touch() {
-    if (owner)
-        owner->version++;
+    if (!owner)
+        return;
+    owner->version++;
+    /* A wire's or a cell's own place; a cell anywhere else (none should be) redraws all. */
+    if (world_t::in_bounds(x, y, z))
+        owner->mark(x, y, z);
+    else
+        owner->dirty_sections = ~0ull;
 }
 
 /* --- the Lua boundary ---------------------------------------------------------------------- */
@@ -1186,6 +1296,10 @@ inline int register_meta(vc::virt_state_t *vs) {
     worldc::register_cell_field<&cell_t::kind>(vs, "kind");
     worldc::register_cell_field<&cell_t::state>(vs, "state");
     worldc::register_cell_field<&cell_t::facing>(vs, "facing");
+    worldc::register_cell_field<&cell_t::tile>(vs, "tile");
+    worldc::register_cell_field<&cell_t::tint>(vs, "tint");
+    worldc::register_cell_field<&cell_t::ghost>(vs, "ghost");
+    worldc::register_cell_field<&cell_t::shape>(vs, "shape");
 
     VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, pos);
     VC_REGISTER_MEMBER_FUNCTION(vs, cell_t, placed);
@@ -1213,6 +1327,7 @@ inline int register_meta(vc::virt_state_t *vs) {
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, set, int, int, int, cell_p);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, clear, int, int, int);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, wipe);
+    VC_REGISTER_MEMBER_FUNCTION(vs, world_t, put_blocks, std::vector<int>);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, size);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, count);
     VC_REGISTER_MEMBER_FUNCTION(vs, world_t, get_version);
