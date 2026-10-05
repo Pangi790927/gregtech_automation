@@ -41,12 +41,12 @@ crew looks at the robot's state each second:
   grid, the copies' world, and `data/built.txt` (`x y z name meta hardness built <plan>`, world
   coordinates; a dug cell as `minecraft:air`), so the map knows them from then on;
   `crew-done.txt` gets its id.
-- **stop, or the copy diverged:** nothing is assumed; the copy follows a stopped robot only up
-  to the op it stopped at, never past it (else it changes the copies' world where the robot did
-  not: Pintsize's copy dug a packet she never reached, 2026-10-05). The robot stays where it is, why is shown,
-  and the cells of the steps it finished (the op it stopped at, through the program's opstep)
-  are written as above; the rest of the packet waits for the user. Once the user has looked,
-  `crew.resync(robot)` sets its copy where it really is and clears the divergence.
+- **stop, or the copy diverged:** nothing is assumed; the copy follows a stopped robot only up to
+  the op it stopped at, never past it (else it changes the copies' world where the robot did not:
+  Pintsize's copy dug a packet she never reached, 2026-10-05). The robot stays where it is, why is
+  shown, and the cells of the steps it finished (the op it stopped at, through the program's
+  opstep) are written as above; the rest of the packet waits for the user. Once the user has
+  looked, `crew.resync(robot)` sets its copy where it really is and clears the divergence.
 - **Then home - only when nothing follows:** a robot whose packet is done flies back to its park
   (robots.ROSTER), routed off the others, dry-run - when it has no next packet. The user,
   2026-10-05, of Gunter left at the field's edge after the first packet: "take gunther back,
@@ -64,10 +64,20 @@ crew looks at the robot's state each second:
   world and `data/scouted.txt` - the cell the op's direction points at, not the robot's facing -
   re-plans on the corrected map and goes on (`crew.chain_to`), a few times at most. A dig that
   finds air is done, not a stop: air is what it was to leave (the crown over the field, mapped
-  wrong both ways, 2026-10-05); any other block than the one named still stops it.
+  wrong both ways, 2026-10-05); dirt for grass or grass for dirt is the same ground (as the
+  planner holds them); any other block than the one named still stops it.
+- **A guess is not named as seen:** a dig of a cell the map only guessed (the survey's
+  geolyzer guesses, settled or scouted) names `natural:*`: the robot digs it if it finds a
+  natural block - dirt, grass, stone, sand, gravel, clay, leaves, a log, tall grass, a Biomes O'
+  Plenty plant - and stops at anything else, a robot or a block someone made. Cells read exactly
+  (by `analyze`, built, told) keep their exact name. (Pintsize under the field: a guessed leaf
+  that was grass, one of many, 2026-10-05.)
 - **Never dug:** Thaumcraft's invisible blocks (`Thaumcraft:blockAiry`, an aura node): a robot's
   swing leaves one ("not-dug"), and a node is not the robots' to break. A cell the plan wants as
   air that holds one is taken as done; routes go round it.
+- **Energy, for now:** before each packet of a chain, a robot below half (20,000) goes home to
+  its park at a charger and waits until full (Pintsize ran down to 14,455 under the field,
+  2026-10-05). Step 4 - each program's cost against the way home - is still to come.
 - A robot silent for 15 s is the link's watchdog's (robots.lua) - and the user's at once.
 
 ## Open

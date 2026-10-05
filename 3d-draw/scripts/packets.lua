@@ -67,7 +67,13 @@ function packets.run()
     local function have(x, y, z)
         local k = (x + a[1]) .. "," .. (y + a[2]) .. "," .. (z + a[3])
         local c = area.cells[k]
-        if c then return c[4], c[5], c[7] end           -- name, meta, guessed
+        -- name, meta, guessed, and exact: read by analyze, built or told - not a geolyzer's
+        -- guess, settled or scouted (redesign/10-live.md, "A guess is not named as seen")
+        if c then
+            local exact = not c[7] and (c[6] == "analyzed" or c[6] == "seen" or c[6] == "built"
+                                        or c[6] == "told")
+            return c[4], c[5], c[7], exact
+        end
         if area.air[k] then return "air" end
         if y + a[2] > area.box[4] then return "air" end   -- above all that was scanned: sky
         return nil

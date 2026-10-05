@@ -66,7 +66,7 @@ function prove.run(result, want, have, opts)
         local k = key(x, y, z)
         local c = changed[k]
         if c ~= nil then
-            if c then return c[1], c[2] end
+            if c then return c[1], c[2], false, true end   -- placed by the proof: known
             return "air"
         end
         return have(x, y, z)
@@ -147,7 +147,7 @@ function prove.run(result, want, have, opts)
             -- One cell: dug from a stand reached now. Out of reach, it waits for a later round;
             -- in the last (`last`), one in a tree is left for the end. False: not done.
             local function dig_one(c, last)
-                local name, meta, guessed = state(c[1], c[2], c[3])
+                local name, meta, guessed, exact = state(c[1], c[2], c[3])
                 if not name or name == "air" then return true end
                 local at = reach(c[1], c[2], c[3], here)
                 if not at then
@@ -171,7 +171,8 @@ function prove.run(result, want, have, opts)
                     return true
                 end
                 waits_on(owner[key(at[1], at[2], at[3])])
-                steps[#steps + 1] = {k = key(c[1], c[2], c[3]), act = "dig", block = {name, meta}}
+                steps[#steps + 1] = {k = key(c[1], c[2], c[3]), act = "dig", block = {name, meta},
+                                     natural = not exact}
                 set(key(c[1], c[2], c[3]), nil)
                 here = stand(at)
                 return true
@@ -324,10 +325,16 @@ function prove.run(result, want, have, opts)
                     end
                 end
                 for _, c in ipairs(walled) do vc.route_set(c.x, c.y, c.z, 1) end
+                local function ground(c)
+                    local n = state(c.x, c.y, c.z)
+                    return n == "minecraft:dirt" or n == "minecraft:grass"
+                end
                 while queue[head] do
                     local c = queue[head]
                     head = head + 1
                     order[#order + 1] = c
+                    -- a cell that is ground already is never stood in: no cell tilled from it
+                    if ground(c) then goto expanded end
                     for _, d in ipairs(SIDE4) do
                         local nk = key(c.x + d[1], c.y, c.z + d[2])
                         if F[nk] and not parent[nk] then
@@ -335,6 +342,7 @@ function prove.run(result, want, have, opts)
                             queue[#queue + 1] = F[nk]
                         end
                     end
+                    ::expanded::
                 end
                 for k in pairs(F) do
                     if not parent[k] then
@@ -344,19 +352,22 @@ function prove.run(result, want, have, opts)
                 end
                 for i = #order, 1, -1 do               -- the farthest first, the edge last
                     local c = order[i]
-                    -- a cell still holding something: the general loop below says why
-                    if state(c.x, c.y, c.z) ~= "air" then return nil end
+                    local already = ground(c)           -- dirt or grass there: only tilled
+                    -- a cell still holding something else: the general loop below says why
+                    if not already and state(c.x, c.y, c.z) ~= "air" then return nil end
                     if state(c.x, c.y + 1, c.z) ~= "air" then
                         return ("farmland at %s: no air above it to till"):format(c.k)
                     end
-                    local ok, from = held(c.x, c.y, c.z, p)
-                    if not ok then return "no ground under the farmland at " .. c.k end
-                    local at = reach(c.x, c.y, c.z, here)
-                    if not at then return "no way to place the farmland's dirt at " .. c.k end
-                    waits_on(from)
-                    steps[#steps + 1] = {k = c.k, act = "place", block = DIRT}
-                    set(c.k, DIRT)
-                    here = stand(at)
+                    if not already then
+                        local ok, from = held(c.x, c.y, c.z, p)
+                        if not ok then return "no ground under the farmland at " .. c.k end
+                        local at = reach(c.x, c.y, c.z, here)
+                        if not at then return "no way to place the farmland's dirt at " .. c.k end
+                        waits_on(from)
+                        steps[#steps + 1] = {k = c.k, act = "place", block = DIRT}
+                        set(c.k, DIRT)
+                        here = stand(at)
+                    end
                     local s = parent[c.k]
                     if not ((here[1] == s[1] and here[2] == s[2] and here[3] == s[3])
                             or route.find(here, "n", s, LOCAL) ~= ""

@@ -37,6 +37,21 @@
 
 local M = {}
 
+-- Blocks of the land as it grew, which a dig of a guessed cell may take (10-live.md): never a
+-- robot, never a block someone made.
+local NATURAL = {"minecraft:dirt", "minecraft:grass", "minecraft:stone", "minecraft:sand",
+                 "minecraft:gravel", "minecraft:clay", "minecraft:tallgrass", "leaves", "log",
+                 "BiomesOPlenty:foliage", "BiomesOPlenty:plants", "BiomesOPlenty:flowers"}
+function M.natural(name)
+  if name == "OpenComputers:robot" then return false end
+  for _, n in ipairs(NATURAL) do
+    if name == n or (not n:find(":") and name:find(n, 1, true)) or name:find(n, 1, true) == 1 then
+      return true
+    end
+  end
+  return false
+end
+
 M.STEP, M.LEEWAY = 12, 500          -- energy a step home costs (server.lua: 7 measured), margin
 local DIRS = {["^"] = "n", v = "s", [">"] = "e", ["<"] = "w", ["+"] = "u", ["-"] = "d"}
 local STEP = {n = {0, 0, -1}, s = {0, 0, 1}, e = {1, 0, 0}, w = {-1, 0, 0}, u = {0, 1, 0},
@@ -313,6 +328,14 @@ function M.new(hw, start)
         m.results[#m.results + 1] = ("%d %s air"):format(m.pc, op.src)
         next_op()
         return m.state
+      end
+      -- ground is ground: dirt where grass was named, or grass where dirt (the planner holds
+      -- them the same; the map's guesses mix them - Pintsize under the field, 2026-10-05)
+      local GROUND = {["minecraft:dirt"] = true, ["minecraft:grass"] = true}
+      if name and GROUND[name] and GROUND[want.name] then name, meta = want.name, want.meta end
+      -- a guessed cell names `natural`: any natural block will do, nothing made (10-live.md)
+      if want.name == "natural" and name and M.natural(name) then
+        name, meta = want.name, want.meta
       end
       if name == "OpenComputers:robot" or name ~= want.name
           or (want.meta ~= "*" and meta ~= want.meta) then

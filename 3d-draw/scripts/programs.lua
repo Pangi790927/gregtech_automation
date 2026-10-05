@@ -141,7 +141,9 @@ function programs.make(packet, robot, map)
                 palette[#palette + 1] = pk
                 pal_ix[pk] = #palette
             end
-            ops[#ops + 1] = "u" .. DIR_CH[how.dir]
+            -- the top face clicked: hoeGround tills no bottom face, and OpenComputers picked a
+            -- face that did not till when none was named (redesign/13-farm.md)
+            ops[#ops + 1] = "u" .. DIR_CH[how.dir] .. "/+"
             ops[#ops + 1] = "?" .. DIR_CH[how.dir] .. pal_ix[pk]
             nops = nops + 2
             opstep[nops] = si
@@ -150,7 +152,8 @@ function programs.make(packet, robot, map)
         nops = nops + 1
         opstep[nops] = si
         if st.act == "dig" then
-            local pk = st.block[1] .. ":" .. tostring(st.block[2])
+            -- a guessed cell names any natural block (redesign/10-live.md)
+            local pk = st.natural and "natural:*" or (st.block[1] .. ":" .. tostring(st.block[2]))
             if not pal_ix[pk] then
                 palette[#palette + 1] = pk
                 pal_ix[pk] = #palette

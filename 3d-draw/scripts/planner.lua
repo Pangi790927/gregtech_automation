@@ -97,6 +97,8 @@ function planner.plan(want, have)
             if hname ~= "air" and hname ~= "Thaumcraft:blockAiry" then dig[k] = true end
         elseif hname == "air" then
             put[k] = b
+        elseif b[1] == "minecraft:farmland" and GROUND[hname] then
+            put[k] = b              -- dirt or grass already: only tilled (redesign/13-farm.md)
         elseif not same(b[1], b[2], hname, hmeta) then
             dig[k], put[k] = true, b                  -- the wrong block: out, then the right one
         end

@@ -19,6 +19,7 @@
 --   clear <slot>                          stop stocking it (what is in it stays, to be taken)
 --   count <name> <damage>                 how many the network has
 --   items                                 all the network holds: name:damage:count;...
+--   parts                                 read-only: the components, a transposer's sides
 --   bye
 --
 -- getItemsInNetwork walks the whole network on the server's thread; it is safe only because the
@@ -79,6 +80,40 @@ function C.items()
   for _, st in ipairs(me.getItemsInNetwork()) do
     if (st.size or 0) > 0 then
       out[#out + 1] = ("%s:%d:%d"):format(st.name, st.damage or 0, math.floor(st.size))
+    end
+  end
+  return table.concat(out, ";")
+end
+
+-- Read-only, what the computer is wired to: each component's type, and for a transposer, what is
+-- on each of its sides (0 down, 1 up, 2 north, 3 south, 4 west, 5 east): an inventory's name,
+-- size and the slots holding something; a tank's fluid, amount and capacity.
+function C.parts()
+  local out = {}
+  for addr, kind in component.list() do
+    out[#out + 1] = kind .. "@" .. addr:sub(1, 8)
+    if kind == "transposer" then
+      local t = component.proxy(addr)
+      for side = 0, 5 do
+        local name, size = t.getInventoryName(side), t.getInventorySize(side)
+        local s = ("  side %d: %s"):format(side, tostring(name))
+        if size then
+          s = s .. " size " .. size
+          for i = 1, size do
+            local st = t.getStackInSlot(side, i)
+            if st then s = s .. (" [%d]%s:%d:%d"):format(i, st.name, st.damage or 0, st.size) end
+          end
+        end
+        local tanks = t.getTankCount(side) or 0
+        for k = 1, tanks do
+          local f = t.getFluidInTank(side, k)
+          f = f and f[1] or f
+          s = s .. (" tank%d %s %s/%s"):format(k, f and tostring(f.name) or "-",
+                                           f and tostring(f.amount) or "0",
+                                           f and tostring(f.capacity) or "?")
+        end
+        out[#out + 1] = s
+      end
     end
   end
   return table.concat(out, ";")

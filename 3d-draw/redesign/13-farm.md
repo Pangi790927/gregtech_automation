@@ -12,7 +12,11 @@ too long (litteraly watching the grass grow...)".
   A cell holding something else is dug first, as any (05-packets.md).
 - **Wheat** is seeds put on farmland, from above: its item is `minecraft:wheat_seeds`. Planted is
   done - a crop of any growth stage is the plan's wheat; nothing waits for it to grow.
-- **Water** (3 cells) needs a bucket: not yet.
+- **Water** (3 cells) needs a bucket: not yet. And it comes first: in this pack Hunger
+  Overhaul (`modifyHoeUse`, IguanaEventHook, HungerOverhaul-1.7.10-1.0.4-GTNH) tills dirt only
+  with water within 4 across and 1 up - without, dirt stays dirt and grass turns to dirt. The
+  first tills failed so, the mattock barely worn (Pintsize, 2026-10-05). The ME holds no bucket
+  and no water bucket (IC2 empty cells, AE2 fluid drops only): the user's to give.
 
 ## Tilling, as the game has it
 
@@ -36,7 +40,11 @@ as soon as named, docs/map.md).
 - `e<slot>`: equip - the item in that slot swapped with the tool in hand
   (inventory_controller.equip). The mattock comes into the hand before the first till and goes
   back before the program ends, so the robot's slots end as they began.
-- `u<dir>` (the use op, no slot): the tool in hand used on the block in front - the till.
+- `u<dir>/+` (the use op, no slot, the top face named): the tool in hand used on the block in
+  front, clicking its top - the till. TConstruct's mattock tills through AbilityHelper.hoeGround
+  (TConstruct-1.9.25-GTNH): never on a bottom face, only with air above, only dirt or grass;
+  with no face named, OpenComputers clicked one that did not till (Pintsize's first field cell,
+  the mattock untouched at durability 1.0, 2026-10-05).
 - `?<dir><n>`: the block in front must be palette entry n, else the robot stops ("not-expected"):
   a till that did not take is seen at once, not later.
 

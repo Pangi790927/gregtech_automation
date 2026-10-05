@@ -30,7 +30,7 @@ local function ops_cases()
     local r = simbot.robot(w, {facing = "e", slots = {[2] = {name = MATTOCK.name, meta = 0,
                                                               count = 1}}})
     local m = machine.new(r.hw, {x = 0, y = 0, z = 0, facing = "e"})
-    m.exec("f1", "$0 {minecraft:farmland:*} e2 u> ?>1 e2")
+    m.exec("f1", "$0 {minecraft:farmland:*} e2 u>/+ ?>1 e2")
     if run(m) ~= "done" then return "the till: " .. m.state .. " " .. tostring(m.why) end
     if w:get(1, 0, 0)[1] ~= "minecraft:farmland" then return "the dirt was not tilled" end
     if not r.slots[2] or r.slots[2].name ~= MATTOCK.name then return "the mattock not back" end
@@ -73,6 +73,9 @@ local function field_case()
     require("route").loaded = true
     local wb = {}
     for x = 0, 15 do for z = 0, 15 do wb[x .. ",0," .. z] = {"minecraft:stone", 0} end end
+    -- one cell of the field is dirt already: it is only tilled, never dug and placed again
+    wb["7,1,6"] = {"minecraft:dirt", 0}
+    vc.route_set(7, 1, 6, 2)
     local function have(x, y, z)
         if x < 0 or x > 15 or z < 0 or z > 15 or y < 0 then return nil end
         local b = wb[x .. "," .. y .. "," .. z]
@@ -96,6 +99,18 @@ local function field_case()
         for _, st in ipairs(p.steps or {}) do if st.act == "till" then tills = tills + 1 end end
     end
     if tills ~= 3 then return ("%d tills proven for 3 farmland cells"):format(tills) end
+    local dirt_places, digs = 0, 0
+    for _, p in pairs(result.packets) do
+        for _, st in ipairs(p.steps or {}) do
+            if st.act == "place" and st.block[1] == "minecraft:dirt" then
+                dirt_places = dirt_places + 1
+            end
+            if st.act == "dig" then digs = digs + 1 end
+        end
+    end
+    if dirt_places ~= 2 or digs ~= 0 then
+        return ("the dirt already there: %d dirt placed, %d dug"):format(dirt_places, digs)
+    end
 
     -- the programs, on a simulated robot holding dirt, seeds and its mattock
     local w = simbot.world(wb)

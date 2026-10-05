@@ -90,6 +90,18 @@ local function dig_put_cases()
     if not w:get(1, -1, 0) or not m.why:find("not%-expected minecraft:stone") then
         return "the stone was dug, or the stop does not name it: " .. tostring(m.why)
     end
+    -- ground is ground: grass where dirt is named is dug; air is done already
+    w, r, m = fresh({["0,-1,0"] = {"minecraft:grass", 0}})
+    m.exec("5b", "$0 {minecraft:dirt:0} x-1")
+    if run(m) ~= "done" or w:get(0, -1, 0) then return "grass under a dirt dig: " .. m.state end
+    m.exec("5c", "$0 {minecraft:dirt:0} x-1")
+    if run(m) ~= "done" then return "a dig at air: " .. m.state .. " " .. tostring(m.why) end
+    -- a guessed cell's dig takes any natural block, never one someone made
+    w, r, m = fresh({["0,-1,0"] = {"minecraft:grass", 0}, ["1,-1,0"] = {"minecraft:planks", 1}})
+    m.exec("5d", "$0 {natural:*} x-1 > x-1")
+    if run(m) ~= "stop" or w:get(0, -1, 0) or not w:get(1, -1, 0) then
+        return "a natural dig: grass not dug, or planks dug: " .. m.state
+    end
     -- never a robot, even named
     w, r, m = fresh()
     simbot.robot(w, {x = 0, y = -1, z = 0, name = "under"})

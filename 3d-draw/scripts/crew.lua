@@ -343,10 +343,15 @@ local function leg(r, j, text, what)
                                                          tostring(d and d.why or ""))
     end
     j.pid, j.what = pid, what
+    local sent_at = vc.app_time()
     while true do
         vc.net_sleep_ms(1000)
         if not r.linked then return nil, what .. ": its link is gone" end
         local sf = r.sf
+        -- its machine began again (a relink restarted its zone): the program is gone, not late
+        if sf and sf.id == "-" and sf.state == "idle" and vc.app_time() - sent_at > 10 then
+            return nil, what .. ": its machine restarted, the program lost"
+        end
         if sf and sf.id == pid then
             if sf.state == "stop" then learn_block(r) end
             if r.diverged then return nil, what .. ": its copy diverged: " .. r.diverged.why end
@@ -890,8 +895,22 @@ end
 
 -- Packets one after another, each a whole trip to its end: {{robot, packet id}, ...}. Stops at
 -- the first one refused or not done. Blocks until then (run it on a coroutine of its own).
+-- Below half its energy, a robot goes home to its park - at a charger of the station - and
+-- waits there until full (Pintsize at 14,455 under the field, 2026-10-05; step 4 in full is
+-- still to come: the cost of each program against the way home).
+local LOW, FULL = 20000, 38000
+local function charge(r)
+    if not (r.sf and r.sf.energy and r.sf.energy < LOW) then return end
+    say(("%s: energy %d - home to charge"):format(r.name, r.sf.energy))
+    go_home(r)
+    local t0 = vc.app_time()
+    while vc.app_time() - t0 < 600 and r.sf.energy < FULL do vc.net_sleep_ms(1000) end
+    say(("%s: charged to %d"):format(r.name, r.sf.energy))
+end
+
 function crew.chain(list)
     for i, it in ipairs(list) do
+        charge(robot_named(it[1]))
         -- chained while the same robot has more to do: no trip home between (10-live.md)
         local more = list[i + 1] and list[i + 1][1] == it[1]
         local ok, why = crew.start(it[1], it[2], more)

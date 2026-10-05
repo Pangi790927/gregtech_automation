@@ -191,11 +191,23 @@ function copy.compare_inventory(r)
     if not c or r.diverged then return end
     -- a dig's drops are the game's (grass gives dirt, tall grass now and then seeds): after a
     -- program with digs the copy takes the robot's slots as they are (redesign/10-live.md)
+    -- and a program that touches no slot (moves only) has nothing to compare: the copy takes the
+    -- robot's slots too - a stale count taken after a dig was called a divergence on the way home
+    -- to charge (Pintsize, 2026-10-05)
+    local touches = false
     for _, op in ipairs(c.m.prog and c.m.prog.ops or {}) do
         if op.k == "dig" then
             c.b.slots = deep(r.slots or {})
             return
         end
+        if op.k == "put" or op.k == "take" or op.k == "give" or op.k == "craft"
+                or op.k == "shift" or op.k == "equip" or op.k == "use" then
+            touches = true
+        end
+    end
+    if not touches then
+        c.b.slots = deep(r.slots or {})
+        return
     end
     local mine, real = c.b.slots, r.slots or {}
     for i = 1, 32 do
