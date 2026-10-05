@@ -313,7 +313,8 @@ struct cell_t : public vc::object_t {
      * bottom slab, 4 a top slab; 5 stairs, rising toward `facing`, 6 the same upside down; 7 a
      * fence and 8 a glass pane, which join the neighbours beside them; 9 a fence gate across
      * `facing`; 10 a trapdoor, closed, at the bottom of its cell, 11 at the top; 12 a door, a
-     * panel on the `facing` side of its cell.
+     * panel on the `facing` side of its cell; 13 a robot, two pyramids as OpenComputers draws
+     * it, its light toward `facing` (3d-draw's simulated robots, 2026-10-05).
      * @date 2026-10-04 */
     int shape = 0;
 

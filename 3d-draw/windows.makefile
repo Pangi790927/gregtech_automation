@@ -43,7 +43,7 @@ INCLCUDES += /I${IMGUI} /I${IMGUI}/backends/ /I${IMPLOT}
 
 DEPS      := $(wildcard ./*.h) $(wildcard ${SIM}/*.h)
 SRCS      += ${IMGUI_SRC} ${BACKEND_SRC} ${IMPLOT_SRC}
-SRCS      += ${UTILS}/virt_composer.cpp
+SRCS      += ${UTILS}/virt_composer.cpp ${UTILS}/virt_composer_coroutines.cpp
 OBJS      := $(SRCS:.cpp=.obj)
 
 all: ${OBJS} $(DEPS) glfw3.dll

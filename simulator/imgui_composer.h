@@ -223,6 +223,12 @@ inline void end_window() {
     ImGui::End();
 }
 
+/*! Where the next window opens, and when that holds: `cond` is ImGuiCond (1 always, 2 once a
+ * run, 4 the first time ever). 3d-draw's panels sat on top of each other, 2026-10-05. */
+inline void set_next_window_pos(ImVec2 pos, int cond) {
+    ImGui::SetNextWindowPos(pos, (ImGuiCond)cond);
+}
+
 /*! Float slider, as a value in / (changed, value) out pair - ImGui takes a float* it writes
  * through, the same pointer problem checkbox() and input_text() have. */
 inline std::pair<bool, float> slider_float(const char *label, float v, float v_min, float v_max) {
@@ -385,6 +391,9 @@ inline int register_meta(vc::virt_state_t *vs) {
         >},
         {"ImGui_End", vc::luaw_function_wrapper<
                /* FN:    */ end_window
+        >},
+        {"ImGui_SetNextWindowPos", vc::luaw_function_wrapper<
+               /* FN:    */ set_next_window_pos, ImVec2, int
         >},
         {"ImGui_SliderFloat", vc::luaw_function_wrapper<
                /* FN:    */ slider_float, const char *, float, float, float

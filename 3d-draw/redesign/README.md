@@ -27,6 +27,11 @@ this PC) - C++ on `../utils` (virt_composer), the logic in Lua.
   the logic; one exe with the viewer
 - `07-inventory.md` -- every file of the old system: covered, open, or dropped
 - `08-order.md` -- the order of work: skeleton, robot, link, copy, planner, crew, the rest
+- `09-paths.md` -- the pathfinder: a byte grid loaded from the chunks in C++, A* in server ticks
+- `10-live.md` -- the plan's packets on the real robots: one robot, one packet, by command
+- `11-me.md` -- the ME: robots take their blocks at the interface and give back what they dig
+- `12-craft.md` -- crafting: Gunter makes what the ME lacks; recipes as data, one trip a batch
+- `13-farm.md` -- the field: farmland placed and tilled from beside, wheat planted, not waited for
 
 ## The direction (from the user's words; details come as notes above)
 

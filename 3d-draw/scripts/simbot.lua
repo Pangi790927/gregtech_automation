@@ -1,10 +1,11 @@
 --[[ ==================================== WHAT THIS FILE OFFERS ====================================
 -- | A robot on a world of blocks, simulated: the hardware robot/machine.lua drives (its `hw`),
--- | for the tests and for the exe's demo (J). Robot coordinates throughout.
+-- | for the tests and the simulated crew (sim.lua). Robot coordinates throughout.
 -- |
 -- |     local w = simbot.world(blocks)       blocks: {["x,y,z"] = {name, meta}}; w.blocks is it
 -- |     w:add_container(x, y, z, slots)      a chest or the interface: slots {[i] = {name, meta,
--- |                                          count}}
+-- |                                          count}}; slots.sink = {[i] = true}: return slots,
+-- |                                          whatever is given into them goes (the ME interface)
 -- |     w:add_entity(x, y, z)                a creature standing in a cell; w:remove_entity(x,y,z)
 -- |     local r = simbot.robot(w, opts)      opts: x, y, z, facing, energy, max, slots, name
 -- |     r.hw                                 the hardware table machine.lua takes
@@ -34,12 +35,18 @@ local World = {}
 World.__index = World
 
 function simbot.world(blocks)
-    return setmetatable({blocks = blocks or {}, containers = {}, entities = {}, placed = {}},
-                        World)
+    return setmetatable({blocks = blocks or {}, containers = {}, entities = {}, placed = {},
+                         dug = {}}, World)
 end
 
 function World:get(x, y, z) return self.blocks[key(x, y, z)] end
-function World:set(x, y, z, b) self.blocks[key(x, y, z)] = b end
+-- An emptied cell is `false`, not nil: a world that falls back on another for cells it does not
+-- hold (copy.lua, the pathfinder's grid) would otherwise show the old block again.
+function World:set(x, y, z, b)
+    local k = key(x, y, z)
+    self.blocks[k] = b or false
+    if self.on_change then self.on_change(k) end
+end
 function World:add_container(x, y, z, slots)
     self.containers[key(x, y, z)] = slots
     self:set(x, y, z, {"minecraft:chest", 0})
@@ -90,14 +97,23 @@ function simbot.robot(w, o)
         if not b then return nil end
         return b[1], b[2]
     end
+    function hw.detect(dir)
+        turn_to(dir)
+        r.ticks = r.ticks + 1
+        local x, y, z = ahead(dir)
+        if w.entities[key(x, y, z)] then return true, "entity" end
+        if w:get(x, y, z) then return true, "solid" end
+        return false, "air"
+    end
     function hw.swing(dir)
         turn_to(dir)
         r.ticks = r.ticks + 10
         local x, y, z = ahead(dir)
         local b = w:get(x, y, z)
         if not b or b[1] == ROBOT then return false end
-        w:set(x, y, z, nil)
         w.placed[key(x, y, z)] = nil
+        w.dug[key(x, y, z)] = true
+        w:set(x, y, z, nil)
         r.energy = r.energy - 1
         return true
     end
@@ -108,16 +124,58 @@ function simbot.robot(w, o)
         if not st or st.count <= 0 then return false, "nothing selected" end
         local x, y, z = ahead(dir)
         if w:get(x, y, z) or w.entities[key(x, y, z)] then return false, "taken" end
-        w:set(x, y, z, {st.name, st.meta})
+        -- seeds go only onto farmland, and become the crop (13-farm.md)
+        if st.name == "minecraft:wheat_seeds" then
+            local below = w:get(x, y - 1, z)
+            if not below or below[1] ~= "minecraft:farmland" then
+                return false, "not on farmland"
+            end
+            w.placed[key(x, y, z)] = true
+            w:set(x, y, z, {"minecraft:wheat", 0})
+            st.count = st.count - 1
+            if st.count == 0 then r.slots[slot] = nil end
+            return true
+        end
+        -- something beside the cell to hold the block: without OpenComputers' angel upgrade a
+        -- robot cannot place in thin air, and the builders have none (the old crew's helper
+        -- blocks were for that). The robot's own cell does not count.
+        if not w.angel then
+            local held = false
+            for _, d in pairs(STEP) do
+                local nx, ny, nz = x + d[1], y + d[2], z + d[3]
+                local b = w:get(nx, ny, nz)
+                if b and not (nx == r.x and ny == r.y and nz == r.z) then held = true break end
+            end
+            if not held then return false, "nothing to hold it" end
+        end
         w.placed[key(x, y, z)] = true
+        w:set(x, y, z, {st.name, st.meta})
         st.count = st.count - 1
         if st.count == 0 then r.slots[slot] = nil end
         r.energy = r.energy - 1
         return true
     end
+    -- That slot's item into the hand, the hand's into the slot (inventory_controller.equip).
+    function hw.equip(slot)
+        r.ticks = r.ticks + 1
+        r.tool, r.slots[slot] = r.slots[slot], r.tool
+        return true
+    end
+    -- Use: what the game does with the tool in hand here is tilling (redesign/13-farm.md) - a
+    -- mattock or a hoe on dirt or grass with air right above it makes farmland; else nothing.
     function hw.use(dir, slot, face, sneak)
+        if slot then hw.equip(slot) end
         turn_to(dir)
         r.ticks = r.ticks + 11
+        local t = r.tool
+        local x, y, z = ahead(dir)
+        local b = w:get(x, y, z)
+        if t and (t.name:find("mattock") or t.name:find("hoe")) and b
+                and (b[1] == "minecraft:dirt" or b[1] == "minecraft:grass")
+                and dir ~= "u" and not w:get(x, y + 1, z) then
+            w:set(x, y, z, {"minecraft:farmland", 0})
+            return "true"
+        end
         return "false"
     end
     function hw.take(dir, their, mine, n)
@@ -134,13 +192,31 @@ function simbot.robot(w, o)
         r.slots[mine] = {name = st.name, meta = st.meta, count = (have and have.count or 0) + moved}
         return moved
     end
-    function hw.give(dir, mine, n)
+    function hw.give(dir, mine, n, their)
         turn_to(dir)
         r.ticks = r.ticks + 11
         local c = w.containers[key(ahead(dir))]
         local st = r.slots[mine]
         if not c or not st then return 0 end
         local moved = math.min(n or st.count, st.count)
+        if their then
+            -- into that one slot: the interface's return slots (c.sink) hand all to the network
+            -- on its tick, so they take everything; another slot takes only its own kind
+            local t = c[their]
+            if c.sink and c.sink[their] then
+                -- gone into the network
+            elseif not t then
+                c[their] = {name = st.name, meta = st.meta, count = moved}
+            elseif t.name == st.name and t.meta == st.meta then
+                moved = math.min(moved, 64 - t.count)
+                t.count = t.count + moved
+            else
+                return 0
+            end
+            st.count = st.count - moved
+            if st.count == 0 then r.slots[mine] = nil end
+            return moved
+        end
         for i = 1, 64 do
             local t = c[i]
             if not t then
@@ -167,8 +243,43 @@ function simbot.robot(w, o)
         if a.count == 0 then r.slots[from] = nil end
         return true
     end
-    function hw.craft(slot, n) r.ticks = r.ticks + 1; return 0 end
+    -- The grid (recipes.GRID) crafted as the recipes say (scripts/recipes.lua, checked in-game):
+    -- up to n items into `slot`, a craft taking one of each cell's ingredient, the saw back in
+    -- its cell. A grid no recipe knows makes nothing, as in the game.
+    function hw.craft(slot, n)
+        r.ticks = r.ticks + 1
+        local recipes = require("recipes")
+        local cells = {}
+        for i, s in ipairs(recipes.GRID) do
+            local st = r.slots[s]
+            cells[i] = st and (st.name .. ":" .. st.meta) or false
+        end
+        local item, yield = recipes.match(cells)
+        if not item then return 0 end
+        local crafts = (n + yield - 1) // yield
+        for i, s in ipairs(recipes.GRID) do
+            local st = r.slots[s]
+            if st and cells[i] ~= recipes.SAW then crafts = math.min(crafts, st.count) end
+        end
+        local name, meta = item:match("^(.+):(%d+)$")
+        local out = r.slots[slot]
+        if out and (out.name ~= name or out.meta ~= tonumber(meta)) then return 0 end
+        crafts = math.min(crafts, (64 - (out and out.count or 0)) // yield)
+        if crafts <= 0 then return 0 end
+        for i, s in ipairs(recipes.GRID) do
+            local st = r.slots[s]
+            if st and cells[i] ~= recipes.SAW then
+                st.count = st.count - crafts
+                if st.count == 0 then r.slots[s] = nil end
+            end
+        end
+        r.slots[slot] = {name = name, meta = tonumber(meta),
+                         count = (out and out.count or 0) + crafts * yield}
+        r.ticks = r.ticks + crafts
+        return crafts * yield
+    end
     function hw.energy() return r.energy, r.max end
+    function hw.clock() return r.ticks / 13 end            -- the server's 13 ticks a second
     function hw.chunk(on) r.chunk = on; return true end
     function hw.scan(x, z, y, wd, d, h)
         local out = {}
@@ -184,7 +295,8 @@ function simbot.robot(w, o)
         return out
     end
     function hw.extras()
-        return ("max %d dur 1 up 0 mem 0/0 chunk %s tanks 0"):format(r.max, tostring(r.chunk))
+        return ("max %d dur 1 up 0 mem 0/0 chunk %s tanks 0 name %s slots %d"):format(r.max,
+                tostring(r.chunk), r.name, r.size or 32)
     end
     function hw.inventory()
         local out = {}

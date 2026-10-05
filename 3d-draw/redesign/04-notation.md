@@ -21,6 +21,9 @@ mark (`/ ! * .`), which never starts an op, so every program parses one way only
 | `u<dir>[<slot>][/<face>][!]` | use, with the tool from that slot, put back after | `u-7/^` |
 | `t<dir><their>.<mine>[*<n>]` | take from what is in front into its own slot | `t>2.5*64` |
 | `g<dir><mine>[*<n>]` | give a slot into what is in front | `g>9` |
+| `g<dir><mine>.<their>[*<n>]` | give a slot into one slot of what is in front (11-me.md) | `g>9.4` |
+| `e<slot>` | equip: that slot's item swapped with the tool in hand (13-farm.md) | `e12` |
+| `?<dir><n>` | the block in front must be palette entry n, else stop (13-farm.md) | `?-2` |
 | `s<from>.<to>[*<n>]` | shift between its own slots | `s4.1*1` |
 | `c<slot>[*<n>]` | craft into that slot | `c16*4` |
 | `l<dir>` | look at one block; result: name meta | `l-` |

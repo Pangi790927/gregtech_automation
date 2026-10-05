@@ -45,9 +45,9 @@ its own copy of the robot.
 
 ## The machine on the robot: no thinking, exact stops
 
-- **States:** `idle`, `run`, `wait` (a step blocked by a creature or a robot, tried again every
-  second), `halt` (an `h` op: waiting for the PC on purpose), `done`, `stop` (at an op, with
-  why), waiting for the PC.
+- **States:** `idle`, `run`, `wait` (a step or a put blocked by a creature or a robot, tried
+  again every second; 09-paths.md), `halt` (an `h` op: waiting for the PC on purpose), `done`,
+  `stop` (at an op, with why), waiting for the PC.
 - **One op at a time, in order; the socket is read after every op**, so `status_fast` waits at
   most one op (about 1 s; longer only for a hard dig or a charge).
 - **Every failure is an exact stop:** the op that could not be done is not retried, nothing after

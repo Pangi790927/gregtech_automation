@@ -21,21 +21,33 @@
 -- | ===============================================================================================
 --]]
 
-package.path = package.path .. ";./scripts/?.lua;../simulator/scripts/?.lua"
+package.path = package.path .. ";./scripts/?.lua;../simulator/scripts/?.lua;./robot/?.lua"
 
 local vc = require("virt_composer")
+
+--[[ A module looked up by name at every use, not held: `reload <name>` on the control port then
+-- reaches the running program at once, with no restart (the user, 2026-10-05: "less shutdowns
+-- are needed"). `reinit[name]` gives a reloaded module what init gave it at the start. Not for
+-- robots or control: they hold coroutines and sockets. ]]
+local live = require("live")
+reinit = {}
 local settings = require("settings")
 local camera = require("camera")
 local chunks = require("chunks")
 local view = require("view")
-local plan = require("plan")
-local marks = require("marks")
-local labels = require("labels")
-local zmap = require("zmap")
+local plan = live("plan")
+local marks = live("marks")
+local labels = live("labels")
+local zmap = live("zmap")
+local robots = require("robots")
+local control = require("control")
+local packets = live("packets")
+local sim = live("sim")
 
 local DATA = "data/"
 local PATHS = {chunks = DATA .. "chunks", anchor = DATA .. "anchor.txt", zone = DATA .. "zone.txt",
-               built = DATA .. "built.txt", fixed = DATA .. "fixed.txt"}
+               built = DATA .. "built.txt", fixed = DATA .. "fixed.txt",
+               scouted = DATA .. "scouted.txt"}
 local PLANS = {DATA .. "harbour.txt", DATA .. "village.txt"}
 
 local last_time = 0
@@ -46,23 +58,34 @@ function test_init()
     vc.render_init(settings.get("minecraft_path") or "", settings.get("minecraft_jar") or "")
     camera.init(settings)
     view.init(PATHS)
-    plan.init(PLANS)
-    marks.init(DATA .. "markers.txt")
-    labels.init(DATA .. "labels.txt")
-    zmap.init(PATHS)
+    reinit.plan = function() plan.init(PLANS) end
+    reinit.packets = function() packets.init({DATA .. "village.txt", DATA .. "harbour.txt"}) end
+    reinit.marks = function() marks.init(DATA .. "markers.txt") end
+    reinit.labels = function() labels.init(DATA .. "labels.txt") end
+    reinit.zmap = function() zmap.init(PATHS) end
+    for _, f in pairs(reinit) do f() end
     view.add_overlay(plan)
+    view.add_overlay(robots)
+    view.add_overlay(packets)
+    view.add_overlay(sim)
     local cx, cz = chunks.read_pair(PATHS.zone, "zone")
     if not cx then
         note = "no data/zone.txt: M picks a zone"
     elseif not view.load_zone(cx, cz) then
         note = ("no chunk files round %d %d"):format(cx, cz)
     end
+    if not control.start(7790) then note = "the control port 7790 is taken" end
     last_time = vc.app_time()
     return 0
 end
 
+-- ImGui's window flags and conditions, as imgui.h numbers them
+local AUTO_SIZE, ONCE = 64, 2
+
 local function panel()
-    vc.ImGui_Begin("3d-draw", 0)
+    -- top left, sized to what it holds: at a fixed size its lower parts were scrolled out of sight
+    vc.ImGui_SetNextWindowPos({x = 10, y = 10}, ONCE)
+    vc.ImGui_Begin("3d-draw", AUTO_SIZE)
     if view.zone then
         local b, c = view.zone.box, view.counts
         vc.ImGui_Text(("zone %d %d: world x %d..%d  y %d..%d  z %d..%d"):format(
@@ -76,9 +99,30 @@ local function panel()
     vc.ImGui_Separator()
     marks.panel()
     vc.ImGui_Separator()
+    packets.panel()
+    vc.ImGui_Separator()
+    sim.panel()
+    vc.ImGui_Separator()
     vc.ImGui_Text("tab: fly / free the mouse   M: the map of chunks")
     vc.ImGui_Text("arrows: the zone a chunk at a time, as the camera looks")
+    vc.ImGui_Text(("O: the robots' paths %s   J: what is left of the worked packets %s"):format(
+            view.paths and "shown" or "hidden", view.j and "shown" or "hidden"))
     vc.ImGui_End()
+end
+
+-- A module's part of the frame, kept from taking the frame with it: an error in one is logged
+-- once, shown in the panel, and the rest is drawn (2026-10-05: a debug line in sim.lua threw
+-- every frame and blanked the user's view for some 9000 frames).
+local failed = {}
+local function guarded(name, f, ...)
+    local ok, r = pcall(f, ...)
+    if ok then return r end
+    local why = tostring(r)
+    if failed[name] ~= why then
+        failed[name] = why
+        print(name .. " failed: " .. why)
+        note = name .. " failed: " .. why
+    end
 end
 
 function test_draw()
@@ -94,17 +138,31 @@ function test_draw()
     camera.update(settings, dt)
     view.follow(dt)
     view.step_zone()
-    if plan.update(dt) then view.update_overlays() end
-    marks.update(dt)
-    labels.update(dt)
-    zmap.update(dt)
+    if vc.ImGui_IsKeyPressed("ImGuiKey_J", false) and not vc.ImGui_WantCaptureKeyboard() then
+        view.j = not view.j
+    end
+    if vc.ImGui_IsKeyPressed("ImGuiKey_O", false) and not vc.ImGui_WantCaptureKeyboard() then
+        view.paths = not view.paths
+    end
+    local over = guarded("plan.update", plan.update, dt)
+    over = guarded("packets.update", packets.update) or over
+    over = guarded("robots.update", robots.update, dt) or over
+    over = guarded("sim.update", sim.update, dt) or over
+    if over then view.update_overlays() end
+    guarded("marks.update", marks.update, dt)
+    guarded("labels.update", labels.update, dt)
+    guarded("zmap.update", zmap.update, dt)
 
     local disp = vc.ImGui_GetDisplaySize()
     vc.render_world(view.world, math.floor(disp.x), math.floor(disp.y))
 
-    labels.draw()
-    marks.draw()
-    zmap.draw()
+    guarded("labels.draw", labels.draw)
+    guarded("marks.draw", marks.draw)
+    guarded("packets.draw", packets.draw)
+    guarded("sim.draw", sim.draw)
+    guarded("robots.draw", robots.draw)
+    guarded("robots.panel", robots.panel)
+    guarded("zmap.draw", zmap.draw)
     panel()
     return 0
 end

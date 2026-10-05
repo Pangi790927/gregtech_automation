@@ -201,6 +201,9 @@ local STATION = {
     ["appliedenergistics2:tile.BlockCableBus"] = {"appliedenergistics2:MECable_Blue", FENCE},
     ["EnderIO:blockConduitBundle"] = {"enderio:conduitConnector", FENCE},
     ["minecraft:lever"] = {"minecraft:lever", CROSS},
+    -- a robot: the whole robot.png sheet, which the robot shape (13) maps part by part, as the
+    -- mod's RobotRenderer does
+    ["OpenComputers:robot"] = {"opencomputers:robot", 13},
 }
 
 local function look(name, meta)

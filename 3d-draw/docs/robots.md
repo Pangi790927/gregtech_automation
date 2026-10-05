@@ -22,13 +22,14 @@ angel upgrade and the MFU (the user could not get them). So:
 **The robots** (positions count from the start block, x east, y up, z south):
 - **G.U.N.T.E.R.** (Gunter), `016db072`, the builder: parks on the start block (0 0 0), the
   charger east of it. Inventory 16, a pickaxe in its tool slot, crafting upgrade, database.
-- **Cairol**, `956b836d` (4d783168 until 2026-10-04, when the user picked it up and placed
-  it again: a new address), a scout: parks on top of the charger (1 1 0). Geolyzer,
-  navigation, chunkloader (`setActive` answers whether it changed: false is "already on"),
-  inventory 16.
-- **Tom_Servo** (Tom), `0511bc18` (4bcc1e4c until 2026-10-04), the second scout, the
-  same parts: parks under the charger (1 -1 0), over the water. The charger reaches only
-  the start block, above it and below it: one robot each.
+- **Cairol**, `44ffaded` (956b836d until 2026-10-05, 4d783168 until 2026-10-04: each time
+  the user picked it up and placed it again, a new address), a scout: parks under the charger
+  (1 -1 0), over the water, since 2026-10-05. Geolyzer, navigation, chunkloader (`setActive`
+  answers whether it changed: false is "already on"), inventory 16.
+- **Tom_Servo** (Tom), `cfbf2408` (0511bc18 until 2026-10-05, 4bcc1e4c until 2026-10-04), the
+  second scout, the same parts: parks on top of the charger (1 1 0) since 2026-10-05 - the user
+  put the two back the other way round. The charger reaches only the start block, above it and
+  below it: one robot each.
 - **The builders** (builders.py's CREW), each parked at a charger of the station:
 
   | robot      | address    | park        | notes                                             |
@@ -39,9 +40,12 @@ angel upgrade and the MFU (the user could not get them). So:
   | Pintsize   | `a77c49f1` | 0 0 -2      |                                                   |
   | Baymax     | `a4c330bf` | 1 -1 -2     | was 2082496e; broken and put back 2026-10-04      |
   | Dalek_Sec  | `1bf71bda` | 1 1 -2      | new 2026-10-04, in Cortana's place                |
+  | Cortana    | `c0385d94` | 2 -1 -1     | back 2026-10-05, found by the user: the 6th builder|
 
-  Cortana (082fe759) is gone: broken by another builder's swing on 2026-10-04, her item
-  despawned. A robot picked up and placed again gets a NEW relay address: find it with a
+  Cortana (082fe759 then) was broken by another builder's swing on 2026-10-04 and lost; the
+  user found her again on 2026-10-05, placed under the cell in front of ASIMO.
+  Each builder carries a TConstruct mattock (for farmland, dirt, logs) and a pickaxe (the user,
+  2026-10-05). A robot picked up and placed again gets a NEW relay address: find it with a
   reach to a prefix nobody has (the error lists the relay's computers), then `hello`/`analyze`
   round it to learn which robot and where.
   - **The mini ME's computer**, `9cdb8754`: an Adapter on the ME interface (1 0 1), a database

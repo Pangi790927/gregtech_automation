@@ -21,8 +21,8 @@ local function fresh(blocks, opts)
 end
 
 local function parse_cases()
-    local p = machine.parse("$120 >3^2 f> x-1 p-3/^! u-7/^ t>2.5*64 g>9 s4.1*1 c16*4 l- z90 @1 h"
-            :gsub("x%-1", "x-1"):gsub("^%$120", "$120 {minecraft:dirt:0}"))
+    local p = machine.parse("$120 {minecraft:dirt:0} >3^2 f> x-1 p-3/^! u-7/^ t>2.5*64 g>9 "
+            .. "s4.1*1 c16*4 l- z90 @1 h")
     if not p then return "the full example did not parse" end
     local kinds = {}
     for i, op in ipairs(p.ops) do kinds[i] = op.k end
@@ -53,7 +53,9 @@ local function walk_cases()
     local w, r, m = fresh()
     m.exec("1", "$0 >3 ^2 +")
     if run(m) ~= "done" then return "a free walk did not finish: " .. m.state end
-    if r.x ~= 3 or r.z ~= -2 or r.y ~= 1 then return ("walked to %d %d %d"):format(r.x, r.y, r.z) end
+    if r.x ~= 3 or r.z ~= -2 or r.y ~= 1 then
+        return ("walked to %d %d %d"):format(r.x, r.y, r.z)
+    end
     if m.pos[1] ~= 3 or m.pos[3] ~= -2 then return "the machine lost its position" end
     if #m.hist ~= 6 then return ("%d history lines for 6 steps"):format(#m.hist) end
     -- a block in the way: stopped, named, not dug
@@ -94,23 +96,72 @@ local function dig_put_cases()
     m.exec("6", "$0 {OpenComputers:robot:*} x-1")
     if run(m) ~= "stop" or not w:get(0, -1, 0) then return "a robot was dug" end
     -- the printer: put down from a slot, the slot runs out, the put stops
-    w, r, m = fresh({}, {y = 1, slots = {[1] = {name = "minecraft:cobblestone", meta = 0,
+    local floor = {}                                    -- under the puts: no angel upgrade
+    for x = -1, 4 do floor[x .. ",-1,0"] = {"minecraft:stone", 0} end
+    w, r, m = fresh(floor, {y = 1, slots = {[1] = {name = "minecraft:cobblestone", meta = 0,
                                                 count = 2}}})
     m.exec("7", "$0 p-1 > p-1 > p-1")
     if run(m) ~= "stop" or not m.why:find("nothing%-placed") then
         return "the third put from an empty slot: " .. m.state .. " " .. tostring(m.why)
     end
     if not w:get(0, 0, 0) or not w:get(1, 0, 0) or w:get(2, 0, 0) then return "puts misplaced" end
+    -- a put a creature is in the way of waits, and goes on once it left (09-paths.md); a new
+    -- floor each time: the world keeps the table it is given, the puts above are in this one
+    local function floor_()
+        local f = {}
+        for x = -1, 4 do f[x .. ",-1,0"] = {"minecraft:stone", 0} end
+        return f
+    end
+    local stone = {name = "minecraft:cobblestone", meta = 0, count = 4}
+    w, r, m = fresh(floor_(), {y = 1, slots = {[1] = stone}})
+    w:add_entity(0, 0, 0)
+    m.exec("7b", "$0 p-1")
+    if run(m) ~= "wait" or m.why ~= "entity" then
+        return "a put on a creature: " .. m.state .. " " .. tostring(m.why)
+    end
+    w:remove_entity(0, 0, 0)
+    m.state = "run"
+    if run(m) ~= "done" or not w:get(0, 0, 0) then
+        return "the put did not go on after the creature"
+    end
+    -- and on a robot: waits, named a robot, nothing dug
+    w, r, m = fresh(floor_(), {y = 1, slots = {[1] = {name = "minecraft:cobblestone", meta = 0,
+                                                count = 4}}})
+    simbot.robot(w, {x = 0, y = 0, z = 0, name = "under"})
+    m.exec("7c", "$0 p-1")
+    if run(m) ~= "wait" or m.why ~= "robot" then return "a put on a robot: " .. m.state end
+    -- a put nothing holds is no creature: it stops, as before
+    w, r, m = fresh({}, {y = 1, slots = {[1] = {name = "minecraft:cobblestone", meta = 0,
+                                             count = 4}}})
+    m.exec("7d", "$0 p-1")
+    if run(m) ~= "stop" or not m.why:find("nothing%-placed") then
+        return "a put in thin air: " .. m.state .. " " .. tostring(m.why)
+    end
     return nil
 end
 
 local function items_energy_cases()
-    -- take from a chest: all of it, then short
+    -- take from a chest: all of it, then short - a stop: the robot takes only what it is told,
+    -- when told, and the interface's tick is the PC's to wait for (redesign/11-me.md)
     local w, r, m = fresh()
     w:add_container(1, 0, 0, {[1] = {name = "minecraft:planks", meta = 1, count = 40}})
     m.exec("8", "$0 t>1.2*32 t>1.3*16")
     if run(m) ~= "stop" or m.why ~= "took 8 of 16" then return "take: " .. tostring(m.why) end
     if r.slots[2].count ~= 32 or r.slots[3].count ~= 8 then return "take moved the wrong counts" end
+    -- give back into the interface's return slot: all of it goes, whatever it is
+    w, r, m = fresh()
+    local iface = {[1] = {name = "minecraft:glass", meta = 0, count = 64}, sink = {[4] = true}}
+    w:add_container(1, 0, 0, iface)
+    r.slots[1] = {name = "minecraft:glass", meta = 0, count = 3}
+    r.slots[2] = {name = "minecraft:dirt", meta = 0, count = 30}
+    m.exec("8c", "$0 g>1.4 g>2.4*30")
+    if run(m) ~= "done" or r.slots[1] or r.slots[2] then
+        return "give into the return slot: " .. m.state .. " " .. tostring(m.why)
+    end
+    -- into a stocked slot of another kind: nothing goes, a stop
+    r.slots[3] = {name = "minecraft:dirt", meta = 0, count = 5}
+    m.exec("8d", "$0 g>3.1*5")
+    if run(m) ~= "stop" or m.why ~= "gave 0 of 5" then return "a give that cannot go: " .. m.state end
     if not m.status()[4] then return "the takes' results are not in the status" end
     -- energy: a long walk on little energy stops before the floor, then only $home runs
     w, r, m = fresh({}, {energy = 600})

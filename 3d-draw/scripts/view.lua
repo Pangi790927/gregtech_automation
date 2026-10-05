@@ -10,8 +10,9 @@
 -- |     view.step_zone()            the arrows move the zone a chunk at a time (below)
 -- |     view.redraw()               draws the zone and the overlays again: after a toggle, a file
 -- |                                 changed, a new zone. One rebuild of the renderer's mesh.
--- |     view.add_overlay(o)         o.cells() -> {["rx,ry,rz"] = {name, meta, shape, facing}} or
--- |                                 nil while off; name "minecraft:air" empties the cell
+-- |     view.add_overlay(o)         o.cells() -> {["rx,ry,rz"] = {name, meta, shape, facing,
+-- |                                 ghost}} or nil while off; name "minecraft:air" empties the
+-- |                                 cell; ghost 2 draws it see-through
 -- |     view.follow(dt)             reads the zone's files again when one changed (below)
 -- |     view.to_cell(rx, ry, rz)    a robot position's cell in the world, or nil outside it
 -- |     view.to_robot(cx, cy, cz)   a cell's robot position
@@ -35,7 +36,13 @@ local look = require("look")
 local chunks = require("chunks")
 local watch = require("watch")
 
-local view = {world = nil, zone = nil, anchor = {255, 63, 139}, terrain = {},
+-- j: what is left of the builds being worked, see-through (J; the user, 2026-10-05: "j will show
+-- me what bots did until now with full blocks and the rest as ghostly blocks"), one switch for the
+-- simulated crew and the real packets alike
+-- paths: the robots' ways drawn (O), hidden at first (the user, 2026-10-05: "can you hide their
+-- paths with, I don't know, O? (default to hidden)")
+local view = {world = nil, zone = nil, anchor = {255, 63, 139}, terrain = {}, j = true,
+              paths = false,
               counts = {cells = 0, untextured = 0, cut = 0}}
 
 local AIR = "minecraft:air"
@@ -122,7 +129,8 @@ local function put(flat, x, y, z, k, ghost)
     end
     flat[n + 1], flat[n + 2], flat[n + 3], flat[n + 4] = x, y, z, k.tile
     flat[n + 5], flat[n + 6] = k.tile >= 0 and k.tint or k.colour, k.shape
-    flat[n + 7], flat[n + 8] = k.facing or ZPOS, ghost and 1 or 0
+    -- ghost: true or 1 a guess (a small box), 2 see-through (what a build still has to place)
+    flat[n + 7], flat[n + 8] = k.facing or ZPOS, ghost == 2 and 2 or ghost and 1 or 0
 end
 
 local shown = {}                 -- the overlays' cells as drawn: robot "x,y,z" -> block
@@ -154,7 +162,7 @@ function view.redraw()
         if b[1] ~= AIR then
             local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
             todo[#todo + 1] = {tonumber(x), tonumber(y), tonumber(z),
-                               kind(b[1], b[2], b[3], b[4]), false}
+                               kind(b[1], b[2], b[3], b[4]), b[5] or false}
         end
     end
     textures()
@@ -196,7 +204,8 @@ function view.update_overlays()
         if x then
             local b = over[key]
             if b then
-                puts[#puts + 1] = {x, y, z, b[1] ~= AIR and kind(b[1], b[2], b[3], b[4]), false}
+                puts[#puts + 1] = {x, y, z, b[1] ~= AIR and kind(b[1], b[2], b[3], b[4]),
+                                   b[5] or false}
             else
                 local c = view.terrain[(rx + a[1]) .. "," .. (ry + a[2]) .. "," .. (rz + a[3])]
                 puts[#puts + 1] = {x, y, z, c and kind(c[4], c[5]), c and c[7]}
@@ -210,12 +219,13 @@ function view.update_overlays()
     shown = over
 end
 
--- The files the zone is drawn from: its nine chunks, then built and fixed.
+-- The files the zone is drawn from: its nine chunks, then scouted, built and fixed.
 local function zone_files(cx, cz)
     local out = {}
     for i = cx - 1, cx + 1 do
         for j = cz - 1, cz + 1 do out[#out + 1] = ("%s/c%d_%d.txt"):format(paths.chunks, i, j) end
     end
+    if paths.scouted then out[#out + 1] = paths.scouted end
     out[#out + 1] = paths.built
     out[#out + 1] = paths.fixed
     return out
@@ -224,7 +234,9 @@ end
 local zone_watch = nil
 
 function view.load_zone(cx, cz, step)
-    local z = chunks.read_zone(paths.chunks, cx, cz, {paths.built, paths.fixed})
+    local layers = {paths.built, paths.fixed}
+    if paths.scouted then table.insert(layers, 1, paths.scouted) end
+    local z = chunks.read_zone(paths.chunks, cx, cz, layers)
     if not z then return false end
     local old = view.zone and view.zone.box
     view.zone = {cx = cx, cz = cz, box = z.box}

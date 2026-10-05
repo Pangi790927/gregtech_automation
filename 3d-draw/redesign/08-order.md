@@ -40,11 +40,27 @@ me what bots did until now with full blocks and the rest as ghostly blocks, with
 Then once in the game, on one idle robot, with the user told first: `status`, then `exec` of a
 step up and back above its park.
 
-## 2. The link (C++) and the first robot in the exe
+Status, 2026-10-05: tests pass on the mock robot (scripts/simbot.lua): parse, walk, stops, waits,
+dig, put, take, energy, $home, give_way; the exe shows a simulated robot printing a hut, with J
+(see-through rest) and the robot drawn as OpenComputers draws it. In the game, Pintsize
+(a77c49f1, park 0 0 -2): `status`, `geo` of the two cells above, `exec t1 $0 + -` - up and back,
+done in under a second, its history read back. Found there: the geolyzer's table is 64 long
+whatever the box, so `geo` now answers only the box's values. The driver was a scratch script;
+the exe's own link is stage 2.
 
-The link composer on `console/connector.h`; from Lua, `exec`, `give_way`, `geo`, `status_fast`,
-`status`, `history` as awaitable calls. The exe reaches one robot, polls it (1 s, 5 s), and the
-viewer draws it where it is.
+## 2. The link (Lua over a thin C++ socket) and the robots in the exe
+
+The user, 2026-10-05: "let c++ do the heavy lifting, pathfinding, planning etc, but the connection
+logic put in lua, this way less shutdowns are needed", and the program "pool centric": colib's
+pool is the main loop, a frame is a task drawn in a burst (main.cpp). `net_composer.h`: connect,
+send, recv, close, sleep, each a task a Lua coroutine waits on. `relay.lua`: the relay's frames.
+`robots.lua`: a coroutine a linked robot - the machine zone opened, `status_fast` every second,
+`status` every fifth, queued commands sent; a watchdog closes a link silent for 15 s and it is
+opened again. The robots drawn where they are, in their colours, with name, state and trail.
+
+Status, 2026-10-05: built; `test_relay` passes (the hash as Python's, list, attach, open again
+after "open already", lines split over frames). Live: Pintsize linked through it, `exec $0 + -`
+done, unlinked. Nothing links by itself: the robots window has a box per robot.
 
 ## 3. The robot copy (Lua)
 
@@ -53,11 +69,26 @@ viewer draws it where it is.
 names the first op where field and copy part. Tested on recorded programs, then live on short
 walks.
 
+Status, 2026-10-05 (`scripts/copy.lua`, `robots.run`): every program is run first on a
+throwaway copy of the robot and the map and sent only when that copy ends `done`; then the
+robot's own copy follows it op by op through `status_fast`, and at the end position, facing,
+state and slots are compared; a difference fetches the robot's history into the panel; a copy
+standing apart from its robot is drawn see-through. `test_copy` passes. Live, Pintsize: `$0 >`
+refused before sending (the copy stopped, blocked by the charger); `$0 + -` sent, followed,
+"robot and copy agree".
+
 ## 4. The planner (Lua over the C++ world)
 
 Dig and place packets on the fixed 5x5x8 grid, their order, the buildability proof, scaffolding
 (05). Tested on the village plan: every packet ordered, nothing flying, nothing hidden, or the
 cells it cannot do, listed. The viewer shows the packets coloured by state (today's J).
+
+Status, 2026-10-05 (`scripts/planner.lua`, `packets.lua`, P): the village (6,365 blocks)
+planned in 0.13 s into 130 dig packets (2,847 blocks), then 166 place packets (5,045 blocks), all
+296 ordered; 0 with nothing to stand on; 31 cells never scanned (a tree crown, -17 11..14 7..8),
+for a scout to read first. Packets wait only on packets ranked before them; a block held up only
+by a later packet moves into it (18 in the village) - waits both ways had left 23 packets in
+cycles, roofs across a box's border. `test_planner` passes.
 
 ## 5. Programs, paths, the crew
 
@@ -66,7 +97,17 @@ robots, shared paths, no dig on another's), the crew coroutines (packets to robo
 Tested: a whole build against copies, zero stops and zero divergences. Then live: one robot, one
 packet, the user watching; then the crew.
 
+Status, 2026-10-05, paths (`route_composer.h`, `scripts/route.lua`, 09-paths.md): the whole known
+map, 2.7 million cells, loaded from the chunk files in 1.45 s; a route in 2-4 ms; `test_route`
+passes. The copies see the grid beyond the zone shown. Live: Tom routed from its charger to over
+the village plaza (`<5v9+v+4v20<8`, 38 s) and back (`-^3-^26->-2>11^>`), each dry-run first,
+each "robot and copy agree". Next: the program maker, the crew, the whole build simulated.
+
 ## 6. The rest
+
+At a build's end: a geo scan of the leaves the proof left (out of reach to dig, or still in a
+planned cell); the blocks they held back go in once they are gone. The scouts rescan the base area
+for changes (the user, 2026-10-05). TODO.md, item 000.
 
 The ME and crafting (`me`, `recipes`); the scouts (`geo`, exploring, naming, their rules - a note
 of their own before it starts); the designs as Lua. Each replaces its Python files, which go only

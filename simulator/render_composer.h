@@ -1062,6 +1062,68 @@ inline void emit_cross_tinted(std::vector<glu::vertex_t> &verts, std::vector<uin
     }
 }
 
+/*! Appends an OpenComputers robot as the mod draws it (RobotRenderer.compileList, OpenComputers
+ * 1.9.14, read 2026-10-05): two pyramids on a square 0.8 wide, apex up at the top of the cell and
+ * apex down at 0.03, meeting at the middle with a gap of 1/28. `tile` is the robot.png sheet, a 2 x
+ * 2 of pictures: the top pyramid wears its top-left (the X is its edges, the light on the face
+ * toward `facing`), the bottom one its top-right, the plates in the gap its bottom-left. The user,
+ * 2026-10-05: "robots are a sort of rombus". @date 2026-10-05 */
+inline void emit_robot_tinted(std::vector<glu::vertex_t> &verts, std::vector<uint32_t> &indices,
+        int cx, int cy, int cz, int facing, int tile, int tile_count, float tr, float tg, float tb)
+{
+    const float l = 0.1f, h = 0.9f, gap = 1.0f / 28.0f;
+    const float gt = 0.5f + gap, gb = 0.5f - gap;
+    float u0 = (float)tile / (float)tile_count;
+    float du = 1.0f / (float)tile_count;
+    /* The model's light faces south (+z); turned about the cell's middle to `facing`. */
+    auto place = [&](float x, float z, float &ox, float &oz) {
+        float dx = x - 0.5f, dz = z - 0.5f;
+        switch (facing) {
+        case worldc::FACE_ZNEG: ox = -dx; oz = -dz; break;
+        case worldc::FACE_XPOS: ox = dz;  oz = -dx; break;
+        case worldc::FACE_XNEG: ox = -dz; oz = dx;  break;
+        default:                ox = dx;  oz = dz;  break;
+        }
+        ox += 0.5f; oz += 0.5f;
+    };
+    auto tri = [&](const float *p0, const float *p1, const float *p2,
+                   float u_0, float v_0, float u_1, float v_1, float u_2, float v_2,
+                   float shade) {
+        const float *ps[3] = {p0, p1, p2};
+        const float uvs[3][2] = {{u_0, v_0}, {u_1, v_1}, {u_2, v_2}};
+        uint32_t base = (uint32_t)verts.size();
+        for (int i = 0; i < 3; i++) {
+            glu::vertex_t v;
+            float ox, oz;
+            place(ps[i][0], ps[i][2], ox, oz);
+            v.x = cx + ox; v.y = cy + ps[i][1]; v.z = cz + oz;
+            v.u = u0 + uvs[i][0] * du;
+            v.v = uvs[i][1];
+            v.tr = tr * shade; v.tg = tg * shade; v.tb = tb * shade;
+            verts.push_back(v);
+            indices.push_back(base + (uint32_t)i);
+        }
+    };
+    const float A[3] = {0.5f, 1.0f, 0.5f}, B[3] = {0.5f, 0.03f, 0.5f};
+    const float SWt[3] = {l, gt, h}, SEt[3] = {h, gt, h}, NEt[3] = {h, gt, l}, NWt[3] = {l, gt, l};
+    const float SWb[3] = {l, gb, h}, SEb[3] = {h, gb, h}, NEb[3] = {h, gb, l}, NWb[3] = {l, gb, l};
+    /* The top pyramid: compileList's fan, the picture's corners round the apex at 0.25, 0.25.
+    The bottom one the same on the sheet's top-right (u + 0.5). South, east, north, west. */
+    tri(A, SWt, SEt, 0.25f, 0.25f, 0.0f, 0.5f, 0.5f, 0.5f, 1.0f);
+    tri(A, SEt, NEt, 0.25f, 0.25f, 0.5f, 0.5f, 0.5f, 0.0f, 0.85f);
+    tri(A, NEt, NWt, 0.25f, 0.25f, 0.5f, 0.0f, 0.0f, 0.0f, 0.7f);
+    tri(A, NWt, SWt, 0.25f, 0.25f, 0.0f, 0.0f, 0.0f, 0.5f, 0.85f);
+    tri(B, SWb, SEb, 0.75f, 0.25f, 0.5f, 0.5f, 1.0f, 0.5f, 0.6f);
+    tri(B, SEb, NEb, 0.75f, 0.25f, 1.0f, 0.5f, 1.0f, 0.0f, 0.55f);
+    tri(B, NEb, NWb, 0.75f, 0.25f, 1.0f, 0.0f, 0.5f, 0.0f, 0.5f);
+    tri(B, NWb, SWb, 0.75f, 0.25f, 0.5f, 0.0f, 0.5f, 0.5f, 0.55f);
+    /* The two plates in the gap, on the sheet's bottom-left. */
+    tri(SWt, NWt, NEt, 0.0f, 1.0f, 0.0f, 0.5f, 0.5f, 0.5f, 0.55f);
+    tri(SWt, NEt, SEt, 0.0f, 1.0f, 0.5f, 0.5f, 0.5f, 1.0f, 0.55f);
+    tri(SWb, NWb, NEb, 0.0f, 1.0f, 0.0f, 0.5f, 0.5f, 0.5f, 0.8f);
+    tri(SWb, NEb, SEb, 0.0f, 1.0f, 0.5f, 0.5f, 0.5f, 1.0f, 0.8f);
+}
+
 inline void emit_box_tinted(std::vector<glu::vertex_t> &verts, std::vector<uint32_t> &indices,
         const float lo[3], const float hi[3], int tile, int tile_count,
         float tr, float tg, float tb);
@@ -1540,6 +1602,12 @@ inline void rebuild_world_section(renderer_t &r, const worldc::world_t &w, int s
                         tr, tg, tb);
                 continue;
             }
+            /* 13, a robot: two pyramids, as OpenComputers draws it (emit_robot_tinted). */
+            if (c->shape == 13) {
+                emit_robot_tinted(V, I, c->x, c->y, c->z, c->facing, tile, r.tile_count,
+                        tr, tg, tb);
+                continue;
+            }
             if (c->shape >= 3) {
                 emit_part_shape(V, I, w, *c, tile, r.tile_count, tr, tg, tb);
                 continue;
@@ -1986,13 +2054,29 @@ inline std::vector<double> render_block_tiles(const char *keys) {
         }
     }
 
+    /* A key may name a part of its picture: `ns:file#col,row,cols,rows` is the picture cut into
+    cols x rows and the one part at col, row (from 0, top left) - OpenComputers' robot.png holds
+    the robot's side, top and more in one 32x32 sheet (3d-draw, 2026-10-05). The whole picture is
+    found under the key before `#`, then the part is cut from its tile. */
+    std::vector<std::string> crops;
     std::vector<std::string> vanilla;
     std::unordered_set<std::string> wanted;
-    for (const std::string &k : list) {
+    auto want = [&](const std::string &k) {
         if (r.block_tiles.count(k))
-            continue;
+            return;
         if (k.rfind("minecraft:", 0) == 0) vanilla.push_back(k);
         else wanted.insert(k);
+    };
+    for (const std::string &k : list) {
+        size_t hash = k.find('#');
+        if (hash != std::string::npos) {
+            if (!r.block_tiles.count(k))
+                crops.push_back(k);
+            want(k.substr(0, hash));
+        }
+        else {
+            want(k);
+        }
     }
     if (!vanilla.empty() || !wanted.empty()) {
         mca::mc_source_t src;
@@ -2019,6 +2103,29 @@ inline std::vector<double> render_block_tiles(const char *keys) {
             else {
                 r.block_tiles[k] = -1;
             }
+        }
+        for (const std::string &k : crops) {
+            auto base = r.block_tiles.find(k.substr(0, k.find('#')));
+            int col = 0, row = 0, cols = 1, rows = 1;
+            if (base == r.block_tiles.end() || base->second < 0
+                    || sscanf(k.c_str() + k.find('#') + 1, "%d,%d,%d,%d", &col, &row, &cols,
+                              &rows) != 4
+                    || cols <= 0 || rows <= 0) {
+                r.block_tiles[k] = -1;
+                continue;
+            }
+            const mca::tile_t &whole = r.tiles[(size_t)base->second];
+            mca::tile_t t;
+            for (int y = 0; y < mca::TILE_PX; y++)
+                for (int x = 0; x < mca::TILE_PX; x++) {
+                    int sx = (col * mca::TILE_PX + x) / cols;
+                    int sy = (row * mca::TILE_PX + y) / rows;
+                    const uint8_t *p = whole.at(sx, sy);
+                    t.set(x, y, p[0], p[1], p[2], p[3]);
+                }
+            t.from_mc = true;
+            r.block_tiles[k] = (int)r.tiles.size();
+            r.tiles.push_back(t);
         }
         if (r.tiles.size() != before) {
             upload_atlas(r);

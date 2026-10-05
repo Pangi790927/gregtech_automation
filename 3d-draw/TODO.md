@@ -7,6 +7,12 @@ it waits on, the next step. Done items go to the bottom with their date, then aw
 
 ## Open
 
+000. **After a build: the leaves, and the base rescanned** (the user, 2026-10-05: "remember leaves
+   and geo scan for them at the end, no bigie" and "it's scout's job to rescan the base area and
+   check for changes"). The proof (scripts/prove.lua) lists leaves it could not reach to dig
+   (`result.leaves`) and planned blocks whose cell still held leaves (`result.after_leaves`): at
+   the build's end, a geo scan of those cells; leaves gone, the blocks go in. The scouts rescan
+   the base area and report what changed. Stage 6 of redesign/08-order.md.
 00. **Scout the cave under the village** (the user, 2026-10-05: "it's real, it's a cave, for now
    leave it, but after we are done remember to tell the scouts to scout there"). Marked red in
    the viewer: robot x -16..-3, y -7..+1, z 10..28 (world 239..252, 56..64, 149..167), between

@@ -18,6 +18,8 @@
 --                                                  back to the op it waited at
 --                 <rid> geo <x> <z> <y> <w> <d> <h>  a geolyzer scan, answered at once
 --                 <rid> status_fast | status | history [id] | bye
+--                 <rid> setpos <x> <y> <z>         where it stands, as the PC found it; not while
+--                                                  a program runs
 --   robot -> PC   <rid> ok <n> [value]             then n lines, for status and history
 --                 <rid> err <why>
 --                 ready <status_fast line>         once, when it starts
@@ -97,6 +99,11 @@ local function read_op(r)
   elseif c == "g" then
     op = {k = "give", dir = r.dir(), mine = r.num()}
     if not op.dir or not op.mine then return nil, "g<dir><mine>" end
+    if r.peek() == "." then                 -- into one slot of it: the interface's return slot
+      r.take()
+      op.their = r.num()
+      if not op.their then return nil, "g<dir><mine>.<their>" end
+    end
     if r.peek() == "*" then r.take(); op.n = r.num() end
   elseif c == "s" then
     op = {k = "shift", from = r.num()}
@@ -111,6 +118,12 @@ local function read_op(r)
   elseif c == "l" then
     op = {k = "look", dir = r.dir()}
     if not op.dir then return nil, "l needs a direction" end
+  elseif c == "e" then
+    op = {k = "equip", slot = r.num()}
+    if not op.slot then return nil, "e needs a slot" end
+  elseif c == "?" then
+    op = {k = "expect", dir = r.dir(), block = r.num()}
+    if not op.dir or not op.block then return nil, "? needs a direction and a block" end
   elseif c == "z" then
     op = {k = "charge", pct = r.num() or 95}
   elseif c == "@" then
@@ -152,7 +165,7 @@ function M.parse(text)
   while not r.done() do
     local op, why = read_op(r)
     if not op then return nil, ("op %d: %s"):format(#prog.ops + 1, why) end
-    if op.k == "dig" and not prog.palette[op.block] then
+    if (op.k == "dig" or op.k == "expect") and not prog.palette[op.block] then
       return nil, ("op %d: block %d is not in the palette"):format(#prog.ops + 1, op.block)
     end
     prog.ops[#prog.ops + 1] = op
@@ -166,12 +179,16 @@ end
   hw.move(dir)                      true, or false and a kind ("entity", "solid", ...)
   hw.face(dir)                      true
   hw.analyze(dir)                   name, meta of the block there; nil for air
+  hw.detect(dir)                    what robot.detect says: true or false, and a kind ("entity")
   hw.swing(dir)                     true when something broke
   hw.place(dir, slot, face, sneak)  true, or false and why
   hw.use(dir, slot, face, sneak)    what the use returned, as text
-  hw.take(dir, their, mine, n)      how many came; hw.give(dir, mine, n) how many went
+  hw.equip(slot)                    true when the slot's item and the tool in hand swapped
+  hw.take(dir, their, mine, n)      how many came
+  hw.give(dir, mine, n, their)      how many went: a plain drop, or into its slot `their`
   hw.shift(from, to, n)             true; hw.craft(slot, n) how many made
   hw.energy()                       energy, max
+  hw.clock()                        seconds, the robot's own clock (computer.uptime)
   hw.chunk(on)                      true
   hw.scan(x, z, y, w, d, h)         hardness values, a table
   hw.extras()                       "max .. dur .. up .. mem .. chunk .. tanks" as text
@@ -183,7 +200,9 @@ function M.new(hw, start)
              pos = {start.x or 0, start.y or 0, start.z or 0}, facing = start.facing or "n",
              trail = {}, results = {}, hist = {}, stack = {}}
 
+  -- every line ends with the robot's own clock, "@<seconds>": the PC fits its timings to them
   local function log(line)
+    line = ("%s @%.2f"):format(line, hw.clock and hw.clock() or 0)
     m.hist[#m.hist + 1] = line
     hw.history(line)
   end
@@ -259,6 +278,10 @@ function M.new(hw, start)
       end
     end
     local k, ok, why, res = op.k, true, nil, nil
+    -- an op sideways turns the robot to face it (the hardware's side(): a robot acts only in
+    -- front, up or down): the machine's facing follows, as its copy's does - a dig sideways had
+    -- left them telling different ways (Pintsize, dig -5 1 2, 2026-10-05)
+    if k ~= "step" and op.dir and op.dir ~= "u" and op.dir ~= "d" then m.facing = op.dir end
     if k == "step" then
       local fine, kind = hw.move(op.dir)
       if not fine then
@@ -284,6 +307,13 @@ function M.new(hw, start)
     elseif k == "dig" then
       local want = m.prog.palette[op.block]
       local name, meta = hw.analyze(op.dir)
+      if not name then
+        -- air already: what the dig was to leave - done, nothing broken (10-live.md)
+        log(("%d %s air already"):format(m.pc, op.src))
+        m.results[#m.results + 1] = ("%d %s air"):format(m.pc, op.src)
+        next_op()
+        return m.state
+      end
       if name == "OpenComputers:robot" or name ~= want.name
           or (want.meta ~= "*" and meta ~= want.meta) then
         stop(("not-expected %s"):format(name and (name .. ":" .. tostring(meta)) or "air"))
@@ -294,15 +324,29 @@ function M.new(hw, start)
       if after then ok, why = false, "not-dug " .. after end
     elseif k == "put" then
       ok, why = hw.place(op.dir, op.slot, op.face, op.sneak)
-      if not ok then why = "nothing-placed " .. tostring(why) end
+      if not ok then
+        -- a robot or a creature in the cell is not a danger, only in the way: wait and try again
+        -- every second, as a step does (the user, 2026-10-05: "robots should retry things that
+        -- aren't dangerous: block placing and moving"). robot.place gives no reason for it (OC's
+        -- Agent.place: false, or false and "nothing selected"); robot.detect says "entity".
+        local name = hw.analyze(op.dir)
+        local _, kind = hw.detect(op.dir)
+        if name == "OpenComputers:robot" or (not name and kind == "entity") then
+          m.state, m.why = "wait", name and "robot" or "entity"
+          return m.state
+        end
+        why = "nothing-placed " .. tostring(why)
+      end
     elseif k == "use" then
       res = hw.use(op.dir, op.slot, op.face, op.sneak)
     elseif k == "take" then
+      -- only when told and only what is there: the interface's tick is the PC's to wait for
+      -- (redesign/11-me.md); short is a stop, never tried again here
       local n = hw.take(op.dir, op.their, op.mine, op.n)
       res = tostring(n)
       if op.n and n < op.n then ok, why = false, ("took %d of %d"):format(n, op.n) end
     elseif k == "give" then
-      local n = hw.give(op.dir, op.mine, op.n)
+      local n = hw.give(op.dir, op.mine, op.n, op.their)
       res = tostring(n)
       if op.n and n < op.n then ok, why = false, ("gave %d of %d"):format(n, op.n) end
     elseif k == "shift" then
@@ -315,6 +359,18 @@ function M.new(hw, start)
     elseif k == "look" then
       local name, meta = hw.analyze(op.dir)
       res = name and (name .. ":" .. tostring(meta)) or "air"
+    elseif k == "equip" then
+      -- that slot's item into the hand, the tool in hand into the slot (13-farm.md)
+      ok = hw.equip(op.slot)
+      if not ok then why = "not-equipped" end
+    elseif k == "expect" then
+      -- the block in front must be the one named, else a stop: a till that did not take
+      local want = m.prog.palette[op.block]
+      local name, meta = hw.analyze(op.dir)
+      if not want or name ~= want.name or (want.meta ~= "*" and meta ~= want.meta) then
+        stop(("not-expected %s"):format(name and (name .. ":" .. tostring(meta)) or "air"))
+        return m.state
+      end
     elseif k == "charge" then
       local e, max = hw.energy()
       if e < max * op.pct / 100 then
@@ -340,6 +396,16 @@ function M.new(hw, start)
     return m.state
   end
 
+  -- Where it stands, told by the PC: a robot carried and placed again by hand keeps the position
+  -- of the place it last walked to (Tom and Cairol, 2026-10-05, brought back to the base).
+  function m.setpos(x, y, z)
+    if m.state == "run" or m.state == "wait" then return nil, "a program is running" end
+    if not (x and y and z) then return nil, "setpos <x> <y> <z>" end
+    m.pos, m.trail = {x, y, z}, {}
+    hw.save_pos(x, y, z, m.facing)
+    return true
+  end
+
   function m.status_fast()
     return ("%s %s %d %d %d %d %s %d%s"):format(m.id, m.state, m.pc, m.pos[1], m.pos[2],
             m.pos[3], m.facing, math.floor(hw.energy()), m.why and (" " .. m.why) or "")
@@ -354,10 +420,14 @@ function M.new(hw, start)
     return out
   end
 
+  -- Only the box's own w x d x h values: the geolyzer's table is 64 long whatever the box, the
+  -- rest noise (Pintsize, 2026-10-05: a 2-cell column came back as 64 numbers).
   function m.geo(x, z, y, w, d, h)
     local v = hw.scan(x, z, y, w, d, h)
     local out = {}
-    for i = 1, #v do out[i] = v[i] == 0 and "0" or ("%.2f"):format(v[i]) end
+    for i = 1, math.min(#v, (w or 1) * (d or 1) * (h or 1)) do
+      out[i] = v[i] == 0 and "0" or ("%.2f"):format(v[i])
+    end
     return table.concat(out, ",")
   end
 
@@ -419,6 +489,11 @@ function hw.analyze(dir)
   if type(b) ~= "table" or b.name == "minecraft:air" then return nil end
   return b.name, b.metadata or 0
 end
+function hw.detect(dir) return robot.detect(side(dir)) end
+function hw.equip(slot)
+  robot.select(slot)
+  return ic.equip() and true or false
+end
 function hw.swing(dir) return robot.swing(side(dir)) end
 function hw.place(dir, slot, f, sneak)
   robot.select(slot)
@@ -438,10 +513,11 @@ function hw.take(dir, their, mine, n)
   robot.select(mine)
   return ic.suckFromSlot(side(dir), their, n) or 0
 end
-function hw.give(dir, mine, n)
+function hw.give(dir, mine, n, their)
   robot.select(mine)
   local before = robot.count(mine)
-  robot.drop(side(dir), n)
+  if their then ic.dropIntoSlot(side(dir), their, n)
+  else robot.drop(side(dir), n) end
   return before - robot.count(mine)
 end
 function hw.shift(from, to, n)
@@ -455,6 +531,7 @@ function hw.craft(slot, n)
   return robot.count(slot) - before
 end
 function hw.energy() return computer.energy(), computer.maxEnergy() end
+function hw.clock() return computer.uptime() end
 function hw.chunk(on)
   if component.isAvailable("chunkloader") then component.chunkloader.setActive(on) end
   return true
@@ -462,10 +539,14 @@ end
 function hw.scan(x, zz, y, w, d, h) return geo.scan(x, zz, y, w, d, h) end
 function hw.extras()
   local chunk = component.isAvailable("chunkloader") and component.chunkloader.isActive()
-  return ("max %d dur %s up %.0f mem %d/%d chunk %s tanks %s"):format(
+  -- its name too, as the player gave it: a robot picked up and placed again comes back with a
+  -- new address (Tom and Cairol, 2026-10-05), and only its name tells which it is
+  local okn, name = pcall(robot.name)
+  return ("max %d dur %s up %.0f mem %d/%d chunk %s tanks %s name %s slots %d"):format(
           math.floor(computer.maxEnergy()), tostring(robot.durability()), computer.uptime(),
           computer.freeMemory(), computer.totalMemory(), tostring(chunk),
-          tostring(robot.tankCount and robot.tankCount() or 0))
+          tostring(robot.tankCount and robot.tankCount() or 0),
+          ((okn and name or "?"):gsub("%s", "_")), robot.inventorySize())
 end
 function hw.inventory()
   local out = {}
@@ -517,6 +598,10 @@ local function handle(line)
     local a = {}
     for v in rest:gmatch("%S+") do a[#a + 1] = tonumber(v) end
     ok(m.geo(table.unpack(a)))
+  elseif cmd == "setpos" then
+    local x, y, zz = rest:match("^(-?%d+)%s+(-?%d+)%s+(-?%d+)")
+    local fine, why = m.setpos(tonumber(x), tonumber(y), tonumber(zz))
+    if fine then ok(m.status_fast()) else err(why) end
   elseif cmd == "bye" then ok(); return "bye"
   else err("no command " .. cmd) end
 end

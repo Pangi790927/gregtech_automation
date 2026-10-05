@@ -13,6 +13,73 @@ local function write(path, text)
     f:close()
 end
 
+--[[ The guesses settled by how trees grow (redesign/09-paths.md, "Guesses"), one row of chunk
+-- 20 7 seen from the side, x 320 .. 324 left to right, y 64 at the top (g: guessed):
+--     y64   .      .      .     dirt g  .
+--     y63   grass  .      log   dirt g  dirt g      the crown's "dirt" beside the log: leaves
+--     y62   leaf g .      log   .       .
+--     y61   leaf g dirt g log   .       .           buried "leaves" under grass: dirt;
+--     y60   dirt   dirt   dirt  dirt    dirt        the dirt on the ground stays dirt ]]
+local function settle_case()
+    write(DIR .. "/c20_7.txt", table.concat({
+        "# 3d-draw map 1",
+        "box x 320 324 y 60 64 z 112 112",
+        "palette 1 minecraft:dirt 0 0.50 seen",
+        "palette 2 BiomesOPlenty:leaves4 1 0.20 seen",
+        "palette 3 minecraft:grass 0 0.60 seen",
+        "palette 4 minecraft:log 0 2.00 seen",
+        "layer 60 1,1,1,1,1",
+        "layer 61 2,1,4,0,0",
+        "layer 62 2,0,4,0,0",
+        "layer 63 3,0,4,1,1",
+        "layer 64 0,0,0,1,0",
+        "guessed 61 1,1,0,0,0",
+        "guessed 62 1,0,0,0,0",
+        "guessed 63 0,0,0,1,1",
+        "guessed 64 0,0,0,1,0",
+    }, "\n") .. "\n")
+    local area = chunks.read_area(DIR, 20, 20, 7, 7, {})
+    if not area then return "settle: no area read" end
+    local function name(x, y) local c = area.cells[x .. "," .. y .. ",112"]; return c and c[4] end
+    if name(320, 61) ~= "minecraft:dirt" or name(320, 62) ~= "minecraft:dirt" then
+        return "settle: the leaves under the grass are not dirt: " .. tostring(name(320, 62))
+    end
+    if name(321, 61) ~= "minecraft:dirt" then return "settle: the dirt on the ground moved" end
+    for _, xy in ipairs({{323, 63}, {323, 64}, {324, 63}}) do
+        local n = name(xy[1], xy[2])
+        if not (n and n:find("leaves")) then
+            return ("settle: the crown's dirt at %d %d is %s"):format(xy[1], xy[2], tostring(n))
+        end
+        if area.cells[xy[1] .. "," .. xy[2] .. ",112"][7] then
+            return "settle: a settled leaf is still a guess"
+        end
+    end
+    -- ground over a cave, beside a guessed leaf only: dirt still (chunk 21 7, x 336 .. 338)
+    write(DIR .. "/c21_7.txt", table.concat({
+        "# 3d-draw map 1",
+        "box x 336 338 y 60 64 z 112 112",
+        "palette 1 minecraft:dirt 0 0.50 seen",
+        "palette 2 BiomesOPlenty:leaves4 1 0.20 seen",
+        "layer 60 1,1,1",
+        "layer 61 0,0,0",
+        "layer 62 1,2,1",
+        "layer 63 1,1,1",
+        "layer 64 1,1,1",
+        "guessed 62 1,1,1",
+        "guessed 63 1,1,1",
+        "guessed 64 1,1,1",
+    }, "\n") .. "\n")
+    local cave = chunks.read_area(DIR, 21, 21, 7, 7, {})
+    for k, c in pairs(cave.cells) do
+        if c[4]:find("leaves") then return "settle: ground over a cave became leaves at " .. k end
+    end
+    if area.settled.leaves ~= 3 or area.settled.dirt ~= 2 then
+        return ("settle: %d leaves, %d dirt counted"):format(area.settled.leaves,
+                                                             area.settled.dirt)
+    end
+    return nil
+end
+
 local function run_test()
     -- chunk 15 7: x 240..255, z 112..127; two rows of a layer at y 60
     write(DIR .. "/c15_7.txt", table.concat({
@@ -57,7 +124,7 @@ local function run_test()
     if b[1] ~= 224 or b[2] ~= 271 or b[3] ~= 60 or b[4] ~= 61 then
         return ("box %d %d %d %d"):format(b[1], b[2], b[3], b[4])
     end
-    return nil
+    return settle_case()
 end
 
 return {run_test = run_test}

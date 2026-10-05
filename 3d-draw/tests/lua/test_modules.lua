@@ -9,7 +9,9 @@ local function write(path, text)
 end
 
 local function run_test()
-    for _, m in ipairs({"watch", "chunks", "look", "view", "plan", "marks", "labels", "zmap"}) do
+    for _, m in ipairs({"watch", "chunks", "look", "view", "plan", "marks", "labels", "zmap",
+                        "relay", "copy", "robots", "control", "packets", "planner", "route",
+                        "programs", "sim", "prove", "crew", "me", "recipes"}) do
         local ok, err = pcall(require, m)
         if not ok then return m .. " would not load: " .. tostring(err) end
     end
