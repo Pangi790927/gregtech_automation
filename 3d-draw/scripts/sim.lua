@@ -5,7 +5,8 @@
 -- | clock, sped up. The user, 2026-10-05: "I want to see a simulated run, the whole building at the
 -- | end, but for now, see them do at least a zone each, in paralel".
 -- |
--- |     sim.start()          the plan of the packets panel, the five builders at their parks
+-- |     sim.start(focus)     the plan of the packets panel, the five builders at their parks;
+-- |                          with a packet id, only it and what it waits on (the rest as done)
 -- |     sim.update(dt)       the robots' ops up to the clock; true when the view is to be drawn
 -- |     sim.cells()          the view's overlay: robots, blocks placed and dug, and with J what is
 -- |                          left of the packets being worked, see-through
@@ -22,6 +23,7 @@
 --]]
 
 local vc = require("virt_composer")
+local spawn = require("spawn")         -- spawns that keep their handle
 local blocks = require("blocks")
 local chunks = require("chunks")
 local live = require("live")
@@ -36,7 +38,9 @@ local sim = {on = false, running = false, speed = 16, clock = 0, robots = {}, do
              taken = {}, failed = {}, over = {}, note = "", ndone = 0}
 
 local TPS = 13
+local MATTOCK_SLOT = 32                 -- the builders' last slot
 local STEP_MAX = TPS * 20               -- server ticks the sim clock may move in one frame
+sim.FOCUS_ROBOT = "Pintsize"            -- the one builder of a focused run
 local CREW = {                          -- robots.lua's builders, at their parks
     {"G.U.N.T.E.R.", {0, 0, 0}, 0xff2090ff}, {"ASIMO", {2, 0, -2}, 0xff40d040},
     {"Pintsize", {0, 0, -2}, 0xffd04080}, {"Baymax", {1, -1, -2}, 0xff40c0e0},
@@ -77,7 +81,7 @@ local function refresh(k)
     end
 end
 
-function sim.start()
+function sim.start(focus)
     -- never beside the real robots: they share the one grid (redesign/10-live.md)
     local crew = package.loaded["crew"]
     if crew and next(crew.jobs) then
@@ -103,7 +107,7 @@ function sim.start()
     end
     local area = chunks.read_area("data/chunks", (x0 + a[1]) // 16, (x1 + a[1]) // 16,
             (z0 + a[3]) // 16, (z1 + a[3]) // 16,
-            {"data/scouted.txt", "data/built.txt", "data/fixed.txt"})
+            chunks.LAYERS)
     local wb, base = {}, {}
     for _, c in pairs(area.cells) do
         local k = (c[1] - a[1]) .. "," .. (c[2] - a[2]) .. "," .. (c[3] - a[3])
@@ -124,13 +128,41 @@ function sim.start()
         if p.unproven then sim.failed[id] = "unproven: " .. p.unproven end
     end
     sim.clock, sim.ndone, sim.note = 0, 0, ""
+    -- a focus: that packet and, through its waits, what it needs; the rest counts as done, so a
+    -- field is tried before the whole village (the upper field, 2026-10-05)
+    if focus and focus ~= "" then
+        if not r.packets[focus] then
+            sim.note = "no packet " .. focus
+            return
+        end
+        local need, todo = {}, {focus}
+        while #todo > 0 do
+            local id = table.remove(todo)
+            if not need[id] and r.packets[id] then
+                need[id] = true
+                for w in pairs(r.packets[id].waits) do todo[#todo + 1] = w end
+            end
+        end
+        for id in pairs(r.packets) do if not need[id] then sim.done[id] = true end end
+        sim.note = "focus: " .. focus
+    end
+    -- a focus is one builder's work, as it runs live (the user, 2026-10-05: "one builder builds
+    -- the field"): Pintsize works it, the others stand in their parks as robots do - idle sim
+    -- robots stay where their last packet ended, on a field's stands (-26,6,22, 2026-10-06)
     for _, c in ipairs(CREW) do
+        if focus and focus ~= "" and c[1] ~= sim.FOCUS_ROBOT then
+            w:set(c[2][1], c[2][2], c[2][3], {ROBOT, 0})
+            goto next_robot
+        end
         local b = simbot.robot(w, {x = c[2][1], y = c[2][2], z = c[2][3], facing = "n",
                                    name = c[1], energy = 40500, max = 40500})
         local rob = {name = c[1], colour = c[3], b = b, kinds = {}, trail = {{b.x, b.y, b.z}},
                      packet = nil, work = 0, idle = 0, waits = 0}
         rob.m = machine.new(b.hw, {x = b.x, y = b.y, z = b.z, facing = "n"})
+        -- each builder carries a mattock (the user, 2026-10-05), kept apart from the kinds' slots
+        b.slots[MATTOCK_SLOT] = {name = "TConstruct:mattock", meta = 0, count = 1}
         sim.robots[#sim.robots + 1] = rob
+        ::next_robot::
     end
     -- the pathfinder's grid follows the world as the robots change it: a cell dug or left is air,
     -- a block placed or a robot standing is a block
@@ -256,13 +288,16 @@ local function idle_reason()
 end
 
 -- A slot for a kind of block, filled without end: this crew has no ME yet.
+-- A slot holding what a block is put with, as the live crew takes it from the ME (crew.item): a
+-- water cell's water bucket, wheat's seeds, farmland's dirt.
 local function slot_of(rob)
     return function(name, meta)
+        name, meta = require("crew").item(name, meta)
         local kk = name .. ":" .. meta
         if not rob.kinds[kk] then
             local n = 0
             for _ in pairs(rob.kinds) do n = n + 1 end
-            if n >= 32 then return nil end                -- the builders' inventory
+            if n >= MATTOCK_SLOT - 1 then return nil end  -- the builders' inventory
             rob.kinds[kk] = n + 1
         end
         local s = rob.kinds[kk]
@@ -271,6 +306,8 @@ local function slot_of(rob)
     end
 end
 
+sim.slot_of, sim.MATTOCK_SLOT = slot_of, MATTOCK_SLOT
+
 --[[ A robot stopped by something in its way - a block another robot placed across its route since
 -- the program was made, a cell taken by a robot passing - has the rest of its proven steps made
 -- again from where it stands, REROUTES times at most; only then the packet fails. Two such stops
@@ -278,6 +315,9 @@ end
 local REROUTES = 3
 -- The cells of the packets the other robots are working, to dig and to place, supports with
 -- them: kept off by this robot's routes (programs.lua, `avoid`; redesign/09-paths.md).
+-- Where each other robot's program ends too: where it comes to rest (a robot is a block in the
+-- grid where it stands already; the user, 2026-10-05: "same for the final resting place for a
+-- robot that runs").
 local function others_work(rob)
     local avoid = {}
     for _, o in ipairs(sim.robots) do
@@ -285,9 +325,13 @@ local function others_work(rob)
             for _, k in ipairs(o.packet.cells or {}) do avoid[k] = true end
             for _, st in ipairs(o.packet.steps or {}) do avoid[st.k] = true end
         end
+        if o ~= rob and o.dest and (o.m.state == "run" or o.m.state == "wait") then
+            avoid[o.dest[1] .. "," .. o.dest[2] .. "," .. o.dest[3]] = true
+        end
     end
     return avoid
 end
+sim.others_work = others_work
 
 local function reroute(rob)
     local m, why = rob.m, tostring(rob.m.why)
@@ -301,10 +345,11 @@ local function reroute(rob)
     local rest = {}
     for i = last + 1, #rob.steps do rest[#rest + 1] = rob.steps[i] end
     if #rest == 0 then return false end
-    local text, _, _, opstep = programs.make({steps = rest}, {pos = {rob.b.x, rob.b.y, rob.b.z},
-            facing = rob.b.facing, slot_of = slot_of(rob), avoid = others_work(rob)}, map)
+    local text, dest, _, opstep = programs.make({steps = rest}, {pos = {rob.b.x, rob.b.y,
+            rob.b.z}, facing = rob.b.facing, slot_of = slot_of(rob), avoid = others_work(rob),
+            tool_slot = MATTOCK_SLOT}, map)
     if not text then return false end
-    rob.opstep, rob.steps = opstep, rest
+    rob.opstep, rob.steps, rob.dest = opstep, rest, dest
     m.exec(rob.packet.id, text)
     sim.log_line(("%s: %s re-routed after %s"):format(rob.name, rob.packet.id, why))
     return true
@@ -334,6 +379,7 @@ function take_one(rob, p)
     local text, a2, _, opstep = programs.make(p, {pos = {rob.b.x, rob.b.y, rob.b.z},
                                                   facing = rob.b.facing,
                                                   slot_of = slot_of(rob),
+                                                  tool_slot = MATTOCK_SLOT,
                                                   avoid = others_work(rob)}, map)
     rob.opstep, rob.steps, rob.reroutes = opstep, p.steps, 0
     local tm = vc.app_time() - t_make
@@ -353,6 +399,7 @@ function take_one(rob, p)
         sim.failed[p.id] = err
         return true
     end
+    rob.dest = a2                                  -- where it comes to rest: kept off by others
     sim.taken[p.id], rob.packet = true, p
     p.t_start, p.t_by = rob.b.ticks, rob.name
     -- no cells kept out of others' ways: the proof let a packet's robot stand in cells another
@@ -599,7 +646,7 @@ function sim.panel()
             :format(sim.on and (sim.running and "building" or "stopped") or "none", sim.ndone,
             total, nfail, sim.clock / TPS))
     if vc.ImGui_Button(sim.on and "start again" or "simulate the build", {x = 0, y = 0}) then
-        vc.coroutine_spawn(sim.start)               -- it plans and proves first: not in a frame
+        spawn(sim.start)               -- it plans and proves first: not in a frame
     end
     if sim.on then
         vc.ImGui_SameLine(0, -1)

@@ -80,6 +80,21 @@ local function settle_case()
     return nil
 end
 
+-- The newest wins: world.txt read last, everything new written to it (chunks.LAYERS, the user's
+-- "go with world.txt", 2026-10-06) - a cell built.txt says was dug, scanned since as dirt, is
+-- dirt to the map and to the pathfinder's grid (the upper field's cells, overridden before).
+local function world_case()
+    if chunks.LAYERS[#chunks.LAYERS] ~= chunks.WORLD then return "world.txt not read last" end
+    write(DIR .. "/world.txt", "# world\n240 60 112 minecraft:dirt 0 0.50 scouted Pintsize\n")
+    local z = chunks.read_zone(DIR, 15, 7, {DIR .. "/built.txt", DIR .. "/world.txt"})
+    local c = z and z.cells["240,60,112"]
+    if not c or c[4] ~= "minecraft:dirt" then return "world.txt's dirt lost to built.txt's air" end
+    local vc = require("virt_composer")
+    vc.route_load(DIR, 15, 15, 7, 7, 0, 0, 0, DIR .. "/built.txt\n" .. DIR .. "/world.txt")
+    if vc.route_get(240, 60, 112) ~= 2 then return "the grid kept built.txt's air" end
+    return nil
+end
+
 local function run_test()
     -- chunk 15 7: x 240..255, z 112..127; two rows of a layer at y 60
     write(DIR .. "/c15_7.txt", table.concat({
@@ -124,7 +139,7 @@ local function run_test()
     if b[1] ~= 224 or b[2] ~= 271 or b[3] ~= 60 or b[4] ~= 61 then
         return ("box %d %d %d %d"):format(b[1], b[2], b[3], b[4])
     end
-    return settle_case()
+    return world_case() or settle_case()
 end
 
 return {run_test = run_test}

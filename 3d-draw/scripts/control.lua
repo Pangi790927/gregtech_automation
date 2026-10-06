@@ -29,6 +29,7 @@
 --]]
 
 local vc = require("virt_composer")
+local spawn = require("spawn")         -- spawns that keep their handle
 local robots = require("robots")
 
 local control = {}
@@ -130,8 +131,8 @@ local function run(line)
         local name, x, y, z = rest:match("^(%S+)%s+(-?%d+)%s+(-?%d+)%s+(-?%d+)")
         local r = find(name)
         if not r or not r.sf then return {"no linked robot " .. tostring(name)} end
-        local p = require("route").find(r.sf.pos, r.sf.facing, {tonumber(x), tonumber(y),
-                                                               tonumber(z)})
+        -- kept off the other robots (crew.way): a way through a parked one only waits on it
+        local p = require("crew").way(r, {tonumber(x), tonumber(y), tonumber(z)})
         if p == "" then return {"no way known from " .. table.concat(r.sf.pos, " ")} end
         if p == "." then return {"already there"} end
         local d, sent, id = robots.run(r.name, "$0 " .. p)
@@ -142,7 +143,7 @@ local function run(line)
     elseif cmd == "sim" then
         local s = require("sim")
         local what, arg = rest:match("^(%S*)%s*(%S*)")
-        if what == "start" then s.start()
+        if what == "start" then s.start(rest:match("^start%s+(.+)$"))
         elseif what == "clear" then s.clear()
         elseif what == "pause" then s.running = false
         elseif what == "go" then s.running = true
@@ -226,10 +227,10 @@ end
 function control.start(port)
     local l = vc.net_listen(port or 7790)
     if l < 0 then return false end
-    vc.coroutine_spawn(function()
+    spawn(function()
         while true do
             local h = vc.net_accept(l)
-            if h >= 0 then vc.coroutine_spawn(session, h) else vc.net_sleep_ms(500) end
+            if h >= 0 then spawn(session, h) else vc.net_sleep_ms(500) end
         end
     end)
     return true

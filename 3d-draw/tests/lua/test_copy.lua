@@ -44,6 +44,16 @@ local function run_test()
     r.sf = {id = "p2", state = "done", op = 2, pos = {2, 0, 0}, facing = "e", energy = 39970}
     copy.follow(r)
     if not r.diverged then return "a robot ending elsewhere was not noticed" end
+    -- a copy behind its robot: the robot done, two places made, the copy not stepped yet - run to
+    -- its end before the slots are compared, no divergence (2026-10-06)
+    r.diverged, r.copy = nil, nil
+    r.sf = {id = "-", state = "idle", op = 1, pos = {4, 0, 2}, facing = "e", energy = 39960}
+    copy.inventory(r, "1:minecraft:cobblestone:0:5;3:minecraft:ladder:0:14")
+    copy.start(r, "p3", "$0 p-1 > p-1")
+    copy.inventory(r, "1:minecraft:cobblestone:0:3;3:minecraft:ladder:0:14")
+    r.sf = {id = "p3", state = "done", op = 4, pos = {5, 0, 2}, facing = "e", energy = 39950}
+    copy.compare_inventory(r)
+    if r.diverged then return "a copy behind its robot called diverged: " .. r.diverged.why end
     return nil
 end
 

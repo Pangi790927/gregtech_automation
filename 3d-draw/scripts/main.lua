@@ -47,7 +47,7 @@ local sim = live("sim")
 local DATA = "data/"
 local PATHS = {chunks = DATA .. "chunks", anchor = DATA .. "anchor.txt", zone = DATA .. "zone.txt",
                built = DATA .. "built.txt", fixed = DATA .. "fixed.txt",
-               scouted = DATA .. "scouted.txt"}
+               scouted = DATA .. "scouted.txt", world = DATA .. "world.txt"}
 local PLANS = {DATA .. "harbour.txt", DATA .. "village.txt"}
 
 local last_time = 0

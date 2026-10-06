@@ -11,6 +11,10 @@
 -- |     palette <id> <name> <meta> <hardness> <how>     its own numbers; 0 or none is air
 -- |     layer <y> <row>;<row>;...                       a row per z, ids by x, comma separated
 -- |     guessed <y> <row>;<row>;...                     1 where the block was guessed
+-- |     chunks.LAYERS          the layer files, in the order they are read - a later one wins a
+-- |                            cell: scouted, built, fixed, then data/world.txt, where everything
+-- |                            new is written (chunks.WORLD), so the newest is what counts
+-- |
 -- | A layer file (data/built.txt, data/fixed.txt): `x y z name meta hardness how ...` per line,
 -- | world coordinates; laid over the chunks in the order given, air taking a block away.
 -- |
@@ -24,6 +28,12 @@
 --]]
 
 local chunks = {}
+
+-- The old three first, then the one log everything new goes to: a fresh scan of a cell once dug
+-- had been overridden by built.txt's old air, read after scouted.txt (the upper field, 2026-10-06;
+-- the user: "go with world.txt").
+chunks.WORLD = "data/world.txt"
+chunks.LAYERS = {"data/scouted.txt", "data/built.txt", "data/fixed.txt", chunks.WORLD}
 
 local AIR = "minecraft:air"
 

@@ -390,6 +390,10 @@ function M.new(hw, start)
       -- the block in front must be the one named, else a stop: a till that did not take
       local want = m.prog.palette[op.block]
       local name, meta = hw.analyze(op.dir)
+      -- a bucket's water is flowing_water until its first tick: a source all the same (13-farm.md)
+      if name == "minecraft:flowing_water" and want and want.name == "minecraft:water" then
+        name = want.name
+      end
       if not want or name ~= want.name or (want.meta ~= "*" and meta ~= want.meta) then
         stop(("not-expected %s"):format(name and (name .. ":" .. tostring(meta)) or "air"))
         return m.state
@@ -455,6 +459,53 @@ function M.new(hw, start)
   end
 
   return m
+end
+
+-- The robot's side of the link (03-exec.md): `ready`, then one command line in, its reply out,
+-- the program stepped between - on the robot over its zone `z` (z.send, z.wait), and in the crew's
+-- sim over a stand-in (tests/lua/test_crewsim.lua), the same code both ways.
+function M.serve(z, m)
+  local function handle(line)
+    local rid, cmd, rest = line:match("^(%S+)%s+(%S+)%s*(.*)$")
+    if not rid then return nil end
+    local function ok(value, lines)
+      local head = ("%s ok %d%s\n"):format(rid, lines and #lines or 0,
+                                           value and (" " .. value) or "")
+      z.send(head .. (lines and #lines > 0 and (table.concat(lines, "\n") .. "\n") or ""))
+    end
+    local function err(why) z.send(("%s err %s\n"):format(rid, tostring(why):gsub("\n", " "))) end
+    if cmd == "exec" or cmd == "give_way" then
+      local id, text = rest:match("^(%S+)%s*(.*)$")
+      local fine, why = m[cmd](id or "-", text or "")
+      if fine then ok() else err(why) end
+    elseif cmd == "status_fast" then ok(m.status_fast())
+    elseif cmd == "status" then ok(nil, m.status())
+    elseif cmd == "history" then ok(nil, m.hist)
+    elseif cmd == "geo" then
+      local a = {}
+      for v in rest:gmatch("%S+") do a[#a + 1] = tonumber(v) end
+      ok(m.geo(table.unpack(a)))
+    elseif cmd == "setpos" then
+      local x, y, zz = rest:match("^(-?%d+)%s+(-?%d+)%s+(-?%d+)")
+      local fine, why = m.setpos(tonumber(x), tonumber(y), tonumber(zz))
+      if fine then ok(m.status_fast()) else err(why) end
+    elseif cmd == "bye" then ok(); return "bye"
+    else err("no command " .. cmd) end
+  end
+
+  z.send("ready " .. m.status_fast() .. "\n")
+  local buf, done = "", false
+  while not done do
+    local st = m.state
+    if st == "run" then m.step() end
+    -- running: just read what came; waiting: try again in a second; else sleep until contacted
+    buf = buf .. z.wait(st == "run" and 0 or st == "wait" and 1 or math.huge)
+    for line in buf:gmatch("([^\n]*)\n") do
+      if handle(line) == "bye" then done = true end
+    end
+    buf = buf:match("[^\n]*$")
+    if st == "wait" and m.state == "wait" then m.state = "run"; m.step() end
+  end
 end
 
 -- ---- on the robot ------------------------------------------------------------------------------
@@ -601,44 +652,4 @@ if h then
 end
 local m = M.new(hw, start)
 
--- One command line in, its reply out.
-local function handle(line)
-  local rid, cmd, rest = line:match("^(%S+)%s+(%S+)%s*(.*)$")
-  if not rid then return nil end
-  local function ok(value, lines)
-    local head = ("%s ok %d%s\n"):format(rid, lines and #lines or 0, value and (" " .. value) or "")
-    z.send(head .. (lines and #lines > 0 and (table.concat(lines, "\n") .. "\n") or ""))
-  end
-  local function err(why) z.send(("%s err %s\n"):format(rid, tostring(why):gsub("\n", " "))) end
-  if cmd == "exec" or cmd == "give_way" then
-    local id, text = rest:match("^(%S+)%s*(.*)$")
-    local fine, why = m[cmd](id or "-", text or "")
-    if fine then ok() else err(why) end
-  elseif cmd == "status_fast" then ok(m.status_fast())
-  elseif cmd == "status" then ok(nil, m.status())
-  elseif cmd == "history" then ok(nil, m.hist)
-  elseif cmd == "geo" then
-    local a = {}
-    for v in rest:gmatch("%S+") do a[#a + 1] = tonumber(v) end
-    ok(m.geo(table.unpack(a)))
-  elseif cmd == "setpos" then
-    local x, y, zz = rest:match("^(-?%d+)%s+(-?%d+)%s+(-?%d+)")
-    local fine, why = m.setpos(tonumber(x), tonumber(y), tonumber(zz))
-    if fine then ok(m.status_fast()) else err(why) end
-  elseif cmd == "bye" then ok(); return "bye"
-  else err("no command " .. cmd) end
-end
-
-z.send("ready " .. m.status_fast() .. "\n")
-local buf, done = "", false
-while not done do
-  local st = m.state
-  if st == "run" then m.step() end
-  -- running: just read what came; waiting: try again in a second; else sleep until contacted
-  buf = buf .. z.wait(st == "run" and 0 or st == "wait" and 1 or math.huge)
-  for line in buf:gmatch("([^\n]*)\n") do
-    if handle(line) == "bye" then done = true end
-  end
-  buf = buf:match("[^\n]*$")
-  if st == "wait" and m.state == "wait" then m.state = "run"; m.step() end
-end
+M.serve(z, m)

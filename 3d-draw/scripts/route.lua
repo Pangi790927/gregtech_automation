@@ -34,7 +34,7 @@ function route.load()
     if cx0 == math.huge then return false end
     local a = view.anchor
     route.cells = vc.route_load("data/chunks", cx0, cx1, cz0, cz1, a[1], a[2], a[3],
-                                "data/scouted.txt\ndata/built.txt\ndata/fixed.txt")
+                                table.concat(require("chunks").LAYERS, "\n"))
     route.box = {cx0, cx1, cz0, cz1}
     route.loaded = route.cells >= 0
     route.took = vc.app_time() - t

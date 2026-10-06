@@ -84,6 +84,14 @@ function programs.make(packet, robot, map)
             vc.route_set(mk[1], mk[2], mk[3], mk[4])
         end
     end
+    -- the cells its own packet keeps off (a field's: right above the farmland, 13-farm.md)
+    for _, k in ipairs(packet.lock or {}) do
+        local x, y, z = unkey(k)
+        if vc.route_get(x, y, z) == 1 then
+            marks[#marks + 1] = {x, y, z, 1}
+            vc.route_set(x, y, z, 2)
+        end
+    end
     -- other robots' work walled off while this program is routed; put back with the rest
     if robot.avoid then
         local own = {[pos[1] .. "," .. pos[2] .. "," .. pos[3]] = true}
@@ -103,8 +111,13 @@ function programs.make(packet, robot, map)
     for si, st in ipairs(packet.steps) do
         local x, y, z = unkey(st.k)
         local how
-        -- a till is done from the one cell the proof chose beside it, facing it
-        local cands = st.act == "till" and {{st.from[1], st.from[2], st.from[3], st.dir}}
+        -- a step done from the one cell the proof chose (a till, a field's every step), facing it
+        -- water is poured from above only (13-farm.md, "The water step"); a turned block from
+        -- the stand its proven way names (14-turn.md)
+        local tv = st.act == "place" and st.face and STEP[st.dir]
+        local cands = st.from and {{st.from[1], st.from[2], st.from[3], st.dir}}
+                or st.act == "water" and {{x, y + 1, z, "d"}}
+                or tv and {{x - tv[1], y - tv[2], z - tv[3], st.dir}}
                 or stands({x = x, y = y, z = z})
         for _, sd in ipairs(cands) do
             local at = {sd[1], sd[2], sd[3]}
@@ -149,11 +162,35 @@ function programs.make(packet, robot, map)
             opstep[nops] = si
             goto next_step
         end
+        if st.act == "water" then
+            -- the bucket into the hand, used down, back into its slot empty (`u-<slot>`); a look
+            -- that the water is there (`?`)
+            local slot = robot.slot_of(st.block[1], st.block[2])
+            if not slot then
+                unmark()
+                return nil, "no water bucket left for " .. st.k
+            end
+            local pk = "minecraft:water:0"
+            if not pal_ix[pk] then
+                palette[#palette + 1] = pk
+                pal_ix[pk] = #palette
+            end
+            ops[#ops + 1] = "u-" .. slot
+            ops[#ops + 1] = "?-" .. pal_ix[pk]
+            nops = nops + 2
+            opstep[nops] = si
+            marks[#marks + 1] = {x, y, z, vc.route_get(x, y, z)}
+            vc.route_set(x, y, z, 2)
+            goto next_step
+        end
         nops = nops + 1
         opstep[nops] = si
         if st.act == "dig" then
             -- a guessed cell names any natural block (redesign/10-live.md)
-            local pk = st.natural and "natural:*" or (st.block[1] .. ":" .. tostring(st.block[2]))
+            -- leaves by any meta: above the wood's two bits it is decay state only (a leaves:8 the
+            -- dig named leaves:0 stopped Cortana's dry run, 2026-10-06)
+            local pk = st.natural and "natural:*" or st.block[1]:find("leaves", 1, true)
+                    and (st.block[1] .. ":*") or (st.block[1] .. ":" .. tostring(st.block[2]))
             if not pal_ix[pk] then
                 palette[#palette + 1] = pk
                 pal_ix[pk] = #palette
@@ -169,7 +206,25 @@ function programs.make(packet, robot, map)
                 unmark()
                 return nil, "no slot left for " .. st.block[1]
             end
-            ops[#ops + 1] = "p" .. DIR_CH[how.dir] .. slot
+            if st.face then
+                -- the face its way needs (none when it is the place's own: OC tries that first),
+                -- and a look that it came out so (`?`, the meta named)
+                ops[#ops + 1] = "p" .. DIR_CH[how.dir] .. slot
+                        .. (st.face ~= st.dir and ("/" .. DIR_CH[st.face]) or "")
+                -- the meta a place makes of it: any for a chest whose facing the plan lost, a
+                -- trapdoor shut (orient.placed_meta)
+                local pm = require("orient").placed_meta(st.block[1], st.block[2])
+                local pk = st.block[1] .. ":" .. (pm and tostring(pm) or "*")
+                if not pal_ix[pk] then
+                    palette[#palette + 1] = pk
+                    pal_ix[pk] = #palette
+                end
+                ops[#ops + 1] = "?" .. DIR_CH[how.dir] .. pal_ix[pk]
+                nops = nops + 1
+                opstep[nops] = si
+            else
+                ops[#ops + 1] = "p" .. DIR_CH[how.dir] .. slot
+            end
             marks[#marks + 1] = {x, y, z, vc.route_get(x, y, z)}
             vc.route_set(x, y, z, 2)
         end

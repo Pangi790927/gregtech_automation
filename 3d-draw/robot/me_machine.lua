@@ -20,6 +20,12 @@
 --   count <name> <damage>                 how many the network has
 --   items                                 all the network holds: name:damage:count;...
 --   parts                                 read-only: the components, a transposer's sides
+--   move <from> <to> <n> <slot> <slot>    the transposer moves n items between two sides
+--   at <addr> <command> [arguments]       one command on the interface whose address begins
+--                                         with addr (two interfaces, 2026-10-06); the plain
+--                                         commands stay on the first (component.me_interface)
+--   ifaces                                read-only: each interface's address and its 9
+--                                         slots' configuration, name:damage:size or -
 --   bye
 --
 -- getItemsInNetwork walks the whole network on the server's thread; it is safe only because the
@@ -115,6 +121,51 @@ function C.parts()
         out[#out + 1] = s
       end
     end
+  end
+  return table.concat(out, ";")
+end
+
+-- n items moved by the transposer from a slot on one side to a slot on another: from the
+-- interface (above, 1) into the GregTech tank's input (below, 0, slot 1), from its output (slot 2)
+-- back into a slot of the interface not stocked, which hands it to the network. The tank, each
+-- tick, empties a filled container in its input into itself and fills an empty one from itself,
+-- the container landing in its output (GT_MetaTileEntity_DigitalTankBase.onPreTick, 2026-10-05).
+function C.move(from, to, n, fslot, tslot)
+  local t = component.transposer
+  if not t then return nil, "no transposer" end
+  local moved = t.transferItem(tonumber(from), tonumber(to), tonumber(n), tonumber(fslot),
+                               tonumber(tslot))
+  return tostring(math.floor(moved or 0))
+end
+
+-- One command on another interface (redesign/15-crew.md, "Two interfaces"): `me` stands for
+-- it while the command runs, the first one after. The database is shared: an interface's config
+-- holds a copy of the database's stack (OC's DriverBlockInterface), so an entry may be reused.
+function C.at(addr, cmd, ...)
+  local full = component.get(addr, "me_interface")
+  if not full then return nil, "no interface " .. tostring(addr) end
+  if not C[cmd] or cmd == "at" then return nil, "no command " .. tostring(cmd) end
+  local first = me
+  me = component.proxy(full)
+  local fine, res, why = pcall(C[cmd], ...)
+  me = first
+  if not fine then return nil, res end
+  return res, why
+end
+
+-- Read-only: every interface, its address and what each of its 9 slots is configured to stock
+-- (name:damage:size, or - for none), to tell which interface is which by what the PC set.
+function C.ifaces()
+  local out = {}
+  for addr in component.list("me_interface") do
+    local t, slots = component.proxy(addr), {}
+    for i = 1, 9 do
+      local st = t.getInterfaceConfiguration(i)
+      slots[#slots + 1] = st and ("%s:%d:%d"):format(st.name, st.damage or 0, st.size or 0)
+                         or "-"
+    end
+    out[#out + 1] = addr:sub(1, 8) .. (addr == me.address and " first " or " ")
+                    .. table.concat(slots, ",")
   end
   return table.concat(out, ";")
 end

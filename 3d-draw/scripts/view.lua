@@ -219,7 +219,7 @@ function view.update_overlays()
     shown = over
 end
 
--- The files the zone is drawn from: its nine chunks, then scouted, built and fixed.
+-- The files the zone is drawn from: its nine chunks, then scouted, built, fixed and world.
 local function zone_files(cx, cz)
     local out = {}
     for i = cx - 1, cx + 1 do
@@ -228,6 +228,7 @@ local function zone_files(cx, cz)
     if paths.scouted then out[#out + 1] = paths.scouted end
     out[#out + 1] = paths.built
     out[#out + 1] = paths.fixed
+    if paths.world then out[#out + 1] = paths.world end
     return out
 end
 
@@ -236,6 +237,7 @@ local zone_watch = nil
 function view.load_zone(cx, cz, step)
     local layers = {paths.built, paths.fixed}
     if paths.scouted then table.insert(layers, 1, paths.scouted) end
+    if paths.world then layers[#layers + 1] = paths.world end
     local z = chunks.read_zone(paths.chunks, cx, cz, layers)
     if not z then return false end
     local old = view.zone and view.zone.box

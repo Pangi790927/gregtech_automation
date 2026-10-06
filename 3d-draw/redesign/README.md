@@ -32,6 +32,12 @@ this PC) - C++ on `../utils` (virt_composer), the logic in Lua.
 - `11-me.md` -- the ME: robots take their blocks at the interface and give back what they dig
 - `12-craft.md` -- crafting: Gunter makes what the ME lacks; recipes as data, one trip a batch
 - `13-farm.md` -- the field: farmland placed and tilled from beside, wheat planted, not waited for
+- `14-turn.md` -- blocks placed turned the plan's way: OC's aim and click, the blocks' rules
+- `15-crew.md` -- the crew: every builder at once until the plan is built; when it breaks
+- `16-giveway.md` -- robots that wait on each other: who gives way, how, the copies in step
+- `17-stations.md` -- two ME interfaces: a station and a lock each, one queue, told apart
+- `18-crewsim.md` -- the crew's sim: the live crew's code on simulated robots, before the live
+  robots (tests/lua/test_crewsim.lua)
 
 ## The direction (from the user's words; details come as notes above)
 

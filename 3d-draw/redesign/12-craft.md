@@ -30,7 +30,8 @@ Now one run, at the interface throughout, home at its end:
 - **A batch is full stacks:** up to 64 in each grid cell, crafted again and again (`c` into the
   storage slots 8, 12-16) until the grid is empty - up to 6 stacks of what it makes a batch.
 - **Gunter's inventory:** the grid is slots 1-3, 5-7, 9-11; his saw lives in slot 4; storage,
-  where what he makes goes, is 8, 12-16.
+  where what he makes goes, is 8, 12-16 - the empty ones only (crew.out_slots): his mattock in 8
+  stopped every craft, "nothing-crafted" (2026-10-06).
 - **One `config`, one `exec` a batch:** the config stocks batch N+1's ingredients and clears what
   was left of batch N, in one line; after the tick, the exec gives batch N's stacks back into the
   slots not stocked, takes N+1's straight into the grid's cells (`t`), shifts the saw in where
@@ -44,6 +45,7 @@ shows at once. The exe's view: ingredients taken off, what was made added on.
 
 ## Open
 
-- Doors (vanilla's six planks, to be tried in GTNH), torches (coal?), farmland (a hoe), wheat
-  (seeds), water (a bucket): no recipe yet - named for the user.
+- Doors (vanilla's six planks, to be tried in GTNH), torches (coal?): no recipe yet - named for
+  the user. Farmland and wheat are the field's (13-farm.md); water buckets are filled by the
+  station's tank, the ME's computer alone (13-farm.md, "Water").
 - Gunter crafting while the others build: the crew of five.

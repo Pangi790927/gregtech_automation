@@ -189,6 +189,11 @@ end
 function copy.compare_inventory(r)
     local c = r.copy
     if not c or r.diverged then return end
+    -- the robot is done: its copy, behind it (five robots and a busy app: false divergences of
+    -- fences and lavender, 2026-10-06), run to the end of the same program before comparing
+    if c.m.state == "run" then
+        for _ = 1, 100000 do if c.m.step() ~= "run" then break end end
+    end
     -- a dig's drops are the game's (grass gives dirt, tall grass now and then seeds): after a
     -- program with digs the copy takes the robot's slots as they are (redesign/10-live.md)
     -- and a program that touches no slot (moves only) has nothing to compare: the copy takes the

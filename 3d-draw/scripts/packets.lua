@@ -18,6 +18,7 @@
 --]]
 
 local vc = require("virt_composer")
+local spawn = require("spawn")         -- spawns that keep their handle
 local chunks = require("chunks")
 local planner = require("live")("planner")    -- by name, for `reload planner`
 local prove = require("live")("prove")
@@ -62,7 +63,7 @@ function packets.run()
     local a = view.anchor
     local area = chunks.read_area("data/chunks", (ext[1] + a[1]) // 16, (ext[2] + a[1]) // 16,
             (ext[3] + a[3]) // 16, (ext[4] + a[3]) // 16,
-            {"data/scouted.txt", "data/built.txt", "data/fixed.txt"})
+            chunks.LAYERS)
     if not area then packets.note = "no chunks under the plan"; return end
     local function have(x, y, z)
         local k = (x + a[1]) .. "," .. (y + a[2]) .. "," .. (z + a[3])
@@ -224,7 +225,7 @@ function packets.panel()
         end
     end
     vc.ImGui_SameLine(0, -1)
-    if vc.ImGui_Button("plan it", {x = 0, y = 0}) then vc.coroutine_spawn(packets.run) end
+    if vc.ImGui_Button("plan it", {x = 0, y = 0}) then spawn(packets.run) end
     local r = packets.result
     if r then
         local s = r.stats

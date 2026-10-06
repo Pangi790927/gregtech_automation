@@ -21,6 +21,7 @@
 --]]
 
 local vc = require("virt_composer")
+local spawn = require("spawn")         -- spawns that keep their handle
 local blocks = require("blocks")
 local relay = require("relay")
 local view = require("view")
@@ -103,6 +104,13 @@ local function parse_sf(r, line)
     end
 end
 
+-- Why a robot's link went, kept on it (r.dropped = {t, why}): the zone's own end ("the zone
+-- ended: error: ..."), or the link closed - by the watchdog, or the relay. A leg that saw its
+-- machine begin again names it, instead of guessing (place -3 0 2, 2026-10-06).
+function robots.dropped(r, why)
+    r.dropped = {t = robots.net.now(), why = tostring(why), phase = r.phase}
+end
+
 -- One command and its reply: the head ("<rid> ok <n> [value]" or "<rid> err <why>") and the n
 -- lines after it. nil when the link went.
 local function ask(r, c, cmd)
@@ -176,12 +184,16 @@ local function life(r, gen)
                             local t = table.remove(r.outbox, 1)
                             local head, lines = ask(r, c, t.cmd)
                             t.head, t.lines = head or ("link lost: " .. tostring(lines)), lines
+                            if not head then robots.dropped(r, lines) end
                             r.results[#r.results + 1] = t.cmd:sub(1, 40) .. " -> " .. tostring(head)
                             if #r.results > 6 then table.remove(r.results, 1) end
                         end
                         local was = r.sf and r.sf.state
-                        local head, _, value = ask(r, c, "status_fast")
-                        if not head then break end
+                        local head, why_lost, value = ask(r, c, "status_fast")
+                        if not head then
+                            robots.dropped(r, why_lost)
+                            break
+                        end
                         if value then parse_sf(r, value) end
                         local now_state = r.sf and r.sf.state
                         if (was == "run" or was == "wait") and now_state ~= was then
@@ -237,16 +249,39 @@ function robots.timings(r, lines)
     f:close()
 end
 
--- Closes the link of a robot that has not answered in SILENT seconds; its life opens it again.
+--[[ Closes the link of a robot that has not answered in SILENT seconds; its life opens it again.
+-- Time this program itself stood still is not the robot's silence: a coroutine planning (a plan
+-- made again took 36 s, programs.make and the dry run of a long packet many seconds) runs alone,
+-- the answers wait unread, and the watchdog had closed the links of robots that had answered -
+-- their zones ended with their connector ("its connector left", octerm_ext.lua) and came back
+-- "- idle", the packet just sent lost (place -3 0 2, 77 steps, twice; place -1 0 7, 74 steps,
+-- 2026-10-06). A round late by more than a second counts that much less against every ask. ]]
+robots.closes = {}                      -- the links the watchdog closed: {t, name, silent}
+
+-- One round of the watchdog at `now`, the last round at `last` (rounds a second apart): the time
+-- this program stood still beyond that second moved off every ask, then each link silent longer
+-- than SILENT closed and kept in robots.closes. Apart from the loop, for the tests.
+function robots.watch_round(now, last)
+    local stood = now - last - 1
+    for _, r in ipairs(robots.order) do
+        if r.asked and stood > 1 then r.asked = r.asked + stood end
+    end
+    for _, r in ipairs(robots.order) do
+        if r.asked and now - r.asked > SILENT and r.conn then
+            r.phase = ("SILENT %d s: link closed"):format(math.floor(now - r.asked))
+            robots.closes[#robots.closes + 1] = {t = now, name = r.name, silent = now - r.asked}
+            if #robots.closes > 50 then table.remove(robots.closes, 1) end
+            r.conn:close()
+        end
+    end
+end
+
 local function watchdog()
+    local last = robots.net.now()
     while true do
         local now = robots.net.now()
-        for _, r in ipairs(robots.order) do
-            if r.asked and now - r.asked > SILENT and r.conn then
-                r.phase = ("SILENT %d s: link closed"):format(math.floor(now - r.asked))
-                r.conn:close()
-            end
-        end
+        robots.watch_round(now, last)
+        last = now
         robots.net.sleep(1000)
     end
 end
@@ -258,11 +293,11 @@ function robots.link(name, on)
     r.linked = on
     if not watching then
         watching = true
-        vc.coroutine_spawn(watchdog)
+        spawn(watchdog)
     end
     r.gen = (r.gen or 0) + 1
     if on then
-        vc.coroutine_spawn(life, r, r.gen)
+        spawn(life, r, r.gen)
     elseif r.conn then
         r.conn:close()
     end
@@ -277,15 +312,46 @@ function robots.send(name, command)
     return t
 end
 
+--[[ Whether a program sent to r is still on its way: queued, or answered but not yet seen in a
+-- status_fast. Meanwhile r.sf is the robot as it was before it - its place, its state "done" - and
+-- a second program planned from it ran from a cell the robot had left: a way home and a way to
+-- the station sent within a second, the robot did a few steps of the first and the whole second
+-- from there, its copy the second only (Dalek_Sec 1 2 -3, Pintsize 0 0 -5 and 0 0 -4, Baymax
+-- 2 -2 -5 against copies at their parks, 2026-10-06; machine.lua's exec replaces a program after
+-- its current op). Over once the robot shows it, its exec is refused, or after IN_FLIGHT_S (the
+-- link went: the watchdog closes it after SILENT). Read lazily, from r.sent. ]]
+robots.IN_FLIGHT_S = 30
+function robots.in_flight(r)
+    local s = r and r.sent
+    if not s then return false end
+    local head = s.ticket and s.ticket.head
+    if (r.sf and r.sf.id == s.id) or (head and not head:match("^%S+ ok"))
+            or robots.net.now() - s.t > robots.IN_FLIGHT_S then
+        r.sent = nil
+        return false
+    end
+    return true
+end
+
 --[[ A program for a robot, the way every program goes from now on: run first start to end on a
 -- throwaway copy of the robot and the world (copy.dry), sent only when that copy ends `done` - or
 -- `halt`, a program that ends waiting for the PC on purpose (at the ME's interface, 11-me.md);
--- then its copy runs it beside the robot. Answers the dry run, and whether it was sent. ]]
+-- then its copy runs it beside the robot. Answers the dry run, and whether it was sent. Never
+-- over a program still on its way (robots.in_flight): refused, state "busy". ]]
 local runs = 0
 function robots.run(name, text)
     local r = robots.by[name]
     if not r or not r.linked or not r.sf then return nil, "not linked" end
     if not r.slots then return nil, "no status yet: its slots are not known" end
+    if robots.in_flight(r) then
+        return {state = "busy", why = "program " .. r.sent.id .. " is still on its way to it"},
+               false
+    end
+    -- nor over one it runs: machine.lua's exec replaces a running program after its op, the
+    -- robot and its copy apart from there (a give-way goes by its own command, give_way)
+    if r.sf.state == "run" or r.sf.state == "wait" then
+        return {state = "busy", why = "it still runs " .. tostring(r.sf.id)}, false
+    end
     local d = copy.dry(r, text)
     if d.state ~= "done" and d.state ~= "halt" then return d, false end
     runs = runs + 1
@@ -293,7 +359,9 @@ function robots.run(name, text)
     local ok, why = copy.start(r, id, text)
     if not ok then d.state, d.why = "refused", why; return d, false end
     r.matched, r.matched_check, r.div_hist, r.estimate = nil, true, nil, d.ticks
-    robots.send(name, "exec " .. id .. " " .. text)
+    r.dest = d.pos                       -- where it will stand: kept off by the others' ways
+    local t = robots.send(name, "exec " .. id .. " " .. text)
+    r.sent = {id = id, t = robots.net.now(), ticket = t}
     return d, true, id
 end
 

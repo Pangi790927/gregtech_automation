@@ -22,6 +22,8 @@
 -- | ===============================================================================================
 --]]
 
+local orient = require("orient")
+
 local simbot = {}
 
 local STEP = {n = {0, 0, -1}, s = {0, 0, 1}, e = {1, 0, 0}, w = {-1, 0, 0}, u = {0, 1, 0},
@@ -72,6 +74,14 @@ function simbot.robot(w, o)
         end
     end
 
+    -- Farmland under a solid block turns back to dirt (BlockFarmland.onNeighborBlockChange: the
+    -- material above solid): a robot stopping right above a field undoes it (13-farm.md).
+    local function trample(x, y, z)
+        local below = w:get(x, y - 1, z)
+        if below and below[1] == "minecraft:farmland" then
+            w:set(x, y - 1, z, {"minecraft:dirt", 0})
+        end
+    end
     local hw = {}
     function hw.move(dir)
         turn_to(dir)
@@ -85,6 +95,7 @@ function simbot.robot(w, o)
         w:set(r.x, r.y, r.z, nil)
         r.x, r.y, r.z = x, y, z
         w:set(x, y, z, {ROBOT, 0})
+        trample(x, y, z)
         r.ticks = r.ticks + 10
         r.energy = r.energy - 7
         return true
@@ -136,20 +147,42 @@ function simbot.robot(w, o)
             if st.count == 0 then r.slots[slot] = nil end
             return true
         end
-        -- something beside the cell to hold the block: without OpenComputers' angel upgrade a
-        -- robot cannot place in thin air, and the builders have none (the old crew's helper
-        -- blocks were for that). The robot's own cell does not count.
+        -- The block the place clicks, as OpenComputers aims it (redesign/14-turn.md): the face
+        -- named, or the faces it tries in order; without the angel upgrade (the builders have
+        -- none) nothing clicked is nothing placed. Then the block's way, by the game's rule.
+        local meta = st.meta
         if not w.angel then
-            local held = false
-            for _, d in pairs(STEP) do
-                local nx, ny, nz = x + d[1], y + d[2], z + d[3]
-                local b = w:get(nx, ny, nz)
-                if b and not (nx == r.x and ny == r.y and nz == r.z) then held = true break end
+            local clicked
+            for _, s in ipairs(face and {face} or orient.faceless(dir)) do
+                local off = orient.click(dir, s)
+                if not off then return false, "a face opposite the place" end
+                local b = w:get(x + off[1], y + off[2], z + off[3])
+                if b and orient.clickable(b[1]) then clicked = s break end
             end
-            if not held then return false, "nothing to hold it" end
+            if not clicked then return false, "nothing to hold it" end
+            if orient.has(st.name) then
+                meta = orient.meta(st.name, st.meta, dir, clicked)
+                if not meta then return false, "its way not decided by this place" end
+            end
+        end
+        -- a door puts its upper half too, its hinge by what stands beside it (ItemDoor)
+        if orient.door(st.name) then
+            if w:get(x, y + 1, z) then return false, "no room for the door's upper half" end
+            local function cube(cx, cy, cz)
+                local b = w:get(cx, cy, cz)
+                return b and orient.normal_cube(b[1])
+            end
+            local function door(cx, cy, cz)
+                local b = w:get(cx, cy, cz)
+                return b and b[1] == st.name
+            end
+            local up = orient.door_upper(x, y, z, meta, cube, door)
+            w.placed[key(x, y + 1, z)] = true
+            w:set(x, y + 1, z, {st.name, up})
         end
         w.placed[key(x, y, z)] = true
-        w:set(x, y, z, {st.name, st.meta})
+        w:set(x, y, z, {st.name, meta})
+        trample(x, y, z)
         st.count = st.count - 1
         if st.count == 0 then r.slots[slot] = nil end
         r.energy = r.energy - 1
@@ -161,8 +194,24 @@ function simbot.robot(w, o)
         r.tool, r.slots[slot] = r.slots[slot], r.tool
         return true
     end
-    -- Use: what the game does with the tool in hand here is tilling (redesign/13-farm.md) - a
-    -- mattock or a hoe on dirt or grass with air right above it makes farmland; else nothing.
+    -- Any water within Hunger Overhaul's reach of a cell: 4 across, its level or one up
+    -- (IguanaEventHook.isWaterNearby, HungerOverhaul-1.7.10-1.0.4-GTNH).
+    local function water_near(x, y, z)
+        for dx = -4, 4 do
+            for dy = 0, 1 do
+                for dz = -4, 4 do
+                    local b = w:get(x + dx, y + dy, z + dz)
+                    if b and b[1]:find("water", 1, true) then return true end
+                end
+            end
+        end
+        return false
+    end
+    -- Use: what the game does with the tool in hand here (redesign/13-farm.md) - a mattock or a
+    -- hoe on dirt or grass with air right above it and water near makes farmland; a water bucket
+    -- used down into air pours a source and is left empty. A pour into a cell not sealed - its
+    -- floor or a side open - the copy refuses: in the game it would spread, so the dry run stops
+    -- there instead. With a slot: that item into the hand for the use, and back.
     function hw.use(dir, slot, face, sneak)
         if slot then hw.equip(slot) end
         turn_to(dir)
@@ -170,13 +219,28 @@ function simbot.robot(w, o)
         local t = r.tool
         local x, y, z = ahead(dir)
         local b = w:get(x, y, z)
+        local res = "false"
+        -- the face clicked: the one named, else the use's own way first (Agent.use); a hoe
+        -- tills on any face but the bottom - from below too, the top named (`u+/+`)
+        local clicked = face or dir
         if t and (t.name:find("mattock") or t.name:find("hoe")) and b
                 and (b[1] == "minecraft:dirt" or b[1] == "minecraft:grass")
-                and dir ~= "u" and not w:get(x, y + 1, z) then
+                and clicked ~= "d" and not w:get(x, y + 1, z) and water_near(x, y, z) then
             w:set(x, y, z, {"minecraft:farmland", 0})
-            return "true"
+            res = "true"
+        elseif t and t.name == "minecraft:water_bucket" and dir == "d" and not b then
+            local sealed = true
+            for _, d in ipairs({{0, -1, 0}, {1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}}) do
+                if not w:get(x + d[1], y + d[2], z + d[3]) then sealed = false end
+            end
+            if sealed then
+                w:set(x, y, z, {"minecraft:water", 0})
+                r.tool = {name = "minecraft:bucket", meta = 0, count = 1}
+                res = "true"
+            end
         end
-        return "false"
+        if slot then hw.equip(slot) end
+        return res
     end
     function hw.take(dir, their, mine, n)
         turn_to(dir)
