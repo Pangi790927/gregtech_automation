@@ -118,6 +118,19 @@ local function telling_apart()
         return "me.learn: " .. tostring(note)
     end
     if me.wants_learning() then return "learning wanted once told apart" end
+    -- the pairing kept: after a restart (addresses forgotten), both stations again from the
+    -- first `ifaces` - not only after a take at the first, which a shut spot never allowed
+    -- (2026-10-06); and not when the ME no longer lists one of them
+    for _, st in ipairs(me.stations) do st.addr = nil end
+    me.list_ifaces()
+    if me.stations[1].addr ~= A1 or me.stations[2].addr ~= A2 then
+        return "the kept pairing not used after a restart"
+    end
+    for _, st in ipairs(me.stations) do st.addr = nil end
+    if me.load_pairing(me.parse_ifaces(A1 .. " first -,-,-,-,-,-,-,-,-")) then
+        return "the kept pairing used though one interface is gone"
+    end
+    me.stations[1].addr, me.stations[2].addr = A1, A2
     me.later_clear({1, 2}, 1)
     me.config({[3] = {"minecraft:glass", 0, 5}}, me.stations[2])
     me.flush(1)
@@ -297,6 +310,61 @@ local function hop_again()
     return nil
 end
 
+-- A give-back's later round whose dry run met a robot is tried again, not given up: round 2 had
+-- failed at once, a robot passing the station, the items kept (Dalek_Sec, twice, 2026-10-06).
+local function back_again()
+    crew.LEG_RETRY_MS = 10
+    local st = me.stations[1]
+    local r = stand_in("StBack", {st.SPOT[1], st.SPOT[2], st.SPOT[3]})
+    r.sf.facing = st.FACE
+    for s = 1, 11 do r.slots[s] = {name = "minecraft:dirt", meta = s, count = 1} end
+    local flush = me.flush
+    me.flush = function() end
+    local calls, n = 0, 0
+    robots.run = function(_, text)
+        calls = calls + 1
+        if calls == 2 then return {state = "wait", why = "robot"}, false end
+        n = n + 1
+        r.sf = {id = "pb" .. n, state = "halt", op = 1, pos = {st.SPOT[1], st.SPOT[2], st.SPOT[3]},
+                facing = st.FACE}
+        return {state = "halt"}, true, "pb" .. n
+    end
+    robots.send = function() return {head = true, lines = {}} end
+    local ok, why = crew.give_back_rounds(r, {p = {id = "home"}}, "h", st)
+    me.flush = flush
+    robots.by.StBack = nil
+    if not ok or calls ~= 3 then
+        return ("a give-back round met by a robot: %s, %d runs"):format(tostring(why), calls)
+    end
+    return nil
+end
+
+-- The way to the park by the station, met busy while the robot still flies (a failed trip's
+-- step off the spot), is planned again from where it got to - given up, "busy, and it moved
+-- meanwhile", the give-back had left three builders holding the only trapdoors (2026-10-06).
+local function park_while_moving()
+    local r = stand_in("StFly", {0, 0, -12})
+    r.park = {0, 0, -16}
+    local texts = {}
+    robots.run = function(_, text)
+        texts[#texts + 1] = text
+        if #texts == 1 then
+            r.sf.pos = {0, 0, -13}                     -- its last program still flying
+            return {state = "busy"}, false
+        end
+        r.sf = {id = "p8", state = "done", op = 1, pos = {0, 0, -16}, facing = "n"}
+        return {state = "done"}, true, "p8"
+    end
+    robots.send = function() return {head = true, lines = {}} end
+    local ok, why = crew.to_park_first(r, {p = {id = "home"}})
+    robots.by.StFly = nil
+    if not ok or #texts ~= 2 or texts[2] == texts[1] then
+        return ("the way to the park not planned again: %s, %s"):format(tostring(why),
+                table.concat(texts, " | "))
+    end
+    return nil
+end
+
 -- me.lua read again in place keeps its table and state (the link, the stations, what is
 -- stocked), by dofile and by `reload me`; me.relink waits its turn and holds it while the link
 -- is opened anew, so an ask waits instead of being cut.
@@ -332,9 +400,52 @@ local function me_kept()
     return nil
 end
 
+-- The way to a spot a robot still stands on is tried again until it leaves (spot_way): a
+-- give-back gave up at once, and its robot was sent home again every pass, "no way to the
+-- interface" four times in 7 s (Pintsize, 2026-10-06).
+local function spot_wait()
+    local AY = 10                              -- the grid's heights from 0: robot y + AY
+    for cx = -1, 0 do
+        for cz = -1, 0 do
+            local rows = {}
+            for y = -3, 4 do
+                local zs = {}
+                for z = cz * 16, cz * 16 + 15 do
+                    local xs = {}
+                    for x = cx * 16, cx * 16 + 15 do xs[#xs + 1] = y <= -2 and "1" or "0" end
+                    zs[#zs + 1] = table.concat(xs, ",")
+                end
+                rows[#rows + 1] = ("layer %d %s"):format(y + AY, table.concat(zs, ";"))
+            end
+            local f = assert(io.open(("test_run/c%d_%d.txt"):format(cx, cz), "wb"))
+            f:write(table.concat({"# 3d-draw map 1", ("box x %d %d y %d %d z %d %d"):format(
+                cx * 16, cx * 16 + 15, -3 + AY, 4 + AY, cz * 16, cz * 16 + 15),
+                "palette 1 minecraft:stone 0 1.50 seen", table.concat(rows, "\n")}, "\n") .. "\n")
+            f:close()
+        end
+    end
+    vc.route_load("test_run", -1, 0, -1, 0, 0, AY, 0, "")
+    require("route").loaded = true
+    local r = stand_in("StWay", {0, 0, -3})
+    local b = stand_in("StOnSpot", me.stations[1].SPOT)
+    b.copy = {b = {x = 0, y = 0, z = 1}}
+    local order = robots.order
+    robots.order = {r, b}
+    spawn(function()                           -- it leaves the spot after 3 s
+        vc.net_sleep_ms(3000)
+        b.copy, b.sf.pos = nil, {5, 0, 5}
+    end)
+    local go = crew.spot_way(r, me.stations[1])
+    robots.order = order
+    robots.by.StWay, robots.by.StOnSpot = nil, nil
+    if not go then return "spot_way: no way, though the spot was left after 3 s" end
+    return nil
+end
+
 local function run_test()
     local k = keep()
     local why = telling_apart() or locks() or two_at_once() or hop_again() or me_kept()
+            or spot_wait() or park_while_moving() or back_again()   -- on spot_wait's grid
     -- a robot moved aside never stops on a spot (16-giveway.md)
     if not why then
         local off = giveway.kept_off({})

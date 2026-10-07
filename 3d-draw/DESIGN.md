@@ -8,9 +8,12 @@ This file is the top of 3d-draw's design: what it is, how to pick it up, what is
 the sub-docs in `docs/`, one subject each. Detail goes into the sub-doc of its subject; a sub-doc
 that grows past 150 lines is split again. `TODO.md` keeps what is still to be done.
 
-**Being redesigned (2026-10-05):** the PC side moves from Python to C++ and Lua, in the manner of
-math_writer. Every change is written in `redesign/` first, and made only after the user reads it
-(`redesign/README.md`). What follows describes the Python system, as it still is.
+**The system now is the redesign (since 2026-10-05/06):** the PC side is C++ and Lua - one exe,
+`main.exe`, with the viewer, the planner, the crew and the link to the robots. It built the
+village and rebuilt the burned cabin. Its notes, in order, are `redesign/README.md`; how it is
+run from Claude is `redesign/19-ops.md`, with the scripts in `ops/`. Every change is still written
+in `redesign/` first. The Python notes below ("The steps", rlink.py, the old docs/) describe the
+system before it, kept until the user has walked through what is dropped.
 
 ## The steps
 
@@ -23,15 +26,23 @@ math_writer. Every change is written in `redesign/` first, and made only after t
 
 ## Picking it up again (a new session starts here)
 
-- **Start with** `TODO.md`, then, as the work needs them: the robots, their addresses and
-  parks in `docs/robots.md` ("The roster"); what the user allowed and forbade in `docs/rules.md`;
-  who watches what, and how, in `docs/running.md`.
-- **Driving them:** everything goes through `rlink.py` (the robot server, `docs/robots.md`). By
+- **Start with** `TODO.md` (the state of things and what is open) and `USAGE.md` (each task the
+  user asks for, and its commands), then `redesign/19-ops.md`
+  (the app's control port, `ops/ask.py`, the crew's start/stop/reload, watching each robot, the
+  checks before the robots), then as the work needs them: the roster in `docs/robots.md`; what the
+  user allowed and forbade in `docs/rules.md`; the crew in `redesign/15-crew.md`.
+- **The old way (Python, before the redesign):** driving them through `rlink.py` (the robot
+  server, `docs/robots.md`). By
   hand: `python 3d-draw/rlink.py serve <robot>` holds one, `python 3d-draw/rlink.py do "move n" ...`
-  sends a batch. From Python: `rlink.Robot("016db072")`; the mini ME's computer:
+  sends a batch. From Python: `rlink.Robot("858fde4e")`; the mini ME's computer:
   `rlink.Robot("9cdb8754", log=None, program="me_server", zone=b"meserver")`.
-- **The files:** `data/map.txt` the map (PC side, the only copy that matters); `data/house.txt`
-  the plan (`design/house.py`; the harbour's `design/harbour.py`); `data/build-done.txt` what
+- **The files now:** the map is `data/chunks/` read with its layers (`scouted.txt`, `built.txt`,
+  `fixed.txt`, and `world.txt`, what the crew did and saw - `scripts/chunks.lua`); the plans are
+  `data/village.txt` (`design/village.py`), `data/house.txt` (the cabin, `design/house.py`) and
+  `data/harbour.txt`; the crew's own files are listed in `redesign/19-ops.md`.
+- **The files before:** `data/map.txt` the map (PC side, the only copy that matters);
+  `data/house.txt` the plan (`design/house.py`; the harbour's `design/harbour.py`);
+  `data/build-done.txt` what
   is built (builders.py, `docs/building.md`);
   `data/live.log` what the viewer follows. All of `data/` is gitignored: it is the user's world.
 - **Seeing it:** `simulator/main.exe --scene scenes/draw3d`; H shows the plan. To show the map as

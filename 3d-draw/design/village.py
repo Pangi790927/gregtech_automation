@@ -1642,9 +1642,39 @@ def extent(label):
 
 # ---- out -----------------------------------------------------------------------------------------
 
+def plant_ground(n):
+    """Dirt, sand or farmland, a plant's ground in a design (a mod's dirt or grass counts as its
+    kind; sand is sand only, not sandstone) - as 3d-draw's orient.design_ground."""
+    if not n or any(s in n for s in PLANTS):
+        return False
+    return "dirt" in n or "grass" in n or "farmland" in n or n == "minecraft:sand"
+
+
+
+def plants_on_ground():
+    """Every plant planned stands on dirt, sand or farmland - a grass block is dirt grown over -
+    as the plan leaves the cell under it, else as the world has it (the user, 2026-10-06:
+    "plants need to stay on dirt, sand or farmland, note that this needs to be checked in further
+    planners"). One that does not is taken out of the plan, counted in `refused`: a bed's
+    lavender at -19 8 51 went over a lavender the scouts had named grass. Run last, so no part
+    planned after the plant can change the cell under it unseen. -> how many taken out."""
+    out = 0
+    for c, p in list(plan.items()):
+        if not any(s in p[0] for s in PLANTS + ("wheat", "sapling")):
+            continue
+        under = (c[0], c[1] - 1, c[2])
+        n = plan[under][0] if under in plan else name(*under)
+        if not plant_ground(n):
+            del plan[c]
+            refused[f"a plant not on dirt, sand or farmland ({n or 'unknown'} under it)"] += 1
+            out += 1
+    return out
+
+
 houses, mill, hedge_n = village()
 need = len(moved_lavender)
 planted = beds(need)
+plants_on_ground()                      # counted in `refused`, printed with it
 problems = checks()
 doors = {k: v[1] for k, v in houses.items()}
 doors.update({"B 2": (-11, 40), "mill": (WX + 4, WZ), "field gate": (FIELD_GATE[0] + 1,

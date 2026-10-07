@@ -98,21 +98,30 @@ function Conn:attach(address)
     end
 end
 
--- One frame of the zone's channel: kind, then its data ('d', 'x', 'P', 'z').
+-- One frame of the zone's channel: kind, then its data ('d', 'x', 'P', 'z'). nil when the link
+-- closed - before the frame or inside it: a frame cut short had come back as 'd' with no data,
+-- and read_line's concatenation ended the robot's whole life - ASIMO never linked again, the
+-- watchdog closing its dead link every second (2026-10-06).
 function Conn:frame()
     local t = self:take(1)
     if not t then return nil end
+    local function sized()
+        local len = self:take(2)
+        return len and self:take(string.unpack(">I2", len))
+    end
     if t == "P" then
         local status, _ = u8(self:take(1)), self:take(1)
-        local n = string.unpack(">I2", self:take(2))
-        return "P", status, self:take(n)
+        local data = sized()
+        if not data then return nil end
+        return "P", status, data
     elseif t == "z" then
         local names = {}
         for i = 1, u8(self:take(1)) or 0 do names[i] = self:str8() end
         return "z", names
     elseif t == "d" or t == "x" then
-        local n = string.unpack(">I2", self:take(2))
-        return t, self:take(n)
+        local data = sized()
+        if not data then return nil end
+        return t, data
     end
     return "?", t
 end

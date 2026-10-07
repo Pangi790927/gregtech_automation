@@ -38,6 +38,10 @@ this PC) - C++ on `../utils` (virt_composer), the logic in Lua.
 - `17-stations.md` -- two ME interfaces: a station and a lock each, one queue, told apart
 - `18-crewsim.md` -- the crew's sim: the live crew's code on simulated robots, before the live
   robots (tests/lua/test_crewsim.lua)
+- `19-ops.md` -- running it: the app and its control port (`../ops/ask.py`), the crew's start,
+  stop and reload (`../ops/`), watching each robot, the checks before the robots, the files
+- `20-scouts.md` -- the scouts on packets like the builders': extended and restricted chunk
+  scans (restricted the default), A and B, the stages (2026-10-07)
 
 ## The direction (from the user's words; details come as notes above)
 

@@ -61,8 +61,13 @@ or two, and the whole file within 100 lines.
   may use it, says so when it's down
 - `3d-draw/DESIGN.md` -- the top of 3d-draw: robots map a contoured area, the simulator shows it,
   robots build what the user designs (user, 2026-10-04); a map of `3d-draw/docs/`, by subject
-- `3d-draw/TODO.md` -- what is still to be done on the base, kept by Claude so the user need not
-  keep track (user, 2026-10-04); read it at a session's start, keep it up as things finish
+- `3d-draw/USAGE.md` -- START HERE for any 3d-draw task: zones, scanning, design, plan, simulate,
+  build, watch, a robot lost - what to do and the commands, task by task
+- `3d-draw/TODO.md` -- the state of the base and what is still to be done, kept by Claude so the
+  user need not keep track (user, 2026-10-04); read it at a session's start, keep it up
+- `3d-draw/redesign/README.md` -- the system as it runs now (main.exe: C++ and Lua), its notes in
+  order; `redesign/19-ops.md` how Claude runs it: the control port, `3d-draw/ops/` scripts, the
+  crew's start/stop/reload, watching each robot, the checks (tests, sim, scans) before live
 - `server-requests/` -- script-requests for the server, numbered, one per request (Claude);
   `doreq.ps1` copies one to the server and runs it; `<request>.out` keeps the result (gitignored)
 - `ae2-stall/NOTES.md` -- the AE2 network stall on the server; not seen for days by 2026-09-30,

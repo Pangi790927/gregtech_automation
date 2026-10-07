@@ -81,6 +81,113 @@ local function run_test()
         or refused(big.id, "needs 20 slots, Testbot has 16")
         or refused(place.id, "the ME is")
     if bad then return bad end
+    -- its chunkloader off: switched on, nothing taken this round - off, ASIMO, Pintsize and
+    -- Baymax stopped with their chunks while no player was on, links dropped, programs lost
+    -- (2026-10-06)
+    r.status[2] = "max 20000 name Testbot slots 16 chunk false"
+    bad = refused(dig.id, "chunkloader was off")
+    r.status[2] = "max 20000 name Testbot slots 16"
+    if bad then return bad end
+    local switched = false
+    for _, t in ipairs(r.outbox) do
+        if tostring(t.cmd):find(" @1 h", 1, true) then switched = true end
+    end
+    r.outbox, r.sent = {}, nil
+    if not switched then return "the chunkloader not switched on" end
+    -- still off after that, its status read anew: it has none - kept home, nothing sent again
+    r.status[2] = "max 20000 name Testbot slots 16 chunk false"
+    local asked_fresh = false
+    spawn(function()
+        for _ = 1, 50 do
+            local t = r.outbox[1]
+            if t and t.cmd == "status" then
+                table.remove(r.outbox, 1)
+                asked_fresh = true
+                t.lines = {"- idle", "max 20000 name Testbot slots 16 chunk false",
+                           "inv 1:minecraft:planks:1:1"}
+                t.head = "1 ok 3"
+                return
+            end
+            vc.net_sleep_ms(20)
+        end
+    end)
+    bad = refused(dig.id, "no chunkloader that switches on")
+    if not bad and not asked_fresh then bad = "its status not read anew before it was judged" end
+    r.status[2] = "max 20000 name Testbot slots 16"
+    if bad then return bad end
+    if #r.outbox > 0 then return "@1 sent again to a robot with no chunkloader" end
+    -- ... out after all where every chunk of its work stays loaded (the user's map, 2026-10-06:
+    -- "maybe hold a chunkloaded map"): past this check, refused for its slots instead
+    crew.paths.loaded = "test_run/chunkloaded.txt"
+    local function map(rows)
+        local f = io.open(crew.paths.loaded, "w")
+        f:write("# test\norigin 0 0\n" .. table.concat(rows, "\n") .. "\n")
+        f:close()
+    end
+    r.status[2] = "max 20000 name Testbot slots 16 chunk false"
+    map({("L"):rep(13), ("L"):rep(13), "LLS" .. ("L"):rep(10)})
+    bad = refused(big.id, "needs 20 slots")
+    map({"S"})
+    bad = bad or refused(big.id, "is not kept loaded")
+    crew.NO_LOADER_OK = true
+    bad = bad or refused(big.id, "needs 20 slots")         -- the user on near it
+    crew.NO_LOADER_OK = false
+    crew.paths.loaded = nil
+    r.status[2] = "max 20000 name Testbot slots 16"
+    if bad then return bad end
+    r.chunk_tried, r.chunk_read = nil, nil
+    -- the ME short only by what the robot does not hold: it holds one of the two planks, so one
+    -- is short - three builders held the only trapdoors while the ME, empty, refused all five
+    -- (place -1 0 7, 2026-10-06)
+    local me = require("me")
+    local conn, mview, read_at = me.conn, me.view, crew.view_read_at
+    me.conn, me.view, crew.view_read_at = true, {}, vc.app_time()
+    bad = refused(place.id, "the ME is short: minecraft:planks:1 x1 (ME 0)")
+    -- its program made before it flies: no way to a cell now is "not now", no trip (place
+    -- -3 0 10, "no way to place -15,7,50", three trips for nothing, 2026-10-06)
+    local programs = require("programs")
+    local make = programs.make
+    programs.make = function() return nil, "no way to place 45,1,45" end
+    me.view = {["minecraft:planks:1"] = 10}
+    bad = bad or refused(place.id, "not now: no way to place 45,1,45")
+    programs.make = make
+    if not bad and crew.jobs.Testbot then bad = "a trip set off with no way to its cell" end
+    me.conn, me.view, crew.view_read_at = conn, mview, read_at
+    if bad then return bad end
+    -- where a robot placed back by hand is, by its six looks against the map (Gunter, believing
+    -- 0,0,0, saw an adapter east and a fence west: the station's 0,0,2 - 2026-10-06; the user:
+    -- "don't wait for me to figure it out")
+    local blocks = {["1,0,2"] = "OpenComputers:adapter", ["-1,0,2"] = "ExtraTrees:fence",
+                    ["1,0,0"] = "OpenComputers:charger", ["1,0,1"] = "appliedenergistics2:x"}
+    local function what(x, y, z) return blocks[x .. "," .. y .. "," .. z] or "air" end
+    local seen = {n = "air", s = "air", e = "OpenComputers:adapter", w = "ExtraTrees:fence",
+                  u = "air", d = "air"}
+    local found = crew.locate_match(seen, what, {0, 0, 0}, 4)
+    if #found ~= 1 or found[1][1] ~= 0 or found[1][2] ~= 0 or found[1][3] ~= 2
+            or found[1][4] ~= 0 then
+        return "locate_match: " .. #found .. " places for Gunter's looks"
+    end
+    seen.e, seen.w = "minecraft:chest", "minecraft:chest"
+    if #crew.locate_match(seen, what, {0, 0, 0}, 4) ~= 0 then
+        return "locate_match: a place for looks that fit nowhere"
+    end
+    -- every other robot's park is kept off its ways, home or away; its own is not (the user,
+    -- 2026-10-06: "should not allow going over each-other's stop points")
+    local parker = {name = "Parker", park = {50, 1, 50}, linked = false, outbox = {}}
+    robots.by.Parker = parker
+    table.insert(robots.order, parker)
+    r.park = {41, 1, 41}
+    local av = crew.avoid_for(r)
+    robots.by.Parker = nil
+    table.remove(robots.order)
+    r.park = nil
+    if not av["50,1,50"] then return "another robot's park, it away, not kept off the ways" end
+    if av["41,1,41"] then return "a robot's own park kept off its own ways" end
+    -- a program on its way to it: not free (Cortana, place -4 2 8, 2026-10-06)
+    r.sent = {id = "p99", t = robots.net.now()}
+    bad = refused(dig.id, "on its way to it")
+    r.sent = nil
+    if bad then return bad end
     r.sf.state = "run"
     bad = refused(dig.id, "still at work")
     if bad then return bad end
@@ -119,6 +226,17 @@ local function run_test()
     if built[#built]:sub(1, #poured) ~= poured then
         return "world.txt after a pour: " .. tostring(built[#built])
     end
+    -- a door built: its upper half written too, though the plan names none (the planner never
+    -- puts one) - left air, the ways went through it (Dalek_Sec, 2026-10-06)
+    local door = {id = "place 9 0 7", kind = "place", cells = {"45,1,38"}, waits = {},
+                  steps = {{k = "45,1,38", act = "place", block = {"minecraft:wooden_door", 3}}}}
+    packets.want = {}
+    crew.finish(r, {p = door, opstep = {[1] = 1}, t0 = 0}, nil)
+    built = lines_of(crew.paths.world)
+    local upper = ("%d %d %d minecraft:wooden_door 8"):format(45 + a[1], 2 + a[2], 38 + a[3])
+    if built[#built]:sub(1, #upper) ~= upper then
+        return "world.txt after a door: no upper half: " .. tostring(built[#built])
+    end
 
     -- a packet whose dry run refused it never ran: no step of it written, whatever op the robot
     -- stopped at in its takes (place -3 0 0 lost a step a visit, 8 then 7 then 6, 2026-10-06);
@@ -135,6 +253,38 @@ local function run_test()
     crew.finish(r, {p = two, opstep = {[1] = 1, [2] = 2}, t0 = 0, what = "the packet",
                     pid = "p6"}, "the packet: stop blocked minecraft:stone")
     if #lines_of(crew.paths.world) ~= had + 2 then return "a packet stopped at op 3 not written" end
+    -- a stair's stand dug and its trip stopped before the grass went back: owed, and planned until
+    -- a place writes the cell (ASIMO lost over the lavender of place -6 0 9, 2026-10-06)
+    local pb = {id = "place 9 0 4", kind = "place", cells = {"45,1,20"}, waits = {}, steps = {
+        {k = "44,1,20", act = "dig", block = {"minecraft:grass", 0}, putback = true},
+        {k = "45,1,20", act = "place", block = {"minecraft:dark_oak_stairs", 0}, dir = "e",
+         face = "d"},
+        {k = "44,1,20", act = "place", block = {"minecraft:grass", 0}, dir = "d", face = "d",
+         putback = true}}}
+    crew.owed = {}
+    r.sf.id, r.sf.op = "p8", 3
+    crew.finish(r, {p = pb, opstep = {[1] = 1, [2] = 2, [3] = 3}, t0 = 0, what = "the packet",
+                    pid = "p8"}, "the packet: stop blocked minecraft:stone")
+    local o = crew.owed["44,1,20"]
+    if not o or o[1] ~= "minecraft:grass" then return "a put-back cut short not owed" end
+    crew.finish(r, {p = {id = "place 9 0 3", kind = "place", cells = {"44,1,20"}, waits = {},
+                         steps = {{k = "44,1,20", act = "place", block = {"minecraft:grass", 0}}}},
+                    opstep = {[1] = 1}, t0 = 0}, nil)
+    if crew.owed["44,1,20"] then return "a put-back placed still owed" end
+    -- a plan begun before a packet finished keeps it done - one begun after reads it in the map
+    -- (place -6 1 9 handed out again at once, Dalek_Sec, 2026-10-06)
+    local keep_res = packets.result
+    local q = {id = "place 9 0 2", kind = "place", cells = {"45,1,10"}, waits = {},
+               steps = {{k = "45,1,10", act = "place", block = {"minecraft:planks", 1}}}}
+    packets.result = {packets = {[q.id] = q}, order = {q.id}}
+    crew.finish(r, {p = q, opstep = {[1] = 1}, t0 = 0}, nil)
+    packets.result = {packets = {[q.id] = q}, order = {q.id}, t0 = vc.app_time() - 5}
+    local kept = crew.is_done(q.id)
+    packets.result = {packets = {[q.id] = q}, order = {q.id}, t0 = vc.app_time() + 5}
+    local after = crew.is_done(q.id)
+    packets.result = keep_res
+    if not kept then return "a packet finished after its plan began handed out again" end
+    if after then return "a plan begun after a packet ended still counted it done" end
     r.sf.id, r.sf.op = "-", 1
 
     -- its slots read at a leg's end, by a status of its own (stale slots planned the next leg:
@@ -169,6 +319,7 @@ local function run_test()
         {"P: place 0 -1 3 NOT done, 1 of 1 steps: the packet did not dry-run: stop not-expected"
          .. " BiomesOPlenty:flowers2:3", "replan"},
         {"P: place 0 -1 3 NOT started: no way to the interface", "notnow"},
+        {"P: place 0 -1 3 NOT started: no program: no way to place -30,16,30", "replan"},
         {"P: place 0 -1 3 NOT done: stop blocked minecraft:stone", "look"},   -- learned
         {"P: place 9 9 9 NOT started: no way to the interface", "fail"},   -- another packet
     }
@@ -237,6 +388,18 @@ local function run_test()
             then
         return "spawn_trip: no word of the break: " .. tostring(crew.log[#crew.log])
     end
+    -- no resync under a program the robot still runs (Pintsize's copy left behind, 2026-10-06)
+    local runner = {name = "Runner", linked = true, outbox = {}, slots = {},
+                    sf = {id = "p9", state = "run", op = 2, pos = {1, 1, 1}, facing = "n"},
+                    copy = {b = {x = 5, y = 1, z = 5}, m = {id = "p9"}}}
+    robots.by.Runner = runner
+    table.insert(robots.order, runner)
+    local ok_rs = crew.resync("Runner")
+    table.remove(robots.order)
+    robots.by.Runner = nil
+    if ok_rs or runner.copy.m.id ~= "p9" or runner.copy.b.x ~= 5 then
+        return "crew.resync: a running robot's copy let go of its program"
+    end
     -- a spawn keeps its handle until its coroutine ends (spawn.lua): collected before the pool
     -- ran it, a coroutine never ran at all - three trips never began, 2026-10-06
     local ran, n0 = false, 0
@@ -254,11 +417,27 @@ local function run_test()
     for _ in pairs(spawn.live) do after = after + 1 end
     if not ran then return "spawn: the coroutine never ran" end
     if after ~= n0 then return "spawn: the handle kept after it ended" end
-    -- the looks read only once their results came (a fixed wait read them before, 2026-10-06)
-    if crew.looks_arrived({"p180 run 3 1 0 15 w 1"}, "p180")
-            or crew.looks_arrived({"p179 done 7", "res 6 l- air"}, "p180")
-            or not crew.looks_arrived({"p180 done 7", "inv", "res 6 l- air"}, "p180") then
-        return "crew.looks_arrived"
+    -- the looks: from where it stands, or from inside the cell a place failed into - read from
+    -- the robot's history (Dalek_Sec's from -19,8,51: lavender under it, the map said grass)
+    if crew.look_program() ~= "$0 l^ lv l> l< l+ l-"
+            or crew.look_program("d") ~= "$0 - l^ lv l> l< l+ l- +" then
+        return "crew.look_program"
+    end
+    local seen = crew.read_looks({"1 - ok -19 8 51 38066 @85915.85",
+        "2 l- ok BiomesOPlenty:flowers2:3 @85915.90", "3 l^ ok minecraft:planks:2 @85916.50",
+        "4 lv ok air @85917.45", "5 l> ok air @85918.05",
+        "6 l< ok BiomesOPlenty:flowers2:3 @85919.05"}, {-19, 8, 51})
+    local want = {{-19, 7, 51, "BiomesOPlenty:flowers2", 3}, {-19, 8, 50, "minecraft:planks", 2},
+                  {-19, 8, 52, "minecraft:air", 0}, {-18, 8, 51, "minecraft:air", 0},
+                  {-20, 8, 51, "BiomesOPlenty:flowers2", 3}}
+    if #seen ~= #want then return ("crew.read_looks: %d cells, not 5"):format(#seen) end
+    for i, c in ipairs(want) do
+        local s2 = seen[i]
+        if s2[1] ~= c[1] or s2[2] ~= c[2] or s2[3] ~= c[3] or s2.name ~= c[4]
+                or s2.meta ~= c[5] then
+            return ("crew.read_looks: look %d is %s at %d,%d,%d"):format(i, s2.name, s2[1],
+                                                                         s2[2], s2[3])
+        end
     end
 
     -- the interface's lock (15-crew.md): taken when free, and a holder with no job holds nothing

@@ -42,8 +42,15 @@ local M = {}
 local NATURAL = {"minecraft:dirt", "minecraft:grass", "minecraft:stone", "minecraft:sand",
                  "minecraft:gravel", "minecraft:clay", "minecraft:tallgrass", "leaves", "log",
                  "BiomesOPlenty:foliage", "BiomesOPlenty:plants", "BiomesOPlenty:flowers"}
+-- A robot, or the afterimage a robot leaves in a cell while it moves (OpenComputers'
+-- robotAfterimage, gone a moment later): in the way, never a block - waited on, never learned
+-- (Cortana blocked by Baymax's afterimage at his park, learned as a block, 2026-10-06).
+function M.is_robot(name)
+  return name ~= nil and name:find("OpenComputers:robot", 1, true) == 1
+end
+
 function M.natural(name)
-  if name == "OpenComputers:robot" then return false end
+  if M.is_robot(name) then return false end
   for _, n in ipairs(NATURAL) do
     if name == n or (not n:find(":") and name:find(n, 1, true)) or name:find(n, 1, true) == 1 then
       return true
@@ -301,8 +308,12 @@ function M.new(hw, start)
       local fine, kind = hw.move(op.dir)
       if not fine then
         local name = hw.analyze(op.dir)
-        if name == "OpenComputers:robot" or kind == "entity" then
-          m.state, m.why = "wait", name == "OpenComputers:robot" and "robot" or "entity"
+        -- nothing there when looked at: what blocked it passed (a robot moving through) - waited
+        -- on as a robot, never a stop: "blocked solid" had been learned into the map as a block,
+        -- and four cells by the station, the interface's spot among them, shut every way to it
+        -- (2026-10-06)
+        if M.is_robot(name) or kind == "entity" or name == nil then
+          m.state, m.why = "wait", kind == "entity" and name == nil and "entity" or "robot"
           return m.state
         end
         stop("blocked " .. tostring(name or kind))
@@ -337,7 +348,7 @@ function M.new(hw, start)
       if want.name == "natural" and name and M.natural(name) then
         name, meta = want.name, want.meta
       end
-      if name == "OpenComputers:robot" or name ~= want.name
+      if M.is_robot(name) or name ~= want.name
           or (want.meta ~= "*" and meta ~= want.meta) then
         stop(("not-expected %s"):format(name and (name .. ":" .. tostring(meta)) or "air"))
         return m.state
@@ -354,11 +365,25 @@ function M.new(hw, start)
         -- Agent.place: false, or false and "nothing selected"); robot.detect says "entity".
         local name = hw.analyze(op.dir)
         local _, kind = hw.detect(op.dir)
-        if name == "OpenComputers:robot" or (not name and kind == "entity") then
+        if M.is_robot(name) or (not name and kind == "entity") then
           m.state, m.why = "wait", name and "robot" or "entity"
           return m.state
         end
-        why = "nothing-placed " .. tostring(why)
+        -- the block it puts is there already: placed, as the program wanted - a program lost
+        -- after its places left the map not knowing them, and every visit after stopped at the
+        -- next one, a cell learned a trip (Pintsize's place -5 2 8, 2026-10-06); a way that is
+        -- wrong is still caught by the `?` after it
+        local held
+        for e in (hw.inventory() or ""):gmatch("[^;]+") do
+          local s, item = e:match("^(%d+):(.+):%d+:%d+$")
+          if tonumber(s) == op.slot then held = item end
+        end
+        if name and held and name == held then
+          ok, why = true, nil
+          res = "there"
+        else
+          why = "nothing-placed " .. tostring(why)
+        end
       end
     elseif k == "use" then
       res = hw.use(op.dir, op.slot, op.face, op.sneak)
@@ -461,6 +486,22 @@ function M.new(hw, start)
   return m
 end
 
+-- The whole lines in `buf` and what is left after the last newline, by plain finds: linear in
+-- its length. The patterns this took before - buf:match("[^\n]*$") and gmatch("([^\n]*)\n") -
+-- try every start and run each to the newline: quadratic, and a 1000-character line held the
+-- robot past OpenComputers' 5 s without yielding, its zone killed ("too long without yielding",
+-- every packet program over ~900 characters, ASIMO and Baymax, 2026-10-06; traced on Baymax).
+function M.lines(buf)
+  local out, i = {}, 1
+  while true do
+    local j = buf:find("\n", i, true)
+    if not j then break end
+    out[#out + 1] = buf:sub(i, j - 1)
+    i = j + 1
+  end
+  return out, buf:sub(i)
+end
+
 -- The robot's side of the link (03-exec.md): `ready`, then one command line in, its reply out,
 -- the program stepped between - on the robot over its zone `z` (z.send, z.wait), and in the crew's
 -- sim over a stand-in (tests/lua/test_crewsim.lua), the same code both ways.
@@ -499,11 +540,11 @@ function M.serve(z, m)
     local st = m.state
     if st == "run" then m.step() end
     -- running: just read what came; waiting: try again in a second; else sleep until contacted
-    buf = buf .. z.wait(st == "run" and 0 or st == "wait" and 1 or math.huge)
-    for line in buf:gmatch("([^\n]*)\n") do
+    local lines
+    lines, buf = M.lines(buf .. z.wait(st == "run" and 0 or st == "wait" and 1 or math.huge))
+    for _, line in ipairs(lines) do
       if handle(line) == "bye" then done = true end
     end
-    buf = buf:match("[^\n]*$")
     if st == "wait" and m.state == "wait" then m.state = "run"; m.step() end
   end
 end

@@ -13,6 +13,13 @@
 -- |     orient.ways(name, meta)            the {f, s} that make that block, the plainest first
 -- |     orient.faceless(f)                 the faces a place with none named tries, in order
 -- |     orient.clickable(name)             whether the ray clicks that block
+-- |     orient.plant(name), orient.soil(name)  a plant, and soil one stands on
+-- |     orient.design_ground(name)         a plant's ground in a design (the user's rule)
+-- |     orient.item_meta(name, meta)       the meta an item of that damage places (leaves: | 4)
+-- |     orient.holds(f, s, name, meta)     whether the place toward f with face s, its ray as OC
+-- |                                        casts it, meets that block (beside the target, at the
+-- |                                        click's cell) on its face toward the target - by the
+-- |                                        block's own shape: a bottom slab is missed from above
 -- |     orient.RANGE                       useAndPlaceRange (config/OpenComputers.cfg: 0.65)
 -- |
 -- | @date 2026-10-05
@@ -149,6 +156,7 @@ function orient.placed_meta(name, meta)
     local k = kind(name)
     if k == "chest" and meta < 2 then return nil end
     if k == "trapdoor" then return meta & ~4 end
+    if name == "ExtraTrees:fence" then return 0 end         -- its wood in a tile entity
     return meta
 end
 
@@ -203,6 +211,134 @@ function orient.clickable(name)
     if not name or name == "air" or name == "minecraft:air" then return false end
     for _, t in ipairs(THROUGH) do if name:find(t, 1, true) then return false end end
     return true
+end
+
+-- A plant: a flower, a sapling, grass, a bush - it stands only on soil (BlockBush.canBlockStay:
+-- grass, dirt or farmland under it). Lavender planned at -19,8,51 over real lavender, the map's
+-- grass there wrong: three robots stopped "nothing-placed", the copies and the proof had let it
+-- (2026-10-06).
+local PLANTS = {"flower", "sapling", "tallgrass", "double_plant", "BiomesOPlenty:foliage",
+                "BiomesOPlenty:plants", "red_mushroom", "brown_mushroom", "deadbush"}
+function orient.plant(name)
+    if not name then return false end
+    for _, t in ipairs(PLANTS) do if name:find(t, 1, true) then return true end end
+    return false
+end
+
+-- Soil a plant stands on: grass, dirt (podzol is dirt), farmland, a mod's grass or dirt.
+function orient.soil(name)
+    if not name then return false end
+    return name:find("grass", 1, true) ~= nil and not orient.plant(name)
+        or name:find("dirt", 1, true) ~= nil or name:find("farmland", 1, true) ~= nil
+end
+
+-- The ground a plant may stand on in a design: dirt - a grass block is dirt grown over - sand or
+-- farmland (the user, 2026-10-06: "plants need to stay on dirt, sand or farmland, note that this
+-- needs to be checked in further planners"; docs/rules.md). Every planner checks it on what it
+-- plans. The game's own rule, orient.soil, is stricter for most plants - lavender stays on
+-- grass, dirt or farmland only, not sand (BoP's BlockBOPFlower2.isValidPosition) - and is
+-- checked where the block is placed.
+-- A mod's dirt or grass counts as its kind; sand is sand only (not sandstone).
+function orient.design_ground(name)
+    if not name or orient.plant(name) then return false end
+    return name:find("dirt", 1, true) ~= nil or name:find("grass", 1, true) ~= nil
+        or name:find("farmland", 1, true) ~= nil or name == "minecraft:sand"
+end
+
+-- The block's meta an item of that damage places, before any way is applied (the ItemBlock's
+-- getMetadata): vanilla leaves come with the no-decay bit, d | 4 (ItemLeaves, `adg` in
+-- minecraft 1.7.10.jar) - the copies placed spruce leaves as leaves:1 where the plan, and the
+-- game, have leaves:5, and every dry run of place -1 0 7 stopped "not-expected minecraft:leaves:1"
+-- (2026-10-06). Any other item: its damage.
+-- And ExtraTrees' fences keep their wood in a tile entity (binnie's BlockFence, a
+-- TileEntityMetadata): the block itself is meta 0 whatever the item - ASIMO's place of an
+-- ExtraTrees:fence:1 read back ExtraTrees:fence:0, its check stopped it (the cabin, 2026-10-06).
+function orient.item_meta(name, meta)
+    if name == "minecraft:leaves" or name == "minecraft:leaves2" then return meta | 4 end
+    if name == "ExtraTrees:fence" then return 0 end
+    return meta
+end
+
+-- A block's boxes in its own cell (minecraft-1.7.10's block bounds), {x0, y0, z0, x1, y1, z1}
+-- each; nil for a full cube. The partial ones the village has: a slab is half its cell (the top
+-- half by meta & 8), stairs fill at least their half (meta & 4 upside down; the step above is
+-- left out, so what holds is never more than the game's), a closed trapdoor its bottom or top
+-- 0.1875 (open: thin against a side - not counted), fences, walls and panes their middle post,
+-- farmland 0.9375 high, a chest inset 0.0625 and 0.875 high. Anything else: a full cube.
+local function boxes(name, meta)
+    meta = tonumber(meta) or 0
+    if name:find("double_", 1, true) then return nil end
+    if name:find("slab", 1, true) then
+        return {meta & 8 ~= 0 and {0, 0.5, 0, 1, 1, 1} or {0, 0, 0, 1, 0.5, 1}}
+    end
+    if name:find("stairs", 1, true) then
+        return {meta & 4 ~= 0 and {0, 0.5, 0, 1, 1, 1} or {0, 0, 0, 1, 0.5, 1}}
+    end
+    if name:find("trapdoor", 1, true) then
+        if meta & 4 ~= 0 then return {} end
+        return {meta & 8 ~= 0 and {0, 0.8125, 0, 1, 1, 1} or {0, 0, 0, 1, 0.1875, 1}}
+    end
+    if name:find("pane", 1, true) or name:find("iron_bars", 1, true) then
+        return {{0.4375, 0, 0.4375, 0.5625, 1, 0.5625}}
+    end
+    if name:find("fence", 1, true) or name:find("FenceGate", 1, true) then
+        return {{0.375, 0, 0.375, 0.625, 1, 0.625}}
+    end
+    if name:find("cobblestone_wall", 1, true) then return {{0.25, 0, 0.25, 0.75, 1, 0.75}} end
+    if name:find("farmland", 1, true) then return {{0, 0, 0, 1, 0.9375, 1}} end
+    if name:find("chest", 1, true) then return {{0.0625, 0, 0.0625, 0.9375, 0.875, 0.9375}} end
+    return nil
+end
+orient.boxes = boxes
+
+--[[ Whether the place toward f with face s clicks the block `name` (`meta`) where orient.click
+-- puts it, on its face toward the target: Agent.pick's segment, C + f*0.5 to
+-- C + f*1.01 + s*RANGE in the target's cell (C the robot's middle), cut against the block's
+-- boxes moved to its cell; the box it meets first, and the face it enters by, must be the one
+-- toward the target - the ray entering by a slab's top would place the block above the slab,
+-- not in the target. Bounds count as inside (a side hit at 0.5 exactly holds a bottom slab).
+-- Cortana, 2026-10-06: planks:1 into -9,7,33, a bottom slab its only neighbour - from above,
+-- "nothing-placed" (the ray crosses the slab's cell at 0.61, over the slab); from the west,
+-- placed (the ray level at 0.5 meets the slab's side). The copies had placed both. ]]
+function orient.holds(f, s, name, meta)
+    if not orient.clickable(name) or name:find("OpenComputers:robot", 1, true) then
+        return false
+    end
+    local off = orient.click(f, s)
+    if not off then return false end
+    local bx = boxes(name, meta)
+    if not bx then return true end                        -- a full cube: its face is the cell's
+    local fv, sv = V[f], V[s]
+    local S, E = {}, {}
+    for i = 1, 3 do
+        local c = 0.5 - fv[i]
+        S[i] = c + fv[i] * 0.5
+        E[i] = c + fv[i] * 1.01 + sv[i] * orient.RANGE
+    end
+    local best, best_axis, best_sign = math.huge, nil, nil
+    for _, b in ipairs(bx) do
+        local lo = {b[1] + off[1], b[2] + off[2], b[3] + off[3]}
+        local hi = {b[4] + off[1], b[5] + off[2], b[6] + off[3]}
+        local t0, t1, axis, sign = 0, 1, nil, nil
+        local miss = false
+        for i = 1, 3 do
+            local d = E[i] - S[i]
+            if d == 0 then
+                if S[i] < lo[i] or S[i] > hi[i] then miss = true break end
+            else
+                local a, b2 = (lo[i] - S[i]) / d, (hi[i] - S[i]) / d
+                local enter_sign = d > 0 and -1 or 1       -- the face entered: its outward normal
+                if a > b2 then a, b2 = b2, a end
+                if a > t0 then t0, axis, sign = a, i, enter_sign end
+                if b2 < t1 then t1 = b2 end
+                if t0 > t1 then miss = true break end
+            end
+        end
+        if not miss and axis and t0 < best then best, best_axis, best_sign = t0, axis, sign end
+    end
+    if not best_axis then return false end
+    -- the face toward the target: its outward normal points back along s
+    return sv[best_axis] ~= 0 and best_sign == -sv[best_axis]
 end
 
 function orient.meta(name, item, f, s)

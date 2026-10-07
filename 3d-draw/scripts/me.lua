@@ -305,6 +305,8 @@ function me.list_ifaces()
         return nil, me.ifaces_why
     end
     me.ifaces = me.parse_ifaces(v)
+    -- told apart before (me.load_pairing): both stations open from the link on
+    if not S1.addr and #me.ifaces >= 2 then me.load_pairing(me.ifaces) end
     local seen = {}
     for _, it in ipairs(me.ifaces) do seen[it.addr] = true end
     for _, st in ipairs(me.stations) do
@@ -337,7 +339,34 @@ function me.learn()
     if not a1 then return nil, "the interfaces not told apart: " .. tostring(a2) end
     if not a2 then return nil, "one interface only: station 1 as before" end
     S1.addr, me.stations[2].addr = a1, a2
+    me.save_pairing()
     return true, ("the interfaces told apart: station 1 is %s, station 2 is %s"):format(a1, a2)
+end
+
+-- The two interfaces' pairing kept (PAIRING): their addresses do not change, and learnt again
+-- only after a take at the first station, a first spot shut lost both stations after a restart
+-- (2026-10-06). Used again only if the ME's computer still lists both addresses.
+me.PAIRING = vc.app_is_testing() and "test_run/me-stations.txt" or "data/me-stations.txt"
+function me.save_pairing()
+    local f = io.open(me.PAIRING, "w")
+    if not f then return false end
+    f:write(tostring(S1.addr), " ", tostring(me.stations[2].addr), "\n")
+    f:close()
+    return true
+end
+
+-- -> true when the kept pairing was taken: both its addresses among `list` (me.parse_ifaces).
+function me.load_pairing(list)
+    local f = io.open(me.PAIRING, "r")
+    if not f then return false end
+    local a1, a2 = (f:read("l") or ""):match("^(%x+) (%x+)$")
+    f:close()
+    if not a1 then return false end
+    local seen = {}
+    for _, it in ipairs(list or {}) do seen[it.addr] = true end
+    if not (seen[a1] and seen[a2]) then return false end
+    S1.addr, me.stations[2].addr = a1, a2
+    return true
 end
 
 -- `reload me` keeps this table for the module read next (control.lua calls unload first).

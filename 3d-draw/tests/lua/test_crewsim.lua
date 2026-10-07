@@ -30,6 +30,9 @@ local OP_S = 0.5                  -- a robot's op, in the sim's seconds (the fie
 local ME_S = 3                    -- an ask of the ME's computer (the field: ~10, one at a time)
 local LIMIT_S = 1500              -- the sim's seconds the whole plan may take
 local A1, A2 = "bd5ff0a2", "b375f0fd"
+local FAR_ONE = "Dalek_Sec"        -- starts out in the village with things to give back
+local LOW_ONE = "Cortana"          -- starts under the crew's charge line: sent home to charge
+local OFFLINE = "G.U.N.T.E.R."    -- the robot left off the relay, standing in the station's ways
 
 -- ---- time, WARP times faster -------------------------------------------------------------------
 
@@ -51,7 +54,10 @@ end
 
 -- Robot coordinates, the station's as the field has them (me.stations, robots.ROSTER's parks):
 -- the ground solid up to y -2; the two interfaces; the site, cells to build at y -1 from x 5.
-local function solid(x, y, z) return y <= -2 end
+-- And terrain over it: grass in the only stand of a stair (the user, 2026-10-06: "dig and put
+-- back for the stairs") - its packet digs it, places the stair from its cell, puts it back.
+local TERRAIN = {["11,-1,25"] = {"minecraft:grass", 0}}
+local function solid(x, y, z) return y <= -2 or TERRAIN[x .. "," .. y .. "," .. z] ~= nil end
 local BOX = {x = {-16, 15}, y = {-4, 6}, z = {-16, 31}}
 
 -- The pathfinder's grid of the same, a chunk file each (test_giveway's format), in world
@@ -103,8 +109,28 @@ local function plan()
         end
         ps[id], order[#order + 1] = p, id
     end
+    -- and glass the ME has none of until GLASS_AT, put in by hand then (as the user put chests
+    -- and trapdoors in): the crew must see it, and the robots refused meanwhile go home
+    local gid = "place 9 -1 21"
+    ps[gid] = {id = gid, kind = "place", cells = {"9,-1,21", "10,-1,21"}, waits = {},
+               box = {2, 0, 0}, steps = {
+                   {k = "9,-1,21", act = "place", block = {"minecraft:glass", 0}},
+                   {k = "10,-1,21", act = "place", block = {"minecraft:glass", 0}}}}
+    order[#order + 1] = gid
+    -- a stair rising east whose one stand, west of it, is grass: dug, the stair placed from
+    -- there clicking the ground under it, the grass put back from above
+    local sid = "place 12 -1 25"
+    ps[sid] = {id = sid, kind = "place", cells = {"12,-1,25"}, waits = {}, box = {3, 0, 0},
+               steps = {
+                   {k = "11,-1,25", act = "dig", block = {"minecraft:grass", 0}, putback = true},
+                   {k = "12,-1,25", act = "place", block = {"minecraft:dark_oak_stairs", 0},
+                    dir = "e", face = "d"},
+                   {k = "11,-1,25", act = "place", block = {"minecraft:grass", 0}, dir = "d",
+                    face = "d", putback = true}}}
+    order[#order + 1] = sid
     return {packets = ps, order = order}
 end
+local GLASS_AT = 150               -- the sim's seconds after the start the glass is put in
 
 -- Blocks the world has and the map does not (the field's map is never whole): on the ways
 -- between the station and the sites, at the heights the routes fly.
@@ -161,7 +187,10 @@ local function fake_me(w)
             restock()
             return true, ""
         elseif verb == "items" then
+            local glass = vc.app_time() >= (GLASS_T0 or math.huge) + GLASS_AT
+                    and ";minecraft:glass:0:64" or ""
             return true, "minecraft:cobblestone:0:100000;minecraft:stone:0:100000"
+                    .. ";minecraft:dark_oak_stairs:0:64;minecraft:grass:0:64" .. glass
         elseif verb == "ifaces" then
             local out = {}
             for _, ad in ipairs({A2, A1}) do
@@ -208,6 +237,11 @@ local function fake_relay(bodies, stats)
         end
         function z.wait(t)
             if c.closed then error("closed", 0) end
+            -- at its park, beside the chargers, a robot charges (2000 a wait)
+            local pk = b.park
+            if pk and b.x == pk[1] and b.y == pk[2] and b.z == pk[3] then
+                b.energy = math.min(b.max, b.energy + 2000)
+            end
             if t == 0 then                       -- an op done: its time, or caught up
                 next_t = next_t + OP_S
                 local now = vc.app_time()
@@ -263,7 +297,7 @@ local function run_test()
             for z = BOX.z[1], BOX.z[2] do
                 local k = x .. "," .. y .. "," .. z
                 kept_cells[k] = {rawget(cw.blocks, k), cw.containers[k]}
-                local b = solid(x, y, z) and {"minecraft:stone", 0} or nil
+                local b = TERRAIN[k] or solid(x, y, z) and {"minecraft:stone", 0} or nil
                 blocks[k] = b
                 cw.blocks[k] = b or false
                 cw.containers[k] = nil
@@ -274,6 +308,9 @@ local function run_test()
         blocks[h[1] .. "," .. h[2] .. "," .. h[3]] = {"minecraft:stone", 0}
     end
     local w = simbot.world(blocks)
+    -- a robot's afterimage where it just left, a moment - by the sim's clock, read when asked:
+    -- the clock is warped after this
+    w.afterimages = function() return vc.app_time() end
     for _, st in ipairs(me.stations) do
         local i = st.INTERFACE
         local slots = {sink = {[me.RETURN] = true}}
@@ -282,21 +319,39 @@ local function run_test()
     end
     load_grid()
 
-    -- the robots: a body each at its park, linked through the stand-in relay
+    -- the robots: a body each at its park, linked through the stand-in relay - but Gunter, off
+    -- the relay, standing where he was last seen, 0,1,0, in the station's ways (as he did live,
+    -- two robots waiting on him for good, 2026-10-06)
     local bodies, kept_robots = {}, {}
     for _, r in ipairs(robots.order) do
         kept_robots[r.name] = {sf = r.sf, copy = r.copy, slots = r.slots, status = r.status,
-                               diverged = r.diverged, linked = r.linked}
-        local p = r.park
+                               diverged = r.diverged, linked = r.linked, last_pos = r.last_pos,
+                               offline_mark = r.offline_mark}
+        -- the low one away from its park: there it would charge while it is located (2000 a
+        -- wait), and never be low when the loop first sees it free
+        local p = r.name == OFFLINE and {0, 1, 0} or r.name == FAR_ONE and {-8, 0, 20}
+                or r.name == LOW_ONE and {4, 0, -3} or r.park
+        r.last_pos, r.offline_mark = r.name == OFFLINE and {0, 1, 0} or nil, nil
         bodies[r.prefix] = simbot.robot(w, {x = p[1], y = p[2], z = p[3], facing = "n",
-                                           energy = 40000, max = 40500, name = r.name})
+                                           energy = r.name == LOW_ONE and 12000 or 40000,
+                                           max = 40500, name = r.name,
+                                           slots = r.name == FAR_ONE and {[5] = {
+                                               name = "minecraft:cobblestone", meta = 0,
+                                               count = 20}} or nil})
+        bodies[r.prefix].park = r.park
         r.sf, r.copy, r.slots, r.diverged, r.status = nil, nil, nil, nil, {}
     end
     local kept = {open = relay.open, ask = me.ask, conn = me.conn, phase = me.phase,
                   view = me.view, run = packets.run, result = packets.result,
                   jobs = crew.jobs, owner = crew.me_owner, queue = crew.me_queue,
                   replan = crew.REPLAN_S, st = {}}
-    for n, st in ipairs(me.stations) do kept.st[n] = {addr = st.addr, owner = st.owner} end
+    -- the stations' whole state, given back after: what each stocks and has to clear too (left
+    -- over, they broke test_stations, which runs after this one)
+    local function copy_of(t) local c = {} for k, v in pairs(t or {}) do c[k] = v end return c end
+    for n, st in ipairs(me.stations) do
+        kept.st[n] = {addr = st.addr, owner = st.owner, stocked = copy_of(st.stocked),
+                      to_clear = copy_of(st.to_clear)}
+    end
     local clock = warp(true)
     local new_conn = fake_relay(bodies, stats)
     relay.open = function() return new_conn() end
@@ -329,12 +384,18 @@ local function run_test()
         packets.run, packets.result = kept.run, kept.result
         crew.jobs, crew.me_owner, crew.me_queue = kept.jobs, kept.owner, kept.queue
         for n, st in ipairs(me.stations) do
-            st.addr, st.owner = kept.st[n].addr, kept.st[n].owner
+            local k = kept.st[n]
+            st.addr, st.owner = k.addr, k.owner
+            for slot in pairs(st.stocked) do st.stocked[slot] = nil end
+            for slot, v in pairs(k.stocked) do st.stocked[slot] = v end
+            for slot in pairs(st.to_clear) do st.to_clear[slot] = nil end
+            for slot, v in pairs(k.to_clear) do st.to_clear[slot] = v end
         end
         for _, r in ipairs(robots.order) do
             local k = kept_robots[r.name]
             r.sf, r.copy, r.slots, r.status, r.diverged, r.linked = k.sf, k.copy, k.slots,
                 k.status, k.diverged, k.linked
+            r.last_pos, r.offline_mark = k.last_pos, k.offline_mark
         end
         for k, v in pairs(kept_cells) do
             cw.blocks[k] = v[1]
@@ -355,18 +416,50 @@ local function run_test()
         while not stats.over do
             local n = 0
             for _, j in pairs(crew.jobs) do if j.phase == "the packet" then n = n + 1 end end
+            -- nobody waits for the interface from away from the station (it holds its turn
+            -- while it flies; Dalek_Sec's go-home at 0,0,19, 2026-10-06)
+            for name, j in pairs(crew.jobs) do
+                local r = robots.by[name]
+                local q, sp = r and r.sf and r.sf.pos, me.stations[1].SPOT
+                if j.phase == "waiting for the interface" and q and math.abs(q[1] - sp[1])
+                        + math.abs(q[2] - sp[2]) + math.abs(q[3] - sp[3]) > 8 then
+                    stats.far_wait = ("%s at %s"):format(name, table.concat(q, ","))
+                end
+            end
             stats.most = math.max(stats.most, n)
             for k, st in ipairs(me.stations) do if st.owner then stats.used[k] = true end end
+            -- a builder idle away from its park: home, unless it works (Baymax kept at
+            -- -6,16,51 while a trapdoor was short, 2026-10-06)
+            stats.away = stats.away or {}
+            for _, name in ipairs(crew.BUILDERS) do
+                local r = robots.by[name]
+                local sf = r and r.sf
+                local at_park = sf and r.park and sf.pos[1] == r.park[1]
+                        and sf.pos[2] == r.park[2] and sf.pos[3] == r.park[3]
+                if sf and not crew.jobs[name] and not at_park
+                        and (sf.state == "done" or sf.state == "idle") then
+                    stats.away[name] = stats.away[name] or vc.app_time()
+                    if vc.app_time() - stats.away[name] > 90 then
+                        stats.kept_away = ("%s at %s"):format(name, table.concat(sf.pos, ","))
+                    end
+                else
+                    stats.away[name] = nil
+                end
+            end
             if crew.me_owner then stats.used[1] = true end
             vc.net_sleep_ms(1000)
         end
     end)
 
     -- linked, every one; the loop
-    for _, r in ipairs(robots.order) do robots.link(r.name, true) end
+    for _, r in ipairs(robots.order) do
+        if r.name ~= OFFLINE then robots.link(r.name, true) end
+    end
     for _ = 1, 60 do
         local all = true
-        for _, r in ipairs(robots.order) do if not (r.sf and r.slots) then all = false end end
+        for _, r in ipairs(robots.order) do
+            if r.name ~= OFFLINE and not (r.sf and r.slots) then all = false end
+        end
         if all then break end
         vc.net_sleep_ms(1000)
     end
@@ -376,6 +469,7 @@ local function run_test()
     end)
     local t0 = vc.app_time()
     stats.t0 = t0
+    GLASS_T0 = t0
     while vc.app_time() - t0 < LIMIT_S do
         vc.net_sleep_ms(5000)
         if stats.loop_error or (crew.run and crew.run.ended) then break end
@@ -413,6 +507,12 @@ local function run_test()
             end
         end
     end
+    -- the dug stand's stair the plan's way, the grass back in its stand
+    local stair, back = w:get(12, -1, 25), w:get(11, -1, 25)
+    if not (stair and stair[2] == 0 and back and back[1] == "minecraft:grass") then
+        problems[#problems + 1] = ("dig and put back: stair %s, stand %s"):format(
+            stair and (stair[1] .. ":" .. stair[2]) or "air", back and back[1] or "air")
+    end
     for name, why in pairs(st.parked or {}) do
         problems[#problems + 1] = "parked " .. name .. ": " .. why
     end
@@ -432,6 +532,19 @@ local function run_test()
     stats.over = true
     setmetatable(crew.log, nil)
     if not stats.used[2] then problems[#problems + 1] = "the second station never used" end
+    if stats.kept_away then
+        problems[#problems + 1] = "idle away from its park over 90 s: " .. stats.kept_away
+    end
+    if stats.far_wait then
+        problems[#problems + 1] = "waited for the interface far from it: " .. stats.far_wait
+    end
+    local charged = false
+    for _, l in ipairs(full) do
+        if l:find(LOW_ONE .. ": energy", 1, true) and l:find("home to charge", 1, true) then
+            charged = true
+        end
+    end
+    if not charged then problems[#problems + 1] = LOW_ONE .. ", low, never sent to charge" end
     if stats.most < 3 then
         problems[#problems + 1] = ("at most %d builders on a packet at once"):format(stats.most)
     end
@@ -439,11 +552,58 @@ local function run_test()
                   .. " on a packet at once, stations %s %s"):format(st.started or 0,
         st.finished or 0, stats.plans or 0, vc.app_time() - t0, stats.most,
         tostring(stats.used[1]), tostring(stats.used[2]))
+    -- the state at the end, for a run that stalls: the loop's note, every job, every robot,
+    -- the locks
+    local state = {"--- at the end: note " .. tostring(st.note) .. ", ended "
+                   .. tostring(st.ended) .. ", loop error " .. tostring(stats.loop_error)}
+    for name, j in pairs(crew.jobs) do
+        state[#state + 1] = ("job %s: %s, phase %s, pid %s, since %.0f s"):format(name,
+            tostring(j.p and j.p.id), tostring(j.phase), tostring(j.pid),
+            vc.app_time() - (j.t0 or vc.app_time()))
+    end
+    for _, r in ipairs(robots.order) do
+        local sf = r.sf or {}
+        state[#state + 1] = ("robot %s: %s %s %s op %s at %s, div %s, in flight %s"):format(
+            r.name, tostring(sf.id), tostring(sf.state), tostring(sf.why), tostring(sf.op),
+            table.concat(sf.pos or {}, ","), tostring(r.diverged and r.diverged.why),
+            tostring(robots.in_flight(r)))
+    end
+    state[#state + 1] = ("lock 1 %s, lock 2 %s, queue %s"):format(tostring(crew.me_owner),
+        tostring(me.stations[2].owner), table.concat(crew.me_queue or {}, ","))
+    -- a robot waiting: the cell its op steps into, and who stands there
+    for _, r in ipairs(robots.order) do
+        local sf, c = r.sf, r.copy
+        local op = sf and sf.state == "wait" and c and c.m.prog and c.m.prog.ops[sf.op]
+        local v = op and op.dir and machine.STEP_OF[op.dir]
+        if v then
+            local cell = {sf.pos[1] + v[1], sf.pos[2] + v[2], sf.pos[3] + v[3]}
+            local there = "nobody"
+            for _, o in ipairs(robots.order) do
+                local p = o.sf and o.sf.pos
+                if o ~= r and p and p[1] == cell[1] and p[2] == cell[2] and p[3] == cell[3] then
+                    there = o.name .. " (" .. tostring(o.sf.state) .. ", job "
+                            .. tostring(crew.jobs[o.name] and crew.jobs[o.name].phase) .. ")"
+                end
+            end
+            local b = w:get(cell[1], cell[2], cell[3])
+            state[#state + 1] = ("%s waits on %s: %s; the world has %s there"):format(r.name,
+                table.concat(cell, ","), there, b and b[1] or "air")
+        end
+    end
+    local gw = {}
+    for name, e in pairs(crew.gw or {}) do gw[#gw + 1] = name .. " for " .. tostring(e.passer) end
+    for name in pairs(crew.gw_moved or {}) do gw[#gw + 1] = name .. " moved" end
+    state[#state + 1] = "give-way: " .. table.concat(gw, ", ")
+    local text = table.concat({note, table.concat(problems, "\n"), table.concat(state, "\n"),
+                               "--- the crew's log", table.concat(full, "\n")}, "\n") .. "\n"
     local f = io.open("test_run/crewsim-report.txt", "w")
-    if f then
-        f:write(note, "\n", table.concat(problems, "\n"), "\n--- the crew's log\n",
-                table.concat(full, "\n"), "\n")
-        f:close()
+    if f then f:write(text) f:close() end
+    if #problems > 0 then                    -- a failing run's report kept apart
+        -- one file a failing run, never written over: crewsim-failed-<n>.txt
+        local n = 1
+        while io.open(("test_run/crewsim-failed-%d.txt"):format(n), "r") do n = n + 1 end
+        local g = io.open(("test_run/crewsim-failed-%d.txt"):format(n), "w")
+        if g then g:write(text) g:close() end
     end
     if #problems > 0 then
         return finish(("crew sim (%s): %s"):format(note, table.concat(problems, "; ")))

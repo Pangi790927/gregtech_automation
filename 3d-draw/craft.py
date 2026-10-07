@@ -118,7 +118,7 @@ class Crafter:
     @classmethod
     async def open(cls):
         me = await rlink.reach("9cdb8754", log=None, program="me_server", zone=b"meserver")
-        c = cls(await rlink.reach("016db072"), me)
+        c = cls(await rlink.reach("858fde4e"), me)
         if c.r.pos == [0, 0, 0]:
             await c.r.run("move s")
         await c.at_interface()

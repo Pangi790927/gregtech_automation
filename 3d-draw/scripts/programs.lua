@@ -227,6 +227,13 @@ function programs.make(packet, robot, map)
             end
             marks[#marks + 1] = {x, y, z, vc.route_get(x, y, z)}
             vc.route_set(x, y, z, 2)
+            -- a door fills the cell above it too (ItemDoor puts both halves): the packet's later
+            -- ways keep off it - a way through it was refused by the copy's dry run, "blocked
+            -- minecraft:wooden_door" (ASIMO, place -5 0 6's door at -25,6,31, 2026-10-06)
+            if st.act == "place" and require("orient").door(st.block[1]) then
+                marks[#marks + 1] = {x, y + 1, z, vc.route_get(x, y + 1, z)}
+                vc.route_set(x, y + 1, z, 2)
+            end
         end
         ::next_step::
     end

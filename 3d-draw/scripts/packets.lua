@@ -60,6 +60,12 @@ function packets.run()
     local t = vc.app_time()
     local ok, want, n, ext = pcall(read_plan, path)
     if not ok then packets.note = "cannot read " .. path; return end
+    -- put-backs a stopped trip owes (crew.owed: a stair's stand dug, its block not back yet):
+    -- planned as the plan's own until placed
+    local crew = package.loaded["crew"]
+    for k, b in pairs(type(crew) == "table" and crew.owed or {}) do
+        if not want[k] then want[k], n = b, n + 1 end
+    end
     local a = view.anchor
     local area = chunks.read_area("data/chunks", (ext[1] + a[1]) // 16, (ext[2] + a[1]) // 16,
             (ext[3] + a[3]) // 16, (ext[4] + a[3]) // 16,
@@ -81,6 +87,7 @@ function packets.run()
     end
     packets.have = have                  -- the map as planned: the copies name blocks from it too
     packets.result = planner.plan(want, have)
+    packets.result.t0 = t                -- when the map it rests on was read (crew.is_done)
     packets.want, packets.active, packets.dirty = want, {}, true
     -- every packet filled on paper before it may become work (prove.lua); the program draws in
     -- between, this running on a coroutine of its own

@@ -122,6 +122,11 @@ function planner.plan(want, have)
             if not GROUND[hname] and hname ~= "minecraft:farmland" then
                 dig[k], put[k], as_built[k] = true, b, DIRT
             end
+        elseif hname == "minecraft:water" or hname == "minecraft:flowing_water" then
+            -- water in a planned block's own cell: the place replaces it (water is replaceable),
+            -- and water is no dig - the user's leave ("you can enter in water on a block that
+            -- will be replaced either way"); the cabin's stilts, burned and flooded (2026-10-06)
+            put[k] = b
         elseif not same(b[1], b[2], hname, hmeta) then
             dig[k], put[k] = true, b                  -- the wrong block: out, then the right one
         end
@@ -247,7 +252,7 @@ function planner.plan(want, have)
             for _, wy in ipairs(orient.ways(b[1], b[2])) do
                 local off = orient.click(wy.f, wy.s)
                 local cx, cy, cz = x + off[1], y + off[2], z + off[3]
-                if stays(cx, cy, cz) and orient.clickable((have(cx, cy, cz))) then
+                if stays(cx, cy, cz) and orient.holds(wy.f, wy.s, have(cx, cy, cz)) then
                     ready = true
                     break
                 end

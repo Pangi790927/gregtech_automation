@@ -95,3 +95,14 @@ The user, 2026-10-04: a grass block only guessed, whose top and four sides are a
 or air), is grass for good - no scout will learn more (chosen over "dirt"). `zones.py
 settle-grass` does it on the zone's map; blocks it settles do not count as known in the same
 pass, so guesses cannot confirm each other. Exceptions: the user says.
+
+## Guesses settled after naming (2026-10-07)
+
+Run once B (`../redesign/20-scouts.md`) leaves nothing more that `analyze` can name. The user:
+""hidden" blocks with no view from top, left, right, front, back will be considered dirt if they
+have a plant on top" - then "grass, I confused it with dirt".
+- **Hidden under a plant:** a block seen from neither above nor any side, a plant on top: grass.
+- **The leaf/dirt chain**, both ways (the user: "the idea is to chain down", so it "fixes both
+  trees and underground"): a guessed leaf under dirt is dirt; a guessed dirt over a leaf is a
+  leaf. A block settled so counts as known for the next, so a column settles in one go. The two
+  touch different guesses (a leaf's, a dirt's) and cannot undo each other.

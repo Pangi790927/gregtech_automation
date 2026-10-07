@@ -24,7 +24,7 @@
 
 local orient = require("orient")
 
-local simbot = {}
+local simbot = {AFTERIMAGE_S = 0.6}     -- an afterimage's life: about a robot's move
 
 local STEP = {n = {0, 0, -1}, s = {0, 0, 1}, e = {1, 0, 0}, w = {-1, 0, 0}, u = {0, 1, 0},
               d = {0, -1, 0}}
@@ -41,7 +41,20 @@ function simbot.world(blocks)
                          dug = {}}, World)
 end
 
-function World:get(x, y, z) return self.blocks[key(x, y, z)] end
+-- An afterimage (w.afterimages, a clock: the crew's sim) is gone once its time is over: in
+-- OpenComputers it stands only while the robot's move lasts - kept until the robot's next move,
+-- one left by a robot that stopped had stood for good and held another robot waiting on it.
+function World:get(x, y, z)
+    local k = key(x, y, z)
+    local b = self.blocks[k]
+    local till = self.after_till and self.after_till[k]
+    if till and b and self.afterimages() >= till then
+        self.blocks[k] = false
+        self.after_till[k] = nil
+        return nil
+    end
+    return b
+end
 -- An emptied cell is `false`, not nil: a world that falls back on another for cells it does not
 -- hold (copy.lua, the pathfinder's grid) would otherwise show the old block again.
 function World:set(x, y, z, b)
@@ -83,6 +96,10 @@ function simbot.robot(w, o)
         end
     end
     local hw = {}
+    -- A world with w.afterimages (the crew's sim: its clock): a robot leaves OpenComputers'
+    -- afterimage in the cell it moves out of while the move lasts (AFTERIMAGE_S) - a robot
+    -- stepping in right behind it meets that, not air (Cortana met Baymax's at his park,
+    -- 2026-10-06). Not for the copies' worlds.
     function hw.move(dir)
         turn_to(dir)
         r.ticks = r.ticks + 1
@@ -92,7 +109,14 @@ function simbot.robot(w, o)
             r.ticks = r.ticks + 10                        -- a failed move pauses too
             return false, "solid"
         end
-        w:set(r.x, r.y, r.z, nil)
+        if w.afterimages then
+            local k = key(r.x, r.y, r.z)
+            w:set(r.x, r.y, r.z, {ROBOT .. "Afterimage", 0})
+            w.after_till = w.after_till or {}
+            w.after_till[k] = w.afterimages() + simbot.AFTERIMAGE_S
+        else
+            w:set(r.x, r.y, r.z, nil)
+        end
         r.x, r.y, r.z = x, y, z
         w:set(x, y, z, {ROBOT, 0})
         trample(x, y, z)
@@ -134,7 +158,11 @@ function simbot.robot(w, o)
         local st = r.slots[slot]
         if not st or st.count <= 0 then return false, "nothing selected" end
         local x, y, z = ahead(dir)
-        if w:get(x, y, z) or w.entities[key(x, y, z)] then return false, "taken" end
+        -- water there is replaced, as the game's ItemBlock does (a liquid is replaceable)
+        local there = w:get(x, y, z)
+        if (there and not there[1]:find("water", 1, true)) or w.entities[key(x, y, z)] then
+            return false, "taken"
+        end
         -- seeds go only onto farmland, and become the crop (13-farm.md)
         if st.name == "minecraft:wheat_seeds" then
             local below = w:get(x, y - 1, z)
@@ -147,17 +175,24 @@ function simbot.robot(w, o)
             if st.count == 0 then r.slots[slot] = nil end
             return true
         end
+        -- a plant only onto soil (orient.plant/soil): lavender on lavender came to nothing
+        if orient.plant(st.name) then
+            local below = w:get(x, y - 1, z)
+            if not (below and orient.soil(below[1])) then return false, "no soil under it" end
+        end
         -- The block the place clicks, as OpenComputers aims it (redesign/14-turn.md): the face
         -- named, or the faces it tries in order; without the angel upgrade (the builders have
         -- none) nothing clicked is nothing placed. Then the block's way, by the game's rule.
-        local meta = st.meta
+        local meta = orient.item_meta(st.name, st.meta)         -- leaves: their no-decay bit
         if not w.angel then
             local clicked
             for _, s in ipairs(face and {face} or orient.faceless(dir)) do
                 local off = orient.click(dir, s)
                 if not off then return false, "a face opposite the place" end
                 local b = w:get(x + off[1], y + off[2], z + off[3])
-                if b and orient.clickable(b[1]) then clicked = s break end
+                -- held only where the ray meets the block's own shape (orient.holds: a bottom
+                -- slab is missed from above - Cortana's -9,7,33, 2026-10-06)
+                if b and orient.holds(dir, s, b[1], b[2]) then clicked = s break end
             end
             if not clicked then return false, "nothing to hold it" end
             if orient.has(st.name) then

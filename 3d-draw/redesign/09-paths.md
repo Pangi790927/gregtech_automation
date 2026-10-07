@@ -72,3 +72,7 @@ placing either, else it may get stuck inside a house or something like that)".
    taken.
 2. The scouts' rule - explore only under sky or a named tree - stays the scouts' (stage 6); the
    grid gives them `0` cells to look at.
+
+**Stop points kept off (the user, 2026-10-06: "the algo for pathfinding should not allow going
+over each-other's stop points"):** every robot's park is off every other robot's ways, the robot
+home or away (crew avoid_for), as are where a robot stands and where a running one will end.

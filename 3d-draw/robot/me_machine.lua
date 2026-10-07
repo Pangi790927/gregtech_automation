@@ -192,12 +192,27 @@ local function handle(line)
   end
 end
 
+-- The whole lines in `buf` and what is left after the last newline, by plain finds: linear. The
+-- patterns this took before (match "[^\n]*$", gmatch "([^\n]*)\n") are quadratic in the line's
+-- length, and a 1000-character line held a robot past OpenComputers' 5 s without yielding, its
+-- zone killed (machine.lua's M.lines, 2026-10-06) - a long config line would do the same here.
+local function lines_of(buf)
+  local out, i = {}, 1
+  while true do
+    local j = buf:find("\n", i, true)
+    if not j then break end
+    out[#out + 1] = buf:sub(i, j - 1)
+    i = j + 1
+  end
+  return out, buf:sub(i)
+end
+
 z.send("ready me\n")
 local buf, done = "", false
 while not done do
-  buf = buf .. z.wait(math.huge)
-  for line in buf:gmatch("([^\n]*)\n") do
+  local lines
+  lines, buf = lines_of(buf .. z.wait(math.huge))
+  for _, line in ipairs(lines) do
     if handle(line) == "bye" then done = true end
   end
-  buf = buf:match("[^\n]*$")
 end

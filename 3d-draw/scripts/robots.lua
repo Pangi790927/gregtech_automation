@@ -30,7 +30,7 @@ local copy = require("copy")
 local robots = {by = {}, order = {}, changed = false}
 
 robots.ROSTER = {                       -- 3d-draw/docs/robots.md, "The roster"
-    {name = "G.U.N.T.E.R.", prefix = "016db072", park = {0, 0, 0}},
+    {name = "G.U.N.T.E.R.", prefix = "858fde4e", park = {0, 0, 0}},
     {name = "ASIMO", prefix = "f4470a27", park = {2, 0, -2}},
     {name = "Pintsize", prefix = "a77c49f1", park = {0, 0, -2}},
     {name = "Baymax", prefix = "a4c330bf", park = {1, -1, -2}},
@@ -68,6 +68,7 @@ for i, r in ipairs(robots.ROSTER) do
     robots.by[r.name] = rec
     robots.order[i] = rec
 end
+-- where each was last seen: read from robots.POS_FILE once the functions are defined, below
 
 local function read_file(path)
     local f = io.open(path, "rb")
@@ -144,9 +145,14 @@ end
 local function life(r, gen)
     local net = robots.net
     local function mine() return r.linked and r.gen == gen end
-    while mine() do
+    -- One link, from connecting to its end. An error inside it ends that link only, as a link
+    -- lost: it had ended the robot's whole life - ASIMO never linked again, the watchdog closing
+    -- its dead link every second (relay.lua's cut frame, 2026-10-06).
+    local cur
+    local function one_link()
         r.phase = "connecting"
         local c, why = relay.open(net, relay.host(), PORT)
+        cur = c
         if c then
             local addr
             for _, a in ipairs(c:computers() or {}) do
@@ -217,6 +223,20 @@ local function life(r, gen)
         robots.changed = true
         if mine() then net.sleep(5000) end
     end
+    while mine() do
+        local ok, err = pcall(one_link)
+        if not ok then
+            r.phase = "the link broke: " .. tostring(err)
+            robots.dropped(r, err)
+            if cur then
+                cur:close()
+                if r.conn == cur then r.conn = nil end
+            end
+            r.asked = nil
+            robots.changed = true
+            if mine() then net.sleep(5000) end
+        end
+    end
     if r.gen == gen then
         r.phase = "not linked"
         robots.changed = true
@@ -276,12 +296,96 @@ function robots.watch_round(now, last)
     end
 end
 
+-- Where every robot was last seen, kept on disk (POS_FILE): a robot that is not linked - off the
+-- relay, its computer down - still stands where it was, a block in every way. Gunter, off the
+-- relay at 0,1,0, was invisible to the routes, and two robots waited on him for good
+-- (2026-10-06). `name x y z` a line.
+-- The tests' own copy: a test's robots saved over the live file had dropped Gunter from it.
+robots.POS_FILE = vc.app_is_testing() and "test_run/robots-pos.txt" or "data/robots-pos.txt"
+
+function robots.load_positions(path)
+    local f = io.open(path or robots.POS_FILE, "r")
+    if not f then return 0 end
+    local n = 0
+    for line in f:lines() do
+        local name, x, y, z = line:match("^(%S+) (-?%d+) (-?%d+) (-?%d+)")
+        local r = name and robots.by[name]
+        if r then
+            r.last_pos = {tonumber(x), tonumber(y), tonumber(z)}
+            n = n + 1
+        end
+    end
+    f:close()
+    return n
+end
+
+if not vc.app_is_testing() then robots.load_positions() end
+
+local saved = ""
+function robots.save_positions(path)
+    local out = {}
+    for _, r in ipairs(robots.order) do
+        if r.linked and r.sf and r.sf.pos then r.last_pos = r.sf.pos end
+        local p = r.last_pos
+        if p then out[#out + 1] = ("%s %d %d %d"):format(r.name, p[1], p[2], p[3]) end
+    end
+    local text = table.concat(out, "\n") .. "\n"
+    if text == saved then return false end
+    local f = io.open(path or robots.POS_FILE, "w")
+    if not f then return false end
+    f:write(text)
+    f:close()
+    saved = text
+    return true
+end
+
+-- A robot not linked, where last seen: solid in the pathfinder's grid and a robot in the copies'
+-- world, so no way is planned through it; let go when it links again (or is seen elsewhere).
+-- `world`: the copies' world (copy.world() by default). -> how many robots are marked.
+function robots.keep_offline(world)
+    local n = 0
+    for _, r in ipairs(robots.order) do
+        local offline = not (r.linked and r.sf)
+        local p = r.last_pos
+        if offline and p then
+            -- set again every round: the grid loaded (or loaded again) after a mark forgets it
+            local w = world or copy.world()
+            r.offline_mark = r.offline_mark or {p[1], p[2], p[3], vc.route_get(p[1], p[2], p[3])}
+            if vc.route_get(p[1], p[2], p[3]) ~= 2 then vc.route_set(p[1], p[2], p[3], 2) end
+            local b = w:get(p[1], p[2], p[3])
+            if not (b and b[1] == "OpenComputers:robot") then
+                w:set(p[1], p[2], p[3], {"OpenComputers:robot", 0})
+            end
+        elseif not offline and r.offline_mark then
+            -- linked: the mark let go always, wherever it stands now - a linked robot is kept
+            -- off by its live place (crew.robot_cells) and its copy's block, not the grid; kept
+            -- for one linked on its own mark, every park stayed solid after its robot left
+            -- (every robot is unlinked a moment at the start: Baymax's park, "no way", 2026-10-06)
+            local m, w = r.offline_mark, world or copy.world()
+            vc.route_set(m[1], m[2], m[3], 1)
+            local here = r.sf.pos
+            if not (here[1] == m[1] and here[2] == m[2] and here[3] == m[3]) then
+                w:set(m[1], m[2], m[3], nil)
+            end
+            r.offline_mark = nil
+        end
+        if r.offline_mark then n = n + 1 end
+    end
+    return n
+end
+
 local function watchdog()
     local last = robots.net.now()
+    local beat = 0
     while true do
         local now = robots.net.now()
         robots.watch_round(now, last)
         last = now
+        beat = beat + 1
+        if beat % 5 == 0 then
+            pcall(robots.save_positions)
+            pcall(robots.keep_offline)
+        end
         robots.net.sleep(1000)
     end
 end

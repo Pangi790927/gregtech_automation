@@ -20,12 +20,14 @@ angel upgrade and the MFU (the user could not get them). So:
 ## The roster
 
 **The robots** (positions count from the start block, x east, y up, z south):
-- **G.U.N.T.E.R.** (Gunter), `016db072`, the builder: parks on the start block (0 0 0), the
+- **G.U.N.T.E.R.** (Gunter), `858fde4e` (016db072 until 2026-10-06, when the user placed him
+  back), the builder: parks on the start block (0 0 0), the
   charger east of it. Inventory 16, a pickaxe in its tool slot, crafting upgrade, database.
 - **Cairol**, `44ffaded` (956b836d until 2026-10-05, 4d783168 until 2026-10-04: each time
   the user picked it up and placed it again, a new address), a scout: parks under the charger
-  (1 -1 0), over the water, since 2026-10-05. Geolyzer, navigation, chunkloader (`setActive`
-  answers whether it changed: false is "already on"), inventory 16.
+  (1 -1 0), over the water, since 2026-10-05. Geolyzer, navigation, hover (the user,
+  2026-10-07), chunkloader (`setActive` answers whether it changed: false is "already on"),
+  inventory 16.
 - **Tom_Servo** (Tom), `cfbf2408` (0511bc18 until 2026-10-05, 4bcc1e4c until 2026-10-04), the
   second scout, the same parts: parks on top of the charger (1 1 0) since 2026-10-05 - the user
   put the two back the other way round. The charger reaches only the start block, above it and
@@ -34,7 +36,7 @@ angel upgrade and the MFU (the user could not get them). So:
 
   | robot      | address    | park        | notes                                             |
   |------------|------------|-------------|---------------------------------------------------|
-  | G.U.N.T.E.R.| `016db072`| 0 0 0       | crafts first (the saw in slot 4)                  |
+  | G.U.N.T.E.R.| `858fde4e`| 0 0 0       | crafts first (the saw in slot 4)                  |
   | ASIMO      | `f4470a27` | 2 0 -2      | was 2158408e; broken and put back 2026-10-04: its |
   |            |            |             | battery holds 20,500 now, not 40,500              |
   | Pintsize   | `a77c49f1` | 0 0 -2      |                                                   |
@@ -42,6 +44,9 @@ angel upgrade and the MFU (the user could not get them). So:
   | Dalek_Sec  | `1bf71bda` | 1 1 -2      | new 2026-10-04, in Cortana's place                |
   | Cortana    | `c0385d94` | 2 -1 -1     | back 2026-10-05, found by the user: the 6th builder|
 
+  Chunkloaders (2026-10-06): Dalek_Sec and Cortana have one, on; ASIMO, Pintsize and Baymax
+  report none that switches on (`@1` left "chunk false") - with no player on they stop away from
+  the loaded chunks, so the crew keeps them home (redesign/15-crew.md).
   Cortana (082fe759 then) was broken by another builder's swing on 2026-10-04 and lost; the
   user found her again on 2026-10-05, placed under the cell in front of ASIMO.
   Each builder carries a TConstruct mattock (for farmland, dirt, logs) and a pickaxe (the user,

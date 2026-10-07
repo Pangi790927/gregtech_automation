@@ -35,11 +35,21 @@ local packets = require("live")("packets")
 local programs = require("live")("programs")
 local me = require("me")
 
-local crew = {jobs = {}, done = {}, log = {},
-              paths = {done = "data/crew-done.txt", world = "data/world.txt"}}
+local crew = {jobs = {}, done = {}, log = {}, finished_at = {},
+              paths = {done = "data/crew-done.txt", world = "data/world.txt",
+                       log = not vc.app_is_testing() and "data/crew-log.txt" or nil,
+                       owed = not vc.app_is_testing() and "data/crew-owed.txt" or nil,
+                       loaded = not vc.app_is_testing() and "data/chunkloaded.txt" or nil}}
 
 -- A line in the crew's log, the last 12 kept; offered as crew.say to giveway.lua.
+-- A line of the crew's log: kept here (the last 12) and in crew.paths.log, all of it, timed -
+-- 306 packets started and 4 finished had left 12 lines to say why (2026-10-06).
 local function say(s)
+    local f = crew.paths.log and io.open(crew.paths.log, "a")
+    if f then
+        f:write(("%.0f %s\n"):format(vc.app_time(), s))
+        f:close()
+    end
     crew.log[#crew.log + 1] = s
     if #crew.log > 12 then table.remove(crew.log, 1) end
 end
@@ -49,6 +59,33 @@ local function unkey(k)
     local x, y, z = k:match("^(-?%d+),(-?%d+),(-?%d+)$")
     return tonumber(x), tonumber(y), tonumber(z)
 end
+
+-- Put-backs owed (redesign/14-turn.md, "Dig and put back"): a stair's stand dug, its trip stopped
+-- before the block went back - the ground is no part of the plan, so no plan would put it back
+-- (ASIMO, lost on place -6 0 9 right over the lavender it was to dig, 2026-10-06). Kept in
+-- crew.paths.owed, `x y z name meta` in plan coordinates; packets.run plans them until a place
+-- writes the cell. crew.owed: k -> {name, meta}.
+crew.owed = {}
+local function save_owed()
+    local f = crew.paths.owed and io.open(crew.paths.owed, "w")
+    if not f then return end
+    for k, b in pairs(crew.owed) do
+        local x, y, z = unkey(k)
+        f:write(("%d %d %d %s %d\n"):format(x, y, z, b[1], b[2]))
+    end
+    f:close()
+end
+function crew.load_owed()
+    crew.owed = {}
+    local f = crew.paths.owed and io.open(crew.paths.owed, "r")
+    if not f then return end
+    for line in f:lines() do
+        local x, y, z, name, meta = line:match("^(-?%d+) (-?%d+) (-?%d+) (%S+) (%d+)")
+        if x then crew.owed[x .. "," .. y .. "," .. z] = {name, tonumber(meta)} end
+    end
+    f:close()
+end
+crew.load_owed()
 
 -- The packets done for real, from before this run of the program.
 local function load_done()
@@ -115,6 +152,10 @@ local function still(r)
         return false, "still at work (" .. r.sf.state .. "): its position is not settled"
     end
     if #r.outbox > 0 then return false, "a command is still queued for it" end
+    -- a program on its way to it (a failed trip's step off the spot, sent and not waited for):
+    -- about to move - the next trip, its items held already, went straight to its packet and
+    -- was refused, "busy, and it moved meanwhile" (Cortana, place -4 2 8, 2026-10-06)
+    if robots.in_flight(r) then return false, "a program is on its way to it" end
     if r.diverged then return false, "its copy diverged: " .. r.diverged.why end
     if crew.jobs[r.name] then return false, "it is on " .. crew.jobs[r.name].p.id end
     -- halted aside for another, its own program stacked under (16-giveway.md): not free
@@ -143,6 +184,11 @@ local function avoid_for(r)
     local a = {}
     for _, o in ipairs(robots.order) do
         if o ~= r and o.linked and o.sf then robot_cells(o, a) end
+        -- every other robot's stop point, its park, home or not: no way runs over it (the user,
+        -- 2026-10-06: "the algo for pathfinding should not allow going over each-other's stop
+        -- points") - one coming home found its park taken, one away had its park flown through
+        local p = o ~= r and o.park
+        if p then a[p[1] .. "," .. p[2] .. "," .. p[3]] = true end
     end
     for name, j in pairs(crew.jobs) do
         if name ~= r.name then
@@ -152,6 +198,7 @@ local function avoid_for(r)
     end
     return a
 end
+crew.avoid_for = avoid_for                                         -- for the tests
 
 -- The steps a robot finished, into the grid, the copies' world and world.txt (world
 -- coordinates), in order: a support put and taken away again ends as air, the last line for a
@@ -177,20 +224,40 @@ local function write_steps(steps, upto)
             f:write(("%d %d %d %s %d 1.0 built %s\n"):format(x + a[1], y + a[2], z + a[3], name,
                                                             meta, plan))
         end
-        -- a door's upper half came with it (ItemDoor): written too, as the plan names it
+        -- a door's upper half came with it (ItemDoor): written too, as the plan names it - and
+        -- when the plan does not (the planner never puts an upper half), as the door's own
+        -- upper (meta 8): left air, the grid's ways went through it and the copies, which put
+        -- both halves, refused them, "blocked minecraft:wooden_door" (Dalek_Sec, 2026-10-06)
         if st.act == "place" and require("orient").door(name) then
-            local up = (packets.want or {})[x .. "," .. (y + 1) .. "," .. z]
-            if up then
-                vc.route_set(x, y + 1, z, 2)
-                if w then w:set(x, y + 1, z, {up[1], up[2]}) end
-                if f then
-                    f:write(("%d %d %d %s %d 1.0 built %s\n"):format(x + a[1], y + 1 + a[2],
-                            z + a[3], up[1], up[2], plan))
-                end
+            local up = (packets.want or {})[x .. "," .. (y + 1) .. "," .. z] or {name, 8}
+            vc.route_set(x, y + 1, z, 2)
+            if w then w:set(x, y + 1, z, {up[1], up[2]}) end
+            if f then
+                f:write(("%d %d %d %s %d 1.0 built %s\n"):format(x + a[1], y + 1 + a[2],
+                        z + a[3], up[1], up[2], plan))
             end
         end
     end
     if f then f:close() end
+    -- put-backs (crew.owed): a place written clears one owed there; a stand dug whose put-back
+    -- is past `upto` is owed now
+    local owed_changed = false
+    for i = 1, upto do
+        local st = steps[i]
+        if st.act == "place" and crew.owed[st.k] then
+            crew.owed[st.k], owed_changed = nil, true
+        end
+        if st.act == "dig" and st.putback then
+            for j = upto + 1, #steps do
+                local q = steps[j]
+                if q.k == st.k and q.act == "place" and q.putback then
+                    crew.owed[st.k], owed_changed = {st.block[1], st.block[2]}, true
+                    break
+                end
+            end
+        end
+    end
+    if owed_changed then save_owed() end
     return upto
 end
 
@@ -216,6 +283,7 @@ local function finish(r, j, why)
         return
     end
     crew.done[j.p.id] = true
+    crew.finished_at[j.p.id] = vc.app_time()
     crew.is_done(j.p.id)                         -- the plan's done list made for this plan
     crew.plan_done[j.p.id] = true
     local f = io.open(crew.paths.done, "a")
@@ -300,7 +368,15 @@ end
 function crew.is_done(id)
     local res = packets.result
     if not res then return crew.done[id] == true end
-    if crew.plan_done_of ~= res then crew.plan_done, crew.plan_done_of = {}, res end
+    if crew.plan_done_of ~= res then
+        crew.plan_done, crew.plan_done_of = {}, res
+        -- what finished after this plan began is not in the map it read: still done here - a
+        -- plan begun before place -6 1 9 ended had it handed out again at once, its trip a
+        -- "no way to place" (Dalek_Sec, 2026-10-06)
+        for fid, t in pairs(crew.finished_at) do
+            if t >= (res.t0 or math.huge) then crew.plan_done[fid] = true end
+        end
+    end
     if not res.packets[id] then return true end
     -- proven with nothing to do now (its cells left for the end): done for this plan - it came
     -- back in every plan, and the crew loop parked the robots that finished it (2026-10-06)
@@ -457,6 +533,12 @@ local function learn_block(r)
     local n2, m2 = name:match("^(.+):(%d+)$")
     if n2 and name:find(":.+:") then name, meta = n2, tonumber(m2) end
     if name == "air" then name = "minecraft:air" end
+    -- a robot or its afterimage is in the way a moment, never a block of the map (Baymax's
+    -- afterimage at his own park, learned, 2026-10-06)
+    if require("live")("machine").is_robot(name) then return nil end
+    -- only a block it can name: "solid" is what a step was refused by, gone when looked at
+    -- (a robot passing) - learned, it shut the interface's spot (2026-10-06)
+    if name == "solid" or name == "entity" or name == "nil" then return nil end
     local d = require("live")("machine").STEP_OF[op.dir]
     local x, y, z = sf.pos[1] + d[1], sf.pos[2] + d[2], sf.pos[3] + d[3]
     local air = name == "minecraft:air"
@@ -478,53 +560,98 @@ end
 -- After a stop that taught a cell: the robot looks all round (a program of six looks, read-only)
 -- and what it names goes into the map too - a crown mapped wrong is learned a patch at a time,
 -- not a leaf a bump (Pintsize in the crown over the field, 2026-10-05).
--- Whether a robot's full status carries the six looks' results of its program `pid`.
-function crew.looks_arrived(status, pid)
-    status = status or {}
-    if not (status[1] or ""):find("^" .. pid .. " ") then return false end
-    for _, line in ipairs(status) do if line:find("^res 6 ") then return true end end
-    return false
+local LETTER = {n = "^", s = "v", e = ">", w = "<", u = "+", d = "-"}
+local OF_LETTER = {["^"] = "n", v = "s", [">"] = "e", ["<"] = "w", ["+"] = "u", ["-"] = "d"}
+local BACK = {n = "s", s = "n", e = "w", w = "e", u = "d", d = "u"}
+
+-- The program of six looks: where the robot stands, or (`into`, a direction) one step into that
+-- cell first and back after - the cell a place failed into, so its own neighbours are seen:
+-- the soil a flower needs, what a click meets (the lavender under -19,8,51 the map called
+-- grass: three robots stopped "nothing-placed" there, none saw it, 2026-10-06).
+function crew.look_program(into)
+    local looks = "l^ lv l> l< l+ l-"
+    if not into then return "$0 " .. looks end
+    return "$0 " .. LETTER[into] .. " " .. looks .. " " .. LETTER[BACK[into]]
 end
 
-local LOOKS = {{"^", "n"}, {"v", "s"}, {">", "e"}, {"<", "w"}, {"+", "u"}, {"-", "d"}}
-local function look_around(r)
-    local d, sent, pid = robots.run(r.name, "$0 l^ lv l> l< l+ l-")
-    if not sent then return nil end
-    -- until the full status carries the six looks' results of this program - a fixed 1.5 s had
-    -- read the status before them, every look learning nothing (2026-10-06); 30 s at most
-    for _ = 1, 60 do
-        if crew.looks_arrived(r.status, pid) then break end
-        vc.net_sleep_ms(500)
-    end
-    local a, w = view.anchor, copy.world()
+-- The looks of a program, read from the robot's own history ("<i> l<d> ok <what> @<t>") - the
+-- status may have lost them (read by another before) - each the cell looked at from `at`:
+-- {x, y, z, name, meta}.
+function crew.read_looks(lines, at)
     local step = require("live")("machine").STEP_OF
-    local f = io.open(crew.paths.world, "a")
-    local n = 0
-    for _, line in ipairs(r.status or {}) do
-        local i, what = line:match("^res (%d+) l%S (%S+)$")
-        local look = i and LOOKS[tonumber(i)]
-        if look then
-            local dd = step[look[2]]
-            local x, y, z = r.sf.pos[1] + dd[1], r.sf.pos[2] + dd[2], r.sf.pos[3] + dd[3]
+    local out = {}
+    for _, line in ipairs(lines or {}) do
+        local d, what = line:match("^%d+ l(%S) ok (%S+)")
+        local dir = d and OF_LETTER[d]
+        if dir then
             local name, meta = what:match("^(.+):(%d+)$")
             if what == "air" then name, meta = "minecraft:air", 0 end
-            if name and not name:find("OpenComputers:robot", 1, true) then
-                local air = name == "minecraft:air"
-                vc.route_set(x, y, z, air and 1 or 2)
-                w:set(x, y, z, (not air) and {name, tonumber(meta)} or nil)
-                if f then
-                    f:write(("%d %d %d %s %s 1.0 analyzed %s looked from %d %d %d" .. "\n")
-                            :format(x + a[1], y + a[2], z + a[3], name, meta, r.name,
-                                    r.sf.pos[1], r.sf.pos[2], r.sf.pos[3]))
-                end
-                n = n + 1
+            if name then
+                local v = step[dir]
+                out[#out + 1] = {at[1] + v[1], at[2] + v[2], at[3] + v[3], name = name,
+                                 meta = tonumber(meta)}
             end
+        end
+    end
+    return out
+end
+
+-- The six looks run and what they saw put into the map (the grid, the copies' world,
+-- world.txt), robots and their afterimages left out. `into`: as crew.look_program. -> how many.
+local function look_from(r, into)
+    local p0 = {r.sf.pos[1], r.sf.pos[2], r.sf.pos[3]}
+    local d, sent, pid = robots.run(r.name, crew.look_program(into))
+    if not sent then return nil end
+    for _ = 1, 120 do
+        local sf = r.sf
+        if sf and sf.id == pid and sf.state ~= "run" and sf.state ~= "wait" then break end
+        vc.net_sleep_ms(500)
+    end
+    if r.sf and r.sf.state == "stop" then learn_block(r) end      -- blocked stepping in
+    local t = robots.send(r.name, "history")
+    for _ = 1, 30 do
+        if t.head then break end
+        vc.net_sleep_ms(500)
+    end
+    local v = into and require("live")("machine").STEP_OF[into] or {0, 0, 0}
+    local from = {p0[1] + v[1], p0[2] + v[2], p0[3] + v[3]}
+    local a, w = view.anchor, copy.world()
+    local is_robot = require("live")("machine").is_robot
+    local f = io.open(crew.paths.world, "a")
+    local n = 0
+    for _, c in ipairs(crew.read_looks(type(t.lines) == "table" and t.lines or {}, from)) do
+        if not is_robot(c.name) then
+            local air = c.name == "minecraft:air"
+            vc.route_set(c[1], c[2], c[3], air and 1 or 2)
+            w:set(c[1], c[2], c[3], (not air) and {c.name, c.meta} or nil)
+            if f then
+                f:write(("%d %d %d %s %d 1.0 analyzed %s looked from %d %d %d\n"):format(
+                        c[1] + a[1], c[2] + a[2], c[3] + a[3], c.name, c.meta, r.name,
+                        from[1], from[2], from[3]))
+            end
+            n = n + 1
         end
     end
     if f then f:close() end
     say(("%s looked round at %s: %d cells into the map"):format(r.name,
-            table.concat(r.sf.pos, " "), n))
+            table.concat(from, " "), n))
     return n
+end
+
+local function look_around(r) return look_from(r, nil) end
+
+-- After a stop: a place that came to nothing looks round from inside the cell it placed into,
+-- where what the place needed is (its soil, its clicks); any other stop looks round where the
+-- robot stands. The copy set right first: the looks are dry-run on it.
+local function probe(r)
+    local why = r.sf and tostring(r.sf.why) or ""
+    local c = r.copy
+    local op = c and c.m and c.m.prog and r.sf and c.m.prog.ops[r.sf.op]
+    crew.resync(r.name)
+    if why:find("^nothing%-placed") and op and op.k == "put" and op.dir then
+        return look_from(r, op.dir)
+    end
+    return look_around(r)
 end
 
 --[[ The robot's slots read again, now: a `status` of its own, its `inv` line into r.slots. The
@@ -581,8 +708,13 @@ local function leg(r, j, text, what, remake)
         d, sent, pid = robots.run(r.name, text)
     end
     if not sent then
-        return nil, ("%s did not dry-run: %s %s"):format(what, tostring(d and d.state),
-                                                         tostring(d and d.why or ""))
+        -- where and at which op, from the dry run's own history: "not-expected leaves:1" alone
+        -- left the cell to be guessed (place -1 0 7, 2026-10-06)
+        local h = d and d.hist
+        local at = h and h[#h] and (" [op " .. tostring(h[#h]):match("^(%d+ %S+)") .. " from "
+                   .. table.concat(d.pos or {}, ",") .. "]") or ""
+        return nil, ("%s did not dry-run: %s %s%s"):format(what, tostring(d and d.state),
+                                                           tostring(d and d.why or ""), at)
     end
     j.pid, j.what = pid, what
     local sent_at = vc.app_time()
@@ -656,9 +788,23 @@ end
 -- with `tail` (a halt, or the way home). Pintsize came with 15 stacks from the harbour, and one
 -- round of 9 had refused her (2026-10-05). At station st (the first when nil), whose lock it
 -- holds. -> true | nil, why
+-- The way to a station's spot, tried again for half a minute: the robot before it may still
+-- stand on it or by it. A give-back gave up at once, and the loop sent the robot home again
+-- every pass - "no way to the interface" four times in 7 s (Pintsize, 2026-10-06).
+local function spot_way(r, st)
+    for _ = 1, 15 do
+        local go = to_spot(r, r.sf.pos, r.sf.facing, st)
+        if go then return go end
+        vc.net_sleep_ms(2000)
+    end
+    return nil
+end
+
+crew.spot_way = spot_way                                           -- for the tests
+
 local function give_back_rounds(r, j, tail, st)
     st = st or me.stations[1]
-    local go = to_spot(r, r.sf.pos, r.sf.facing, st)
+    local go = spot_way(r, st)
     if not go then return nil, "no way to the interface" end
     me.flush(st)                             -- the slots let go of, free for what it gives
     local held = {}                          -- what it holds, counted down round by round
@@ -688,11 +834,13 @@ local function give_back_rounds(r, j, tail, st)
         local function text_of(g)
             return ("$0 %s %s %s"):format(g, table.concat(ops, " "), last and tail or "h")
         end
-        -- the first round's hop planned again if its dry run met a robot (leg)
-        local remake = go ~= "" and function()
-            go = to_spot(r, r.sf.pos, r.sf.facing, st) or go
+        -- a dry run that met a robot tried again (leg), every round: the first's hop planned
+        -- anew, the others as they are - round 2 had given up at once, a robot passing the
+        -- station, the items kept (Dalek_Sec, twice, 2026-10-06)
+        local remake = function()
+            if go ~= "" then go = to_spot(r, r.sf.pos, r.sf.facing, st) or go end
             return text_of(go)
-        end or nil
+        end
         local ok, why = leg(r, j, text_of(go), "giving back, round " .. round, remake)
         if not ok then return nil, why end
         for kk, n in pairs(back) do me.moved(kk, n) end
@@ -700,6 +848,7 @@ local function give_back_rounds(r, j, tail, st)
         if last then return true end
     end
 end
+crew.give_back_rounds = give_back_rounds                           -- for the tests
 
 -- The packet's items in rounds of at most 8 stacks (the interface's slots 1-8), each round its
 -- own config and takes, the robot slots they go to: {{cfg, stocked, ops, at}, ...}. The takes
@@ -857,8 +1006,16 @@ local function to_park_first(r, j)
     j.phase = "to the station"
     local path = route_avoiding(r.sf.pos, r.sf.facing, r.park, avoid_for(r))
     if path == "" or path == "." then return true end
-    return leg(r, j, "$0 " .. path, "to the station")
+    -- planned again from where it stands when it moved meanwhile: a failed trip's step off the
+    -- spot was still flying, and the give-back that followed gave up "busy, and it moved
+    -- meanwhile", the items kept (place -1 0 7, three times, 2026-10-06)
+    local function remake()
+        local p = route_avoiding(r.sf.pos, r.sf.facing, r.park, avoid_for(r))
+        return "$0 " .. ((p == "" or p == ".") and "h" or p)
+    end
+    return leg(r, j, "$0 " .. path, "to the station", remake)
 end
+crew.to_park_first = to_park_first                                 -- for the tests
 
 local function trip(r, j)
     local function fail(why, in_packet)
@@ -942,12 +1099,7 @@ local function trip(r, j)
         if not rounds then return fail(why0, false) end
         -- the one before it may still stand on the spot, its packet just sent: its way there
         -- tried again for half a minute (the crew's "no way to the interface", 2026-10-06)
-        local go
-        for _ = 1, 15 do
-            go = to_spot(r, r.sf.pos, r.sf.facing, st)
-            if go then break end
-            vc.net_sleep_ms(2000)
-        end
+        local go = spot_way(r, st)
         if not go then
             -- said with what stood in the way: the spot's robot and the copies by it
             local by = {}
@@ -1083,6 +1235,38 @@ function crew.start(name, id, chained, also)
     end
     local ok, why = still(r)
     if not ok then return nil, r.name .. ": " .. why end
+    -- its chunkloader on before it sets off: off, a builder away from the loaded chunks stops
+    -- with its chunk while no player is on - its computer leaves the relay, the link closes,
+    -- and back, its program is lost (ASIMO, Pintsize, Baymax, all "chunk false"; Dalek_Sec and
+    -- Cortana, on, never - 2026-10-06). Switched on here once, taken on the next round; still
+    -- off after that, it has none (the status says false for none too: hw.chunk skips it) -
+    -- kept home, a packet away from the loaded chunks lost with it; the user's to fit one.
+    local function chunk_off() return ((r.status or {})[2] or ""):find("chunk false", 1, true) end
+    -- (after the @1, its status read anew before it is judged: the poll reads it again only
+    -- after a program it saw running, and "@1 h" ends between two polls)
+    if chunk_off() and r.chunk_tried and not r.chunk_read then
+        r.chunk_read = true
+        read_slots(r)
+    end
+    if chunk_off() and not r.chunk_tried then
+        local d, sent = robots.run(r.name, "$0 @1 h")
+        r.chunk_tried, r.chunk_read = sent or nil, nil
+        return nil, ("%s's chunkloader was off: %s"):format(r.name, sent and "switched on"
+                or ("not switched on, " .. tostring(d and d.state) .. " " .. tostring(d and d.why)))
+    elseif chunk_off() then
+        -- none that switches on: out only where its chunks stay loaded - every chunk from its
+        -- park to the work kept loaded with no player on (crew.loaded, the user's map), or the
+        -- user on near it (crew.NO_LOADER_OK, 2026-10-06: "sure")
+        local all = {p}
+        for _, aid in ipairs(also or {}) do all[#all + 1] = res.packets[aid] end
+        local inside, where = crew.all_loaded(r, all)
+        if not inside and not crew.NO_LOADER_OK then
+            return nil, ("%s has no chunkloader that switches on, and chunk %s is not kept"
+                    .. " loaded (data/chunkloaded.txt): kept home"):format(r.name, where)
+        end
+    else
+        r.chunk_tried, r.chunk_read = nil, nil
+    end
     local size = size_of(r)
     if not size then return nil, r.name .. " runs an older machine (no slot count): relink it" end
     for _, st in ipairs(p.steps) do
@@ -1110,19 +1294,45 @@ function crew.start(name, id, chained, also)
         return nil, ("%s needs %d slots, %s has %d free of tools"):format(id, stacks, r.name,
                                                                          size - tools)
     end
-    if next(place) then
+    -- short only by what it does not hold already: the trip takes no more than the missing
+    -- (crew.missing) - three builders held the only spruce trapdoors while the ME, read empty,
+    -- refused place -1 0 7 to all five (2026-10-06)
+    local need = crew.missing(place, r.slots)
+    if next(need) then
         if not me.conn then
             return nil, "the ME is " .. me.phase .. ": `lua require('me').link()`"
         end
         if not me.view and not me.items() then return nil, "the ME could not be read" end
-        local short = {}
-        for kk, n in pairs(place) do
-            if (me.view[kk] or 0) < n then
-                short[#short + 1] = ("%s x%d (ME %d)"):format(kk, n, me.view[kk] or 0)
+        local function shortages()
+            local short = {}
+            for kk, n in pairs(need) do
+                if (me.view[kk] or 0) < n then
+                    short[#short + 1] = ("%s x%d (ME %d)"):format(kk, n, me.view[kk] or 0)
+                end
             end
+            table.sort(short)
+            return short
         end
-        table.sort(short)
+        local short = shortages()
+        -- short by the view kept: the network read again, a minute apart at most - what the user
+        -- put in by hand was never seen, the chests and trapdoors added went unused (2026-10-06)
+        if #short > 0 and vc.app_time() - (crew.view_read_at or 0) >= crew.VIEW_EVERY_S then
+            crew.view_read_at = vc.app_time()
+            if me.items() then short = shortages() end
+        end
         if #short > 0 then return nil, "the ME is short: " .. table.concat(short, ", ") end
+    end
+    -- its program made now, from the station's spot, the others' work kept off as the trip
+    -- will: no way to a cell now (a packet beside it worked, its cells closed) is a "not now"
+    -- before any flight - found only after the takes, every visit had been a trip for nothing
+    -- (place -3 0 10, "no way to place -15,7,50", three times, 2026-10-06)
+    local s1 = me.stations[1]
+    local text0, why0 = programs.make(p, {pos = {s1.SPOT[1], s1.SPOT[2], s1.SPOT[3]},
+                                         facing = s1.FACE, slot_of = function() return 1 end,
+                                         avoid = avoid_for(r), tool_slot = 1},
+                                      {want = packets.want})
+    if not text0 and tostring(why0):find("^no way") then
+        return nil, "not now: " .. tostring(why0) .. " (the others' work beside it)"
     end
     local j = {p = p, place = place, phase = "setting off", t0 = vc.app_time(),
                stacks = stacks, chained = chained}
@@ -1478,6 +1688,12 @@ end
 function crew.resync(name)
     local r = robot_named(name)
     if not r or not r.sf then return nil, "no linked robot " .. tostring(name) end
+    -- never under a program the robot still runs: the copy let go of it and stood where the
+    -- robot was, the robot going on - Pintsize's copy left on the second spot while she ran on
+    -- to the first, the spot shut to everyone, her wait hidden from the give-way (2026-10-06)
+    if r.sf.state == "run" or r.sf.state == "wait" or robots.in_flight(r) then
+        return nil, r.name .. " still runs " .. tostring(r.sf.id)
+    end
     if r.copy then
         local w, c = copy.world(), r.copy
         w:set(c.b.x, c.b.y, c.b.z, nil)
@@ -1519,18 +1735,176 @@ local function come_home(r)
     local j = {p = {id = "home", cells = {}, steps = {}}, phase = "home", t0 = vc.app_time()}
     if holds_more_than_tools(r) then
         crew.jobs[r.name] = j
-        j.phase = "waiting for the interface"
-        local st = crew.lock_me(r.name)
-        j.st = st
-        j.phase = "giving back"
-        local home = route_avoiding(st.SPOT, st.FACE, r.park, avoid_for(r))
-        local ok, why = give_back_rounds(r, j, home, st)
+        -- to its park first, without the lock, as a trip does (to_park_first): waiting for the
+        -- interface from across the village held its turn while it flew (Dalek_Sec at 0,0,19,
+        -- 2026-10-06); an error lets the lock and the job go, as spawn_trip does
+        local done, ok, why = pcall(function()
+            local went, why0 = to_park_first(r, j)
+            if not went then return nil, why0 end
+            j.phase = "waiting for the interface"
+            local st = crew.lock_me(r.name)
+            j.st = st
+            j.phase = "giving back"
+            local home = route_avoiding(st.SPOT, st.FACE, r.park, avoid_for(r))
+            return give_back_rounds(r, j, home, st)
+        end)
         crew.unlock_me(r.name)
         crew.jobs[r.name] = nil
-        if not ok then say(("%s: giving back, going home: %s"):format(r.name, why)) end
+        if not done then why = "it broke: " .. tostring(ok) end
+        if not done or not ok then say(("%s: giving back, going home: %s"):format(r.name, why)) end
     else
         go_home(r)
     end
+end
+
+-- Where a robot can be, by its six looks against the map: the cells within `rad` of `near`
+-- whose six neighbours read as `obs` ({n, e, s, w, u, d} -> "air" | "robot" | "water" | a block
+-- name), its four sides tried turned 0 to 3 quarter turns (its facing may be wrong as well).
+-- `what(x, y, z)` reads the map the same way, nil for a cell never scanned (matches anything).
+-- -> {{x, y, z, turns}, ...}
+local QUARTER = {n = "e", e = "s", s = "w", w = "n"}
+local SIDE_V = {n = {0, 0, -1}, s = {0, 0, 1}, e = {1, 0, 0}, w = {-1, 0, 0}}
+function crew.locate_match(obs, what, near, rad)
+    local out = {}
+    local function same(seen, there) return there == nil or seen == there end
+    for x = near[1] - rad, near[1] + rad do
+        for y = near[2] - rad, near[2] + rad do
+            for z = near[3] - rad, near[3] + rad do
+                local self = what(x, y, z)
+                if (self == nil or self == "air") and same(obs.u, what(x, y + 1, z))
+                        and same(obs.d, what(x, y - 1, z)) then
+                    for t = 0, 3 do
+                        local ok = true
+                        for _, dir in ipairs({"n", "e", "s", "w"}) do
+                            local real = dir
+                            for _ = 1, t do real = QUARTER[real] end
+                            local v = SIDE_V[real]
+                            if ok then ok = same(obs[dir], what(x + v[1], y, z + v[3])) end
+                        end
+                        if ok then out[#out + 1] = {x, y, z, t} end
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+-- A name as a look reads it, for locate_match: a robot, water, air, or the block's name alone.
+local function look_kind(name)
+    if not name or name == "air" or name == "minecraft:air" then return "air" end
+    if name:find("OpenComputers:robot", 1, true) then return "robot" end
+    if name:find("water", 1, true) then return "water" end
+    return (name:gsub(":%d+$", ""))
+end
+
+--[[ Where a robot just started really is (the user, 2026-10-06, of Gunter: "don't wait for me
+-- to figure it out"): a robot placed back by hand believes the place it was saved at - Gunter
+-- believed 0,1,0 and stood in Dalek_Sec's way, and two corrections by guess sent him further
+-- off. It looks six ways; what it sees is matched against the map where it believes it is, then
+-- around it (crew.locate_match). Its own place: kept. One other place, its facing right: set
+-- there (setpos), its copy with it. None, several, or a facing off: kept still, said - never
+-- moved on a guess. A job of its own. ]]
+function crew.locate(r)
+    local j = {p = {id = "locate", cells = {}, steps = {}}, phase = "finding where it is",
+               t0 = vc.app_time()}
+    crew.jobs[r.name] = j
+    spawn(function()
+        local function done(note)
+            r.located = r.gen
+            crew.jobs[r.name] = nil
+            say(("%s: %s"):format(r.name, note))
+        end
+        local _, sent, pid = robots.run(r.name, crew.look_program(nil))
+        if not sent then return done("not located: its looks were not sent") end
+        for _ = 1, 60 do
+            if r.sf and r.sf.id == pid and r.sf.state ~= "run" then break end
+            vc.net_sleep_ms(500)
+        end
+        local t = robots.send(r.name, "history")
+        for _ = 1, 30 do
+            if t.head then break end
+            vc.net_sleep_ms(500)
+        end
+        local obs = {}
+        for _, line in ipairs(type(t.lines) == "table" and t.lines or {}) do
+            local d, seen = line:match("^%d+ l(%S) ok (%S+)")
+            if d and OF_LETTER[d] then obs[OF_LETTER[d]] = look_kind(seen) end
+        end
+        if not (obs.n and obs.s and obs.e and obs.w and obs.u and obs.d) then
+            return done("not located: its looks did not come back")
+        end
+        local w, at = copy.world(), {}
+        for _, o in ipairs(robots.order) do
+            if o ~= r and o.linked and o.sf then at[table.concat(o.sf.pos, ",")] = true end
+        end
+        local function what(x, y, z)
+            if at[x .. "," .. y .. "," .. z] then return "robot" end
+            local b = w:get(x, y, z)
+            if b == nil and vc.route_get(x, y, z) == 0 then return nil end   -- never scanned
+            if not b or look_kind(b[1]) == "robot" then return "air" end     -- a copy: no robot
+            return look_kind(b[1])
+        end
+        local p = r.sf.pos
+        local here = crew.locate_match(obs, what, p, 0)
+        for _, c in ipairs(here) do
+            if c[4] == 0 then return done("where it believes it is, " .. table.concat(p, ",")) end
+        end
+        local cands = crew.locate_match(obs, what, p, 16)
+        if #cands == 1 and cands[1][4] == 0 then
+            local c = cands[1]
+            local reply = robots.send(r.name, ("setpos %d %d %d"):format(c[1], c[2], c[3]))
+            for _ = 1, 20 do
+                if reply.head then break end
+                vc.net_sleep_ms(250)
+            end
+            crew.resync(r.name)
+            return done(("believed %s, it is at %d,%d,%d: set there"):format(table.concat(p, ","),
+                    c[1], c[2], c[3]))
+        end
+        r.lost = ("its looks match %d places (%s), not where it believes it is (%s): kept"
+                .. " still"):format(#cands, (function()
+                    local s = {}
+                    for i = 1, math.min(4, #cands) do
+                        local c = cands[i]
+                        s[#s + 1] = ("%d,%d,%d turned %d"):format(c[1], c[2], c[3], c[4])
+                    end
+                    return table.concat(s, "; ")
+                end)(), table.concat(p, ","))
+        if crew.run and crew.run.parked then crew.run.parked[r.name] = r.lost end
+        done("NOT located: " .. r.lost)
+    end)
+end
+
+-- A cell never scanned, looked at (the user, 2026-10-06, of -17,15,8 - the only stand of a stair
+-- the proof could not use: "do"): the robot to a free cell beside it, a look round from there,
+-- the plan made again with what it saw, and home. A job of its own. -> true | nil, why
+function crew.look_at(name, c)
+    local r = robot_named(name)
+    if not r then return nil, "no robot " .. tostring(name) end
+    local ok, why = still(r)
+    if not ok then return nil, r.name .. ": " .. why end
+    for _, d in ipairs({{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}) do
+        local at = {c[1] + d[1], c[2] + d[2], c[3] + d[3]}
+        local path = vc.route_get(at[1], at[2], at[3]) == 1
+                and route_avoiding(r.sf.pos, r.sf.facing, at, avoid_for(r)) or ""
+        if path ~= "" then
+            local j = {p = {id = "look " .. table.concat(c, ","), cells = {}, steps = {}},
+                       phase = "looking at a cell never scanned", t0 = vc.app_time()}
+            crew.jobs[r.name] = j
+            spawn(function()
+                local went = path == "." or leg(r, j, "$0 " .. path, "to the cell")
+                local n = went and look_from(r, nil)
+                say(("%s: %s looked at from %s: %s"):format(r.name, table.concat(c, ","),
+                        table.concat(at, ","), went and (tostring(n) .. " cells") or "not reached"))
+                crew.jobs[r.name] = nil
+                if crew.run then crew.run.looked = true end      -- the plan again, with it
+                come_home(r)
+            end)
+            return true
+        end
+    end
+    return nil, "no free cell beside " .. table.concat(c, ",") .. " to look from"
 end
 
 local function count(t)
@@ -1545,6 +1919,74 @@ end
 -- stopped on a block learned: the plan made again, tried again; anything else: that robot
 -- parked as it is, named for inspection; a packet failed three times left out. Runs until
 -- crew.run.stop, or nothing is left that can be done. `names`: the builders (crew.BUILDERS). ]]
+-- Whether the ME, as last read, lacks any item of the packet `p`.
+function crew.short_for(p)
+    if not me.view then return false end
+    local pl = crew.bill(p)
+    for kk, n in pairs(pl) do if (me.view[kk] or 0) < n then return true end end
+    return false
+end
+
+-- The chunks kept loaded with no player on (crew.paths.loaded, drawn by the user, 2026-10-06:
+-- "maybe hold a chunkloaded map"): L loaded, S the station, . not; `origin cx cz` names the first
+-- row's first chunk; read again every time (it is small, and the user edits it). -> {"cx,cz"}
+function crew.loaded()
+    local out = {}
+    local f = crew.paths.loaded and io.open(crew.paths.loaded, "r")
+    if not f then return out end
+    local x0, z0, row
+    for line in f:lines() do
+        local ox, oz = line:match("^origin (-?%d+) (-?%d+)")
+        if ox then
+            x0, z0, row = tonumber(ox), tonumber(oz), 0
+        elseif x0 and line:find("^[LS%.]+%s*$") then
+            for i = 1, #line do
+                local ch = line:sub(i, i)
+                if ch == "L" or ch == "S" then out[(x0 + i - 1) .. "," .. (z0 + row)] = true end
+            end
+            row = row + 1
+        end
+    end
+    f:close()
+    return out
+end
+
+-- Whether a robot's work stays in loaded chunks (crew.loaded): every chunk of the box over its
+-- park, where it stands, the stations and the packets' cells. -> true | false, the first chunk
+-- not loaded ("cx,cz")
+function crew.all_loaded(r, ps)
+    local set, a = crew.loaded(), view.anchor
+    local x0, x1, z0, z1 = math.huge, -math.huge, math.huge, -math.huge
+    local function add(x, z)
+        local cx, cz = (x + a[1]) // 16, (z + a[3]) // 16
+        x0, x1, z0, z1 = math.min(x0, cx), math.max(x1, cx), math.min(z0, cz), math.max(z1, cz)
+    end
+    if r.park then add(r.park[1], r.park[3]) end
+    if r.sf and r.sf.pos then add(r.sf.pos[1], r.sf.pos[3]) end
+    for _, st in ipairs(me.stations) do add(st.SPOT[1], st.SPOT[3]) end
+    for _, p in ipairs(ps) do
+        for _, k in ipairs(p.cells or {}) do
+            local x, _, z = unkey(k)
+            add(x, z)
+        end
+        for _, st in ipairs(p.steps or {}) do
+            local x, _, z = unkey(st.k)
+            add(x, z)
+        end
+    end
+    for cx = x0, x1 do
+        for cz = z0, z1 do
+            if not set[cx .. "," .. cz] then return false, cx .. "," .. cz end
+        end
+    end
+    return true
+end
+
+-- Builders with no chunkloader allowed out (true while the user is on near the village: their
+-- chunks loaded by the player; an OC chunkloader keeps only the 3x3 chunks round its own robot,
+-- ChunkloaderUpgradeHandler.updateLoadedChunk) - the user sets it, it is false by default.
+crew.NO_LOADER_OK = false
+crew.VIEW_EVERY_S = 60             -- the ME read again, a packet short, at most this often
 crew.REPLAN_S = 180                 -- the plan made again at most this often while robots work
 
 function crew.run_all(names)
@@ -1571,6 +2013,8 @@ function crew.run_all(names)
             st.looked = nil
             local t0 = vc.app_time()
             packets.run()
+            -- when the map it rests on was read (crew.is_done), packets.lua's own or this
+            if packets.result and not packets.result.t0 then packets.result.t0 = t0 end
             st.planned_at, st.plan_s = vc.app_time(), vc.app_time() - t0
             replan = false
         end
@@ -1591,14 +2035,31 @@ function crew.run_all(names)
                 local kind = crew.is_done(id) and "done"
                         or require("live")("crewfix").classify(last, id)
                 st.notnow = st.notnow or {}
+                -- not done, however it ended: its next packets back to the others - a look or
+                -- a wait had kept them reserved, three builders idle while ASIMO went at place
+                -- -3 0 9 again and again (2026-10-06); what it holds for them counts toward
+                -- whatever it takes next (crew.missing), or is given back
+                if kind ~= "done" then st.reserved[name] = nil end
                 if kind == "done" then
                     st.finished = st.finished + 1
                 elseif kind == "look" then
+                    -- looked round in a job of its own - inline it held the whole loop a minute;
+                    -- a place that came to nothing looks from inside its cell (probe)
                     local rr = robot_named(name)
-                    if rr then look_around(rr) end
-                    crew.resync(name)
                     st.notnow[id] = vc.app_time() + 60
-                    replan = true
+                    if rr then
+                        crew.jobs[name] = {p = {id = "looking", cells = {}, steps = {}},
+                                           phase = "looking round", t0 = vc.app_time()}
+                        spawn(function()
+                            probe(rr)
+                            crew.resync(name)
+                            crew.jobs[name] = nil
+                            st.looked = true              -- the plan again, with what it saw
+                        end)
+                    else
+                        crew.resync(name)
+                        replan = true
+                    end
                 elseif kind == "wait" then
                     st.notnow[id] = vc.app_time() + 30
                     crew.resync(name)
@@ -1676,6 +2137,22 @@ function crew.run_all(names)
             for _, c in pairs(dg) do n = n + (c + 63) // 64 end
             return n
         end
+        -- a robot just started (placed back by hand, its computer up under 10 minutes) is found
+        -- where it really is before anything is planned round it, once a link (crew.locate)
+        for _, name in ipairs(names) do
+            local r = robot_named(name)
+            local up = r and tonumber(((r.status or {})[2] or ""):match("up (%d+)"))
+            if r and r.located ~= r.gen and up and up < 600 and not crew.jobs[name]
+                    and not st.working[name] and still(r) then
+                crew.locate(r)
+            end
+        end
+        local gunter = robot_named("G.U.N.T.E.R.")
+        local gup = gunter and tonumber(((gunter.status or {})[2] or ""):match("up (%d+)"))
+        if gunter and gunter.located ~= gunter.gen and gup and gup < 600
+                and not crew.jobs[gunter.name] and still(gunter) then
+            crew.locate(gunter)
+        end
         -- a packet for each free builder
         local any_ready = false
         for _, name in ipairs(names) do
@@ -1691,22 +2168,29 @@ function crew.run_all(names)
                 crew.jobs[name] = {p = {id = "looking", cells = {}, steps = {}},
                                    phase = "looking round", t0 = vc.app_time()}
                 spawn(function()
-                    look_around(r)
+                    probe(r)
                     crew.resync(name)
                     crew.jobs[name] = nil
                     st.looked = true                  -- the plan again, with what it saw
                 end)
             end
-            if r and not st.parked[name] and not crew.jobs[name] and not st.working[name]
-                    and still(r) then
-                if r.sf.energy and r.sf.energy < LOW then
-                    crew.jobs[name] = {p = {id = "charging", cells = {}, steps = {}},
-                                       phase = "charging", t0 = vc.app_time()}
-                    spawn(function()
-                        crew.jobs[name] = nil
-                        charge(r)
-                    end)
-                else
+            -- low on energy: home to charge first, parked or not - a parked robot had been
+            -- skipped before its energy was looked at, and Baymax ran down to 1241 (the user:
+            -- "baymax is almost without energy", 2026-10-06); the job held until charged, else
+            -- the loop saw it free mid-charge
+            local low = r and not crew.jobs[name] and not st.working[name] and still(r)
+                    and r.sf.energy and r.sf.energy < LOW
+            if low then
+                crew.jobs[name] = {p = {id = "charging", cells = {}, steps = {}},
+                                   phase = "charging", t0 = vc.app_time()}
+                spawn(function()
+                    charge(r)
+                    crew.jobs[name] = nil
+                end)
+            end
+            if r and not low and not st.parked[name] and not crew.jobs[name]
+                    and not st.working[name] and still(r) then
+                do
                     -- its own reserved packets first, their items already taken
                     local took, tried = false, false
                     local mine = st.reserved[name] or {}
@@ -1736,7 +2220,11 @@ function crew.run_all(names)
                             local also, room = {}, free - stacks_of(id) - 1
                             for _, id2 in ipairs(r0.order) do
                                 if #also >= crew.BATCH - 1 then break end
-                                if id2 ~= id and ready(id2) and r0.packets[id2].kind == "place" then
+                                -- not one the ME is short for: it refused the whole batch,
+                                -- the ready packet with it (glass in the sim, a trapdoor live,
+                                -- 2026-10-06)
+                                if id2 ~= id and ready(id2) and r0.packets[id2].kind == "place"
+                                        and not crew.short_for(r0.packets[id2]) then
                                     local n2 = stacks_of(id2)
                                     if n2 <= room then
                                         also[#also + 1] = id2
@@ -1764,10 +2252,23 @@ function crew.run_all(names)
                             end
                         end
                     end
-                    if took or tried then
-                        -- working, or packets ready but none it could take: it stays
-                    elseif r.park and (r.sf.pos[1] ~= r.park[1] or r.sf.pos[2] ~= r.park[2]
-                            or r.sf.pos[3] ~= r.park[3]) then
+                    -- working: it stays; nothing it could take - none ready, or the ready ones
+                    -- refused it (the ME short) - home: kept where it stood, Baymax waited out
+                    -- at -6,16,51 while a trapdoor was short (2026-10-06)
+                    -- ... and home holding nothing: what it holds with no packet reserved for it
+                    -- given back, at its park too - a give-back that failed had left the only
+                    -- spruce trapdoors in three parked builders, the ME short of them for good
+                    -- (place -1 0 7, 2026-10-06); tried again a minute apart at most
+                    st.home_tried = st.home_tried or {}
+                    local away = r.park and (r.sf.pos[1] ~= r.park[1]
+                            or r.sf.pos[2] ~= r.park[2] or r.sf.pos[3] ~= r.park[3])
+                    local leftover = r.park and not st.reserved[name]
+                            and holds_more_than_tools(r)
+                    if took then
+                        -- working
+                    elseif (away or leftover)
+                            and vc.app_time() - (st.home_tried[name] or -1e9) >= 60 then
+                        st.home_tried[name] = vc.app_time()
                         spawn(come_home, r)
                     end
                 end

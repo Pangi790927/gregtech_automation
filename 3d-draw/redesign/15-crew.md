@@ -86,10 +86,16 @@ An hour of patches made it worse (the user: "One hour later the bugs are still n
 it seems to be worse"). The causes, under the patches:
 
 - **The program stood still.** The loop made the plan again after every look round, and a plan
-  holds the whole program 36 s: no link read, no status, no lock handed over. The watchdog then
-  closed the robots' links as silent - their programs died "- idle" (the 74- and 77-step
-  packets, blamed on their size). Now: the plan at most every crew.REPLAN_S while robots work;
-  the watchdog takes the program's own still off every ask (robots.watch_round).
+  holds the whole program 36 s: no link read, no status, no lock handed over. Now: the plan at
+  most every crew.REPLAN_S while robots work; the watchdog takes the program's own still off
+  every ask (robots.watch_round).
+- **Long lines killed the robots' programs.** Not the watchdog (it closed nothing) and not the
+  program's size as such: the robot split what came into lines with buf:match("[^
+]*$"),
+  quadratic in a line's length, and a line over ~900 characters (a long packet's program) held
+  it past OpenComputers' 5 s without yielding - "the zone ended: error: too long without
+  yielding" (r.dropped). Found by a trace on Baymax; machine.lua and me_machine.lua split by
+  plain finds now (M.lines), and a 2000-character line and a 401-op program run.
 - **Two programs on one robot.** A second program sent while the first was on its way or
   running replaced it part way (machine.lua's exec): robot and copy apart - the four "ended at
   ..., its copy at its park". Now robots.run refuses one, "busy", and a leg waits for it.
@@ -102,3 +108,35 @@ it seems to be worse"). The causes, under the patches:
 - **Patches over the copy.** "The robot is the truth" rules, resyncs by hand, packets left out:
   each hid a wrong map or copy, and the next failure grew from it. Fixes go through the crew's
   own sim (robot machines on simbot, the real crew code) before the live robots.
+- **A robot off the relay was invisible.** Routes kept off linked robots only; Gunter, his
+  computer down at 0,1,0 in the station's ways, was walked into and waited on for good. Now every
+  robot's last place is kept (data/robots-pos.txt) and one not linked stands solid there, for the
+  grid and the copies, until it links again (robots.keep_offline).
+
+## With no player on (2026-10-06, evening)
+
+- **Builders with no chunkloader stop with their chunk.** Away from the loaded chunks, ASIMO,
+  Pintsize and Baymax ("chunk false", `@1` did not change it) froze; their computers left the
+  relay, their links closed, and back, every program was lost. Dalek_Sec and Cortana, whose
+  chunkloaders are on, never dropped. crew.start switches a chunkloader on once (`@1`), reads
+  the status anew; a builder whose chunkloader stays off goes out only where every chunk from its
+  park to the work stays loaded (the user's map, data/chunkloaded.txt, crew.all_loaded). The
+  user's way for the rest: escorts, chunkloading robots hovering over their work (to be built,
+  ../TODO.md); crew.NO_LOADER_OK is not used. An OC chunkloader keeps the 3x3 chunks round it.
+- **A frame cut short ended a robot's link for good.** relay.lua handed back a 'd' frame with no
+  data when the link closed inside it, and read_line's error ended the robot's life: ASIMO was
+  never linked again, the watchdog closing a dead link every second. Conn:frame now says the link
+  closed; and an error in one link ends that link only (robots.lua's life, after a restart).
+- **What a lost program built, the map never knew.** Every visit after stopped at the next built
+  cell, learning one a trip. A put into a cell that holds that block already is now placed, as
+  the program wanted (machine.lua); a stand dug and not put back is owed (crew.owed,
+  data/crew-owed.txt) and planned until placed.
+- **A packet ended after its plan began came back at once** (place -6 1 9): a plan keeps as done
+  what finished after it began (crew.finished_at, the plan's t0).
+- **A batch's next packets were held by a robot going at its first again and again** (ASIMO at
+  place -3 0 9: looks and waits kept the reservation, three builders idle). Any end but done
+  gives a robot's reserved packets back to the others.
+- **A robot placed back by hand believes where it was saved** (Gunter, in Dalek_Sec's park while
+  believing 0,1,0; two corrections by guess moved him further off). A robot just started (up
+  under 10 minutes) looks six ways first; the looks are matched against the map (crew.locate):
+  its own place, kept; one other, its facing right, set there; anything else, kept still, said.

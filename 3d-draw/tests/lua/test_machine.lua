@@ -117,6 +117,20 @@ local function dig_put_cases()
         return "the third put from an empty slot: " .. m.state .. " " .. tostring(m.why)
     end
     if not w:get(0, 0, 0) or not w:get(1, 0, 0) or w:get(2, 0, 0) then return "puts misplaced" end
+    -- a put into a cell holding that block already: placed, the program goes on (a program
+    -- lost after its places, the map not knowing them - Pintsize's place -5 2 8, 2026-10-06);
+    -- another block there still stops it
+    local there = {}
+    for x = -1, 4 do there[x .. ",-1,0"] = {"minecraft:stone", 0} end
+    there["0,0,0"] = {"minecraft:cobblestone", 0}
+    there["1,0,0"] = {"minecraft:planks", 0}
+    w, r, m = fresh(there, {y = 1, slots = {[1] = {name = "minecraft:cobblestone", meta = 0,
+                                                count = 2}}})
+    m.exec("7b", "$0 p-1 > p-1")
+    if run(m) ~= "stop" or not m.why:find("nothing%-placed") or m.pc ~= 3 then
+        return ("a put onto its own block: %s %s at op %d"):format(m.state, tostring(m.why),
+                m.pc)
+    end
     -- a put a creature is in the way of waits, and goes on once it left (09-paths.md); a new
     -- floor each time: the world keeps the table it is given, the puts above are in this one
     local function floor_()
@@ -205,9 +219,69 @@ local function items_energy_cases()
     return nil
 end
 
+-- The robot's lines from what came (M.lines): whole lines and the rest, and in linear time - the
+-- patterns before were quadratic, and a 1000-character line held the robot past
+-- OpenComputers' 5 s without yielding, its zone killed (every packet program over ~900
+-- characters, 2026-10-06). 150,000 characters here: the old way takes many seconds even on the PC.
+local function lines_cases()
+    local l, rest = machine.lines("a\n\nbc\nd")
+    if #l ~= 3 or l[1] ~= "a" or l[2] ~= "" or l[3] ~= "bc" or rest ~= "d" then
+        return "M.lines: the lines and the rest"
+    end
+    l, rest = machine.lines("")
+    if #l ~= 0 or rest ~= "" then return "M.lines: nothing" end
+    l, rest = machine.lines("no newline")
+    if #l ~= 0 or rest ~= "no newline" then return "M.lines: a part of a line" end
+    local vc = require("virt_composer")
+    local long = ("x"):rep(100000) .. "\n" .. ("y"):rep(50000)
+    local t0 = vc.app_time()
+    l, rest = machine.lines(long)
+    local took = vc.app_time() - t0
+    if #l ~= 1 or #l[1] ~= 100000 or #rest ~= 50000 then return "M.lines: a long line" end
+    if took > 0.5 then
+        return ("M.lines: %.2f s for 150,000 characters - not linear"):format(took)
+    end
+    return nil
+end
+
+-- A step blocked by a robot's afterimage waits, as on a robot - it is gone a moment later, and
+-- it is never learned into the map (Cortana met Baymax's at his park, 2026-10-06).
+local function afterimage_cases()
+    if not machine.is_robot("OpenComputers:robotAfterimage") or not machine.is_robot(
+            "OpenComputers:robot") or machine.is_robot("minecraft:stone") or machine.is_robot(nil)
+            then
+        return "M.is_robot"
+    end
+    local w = simbot.world({["5,1,4"] = {"OpenComputers:robotAfterimage", 0}})
+    local b = simbot.robot(w, {x = 5, y = 1, z = 5, facing = "n"})
+    local m = machine.new(b.hw, {x = 5, y = 1, z = 5, facing = "n"})
+    m.exec("p1", "$0 ^")
+    m.step()
+    if m.state ~= "wait" or m.why ~= "robot" then
+        return ("a step into an afterimage: %s %s, not wait robot"):format(m.state,
+                                                                          tostring(m.why))
+    end
+    -- refused by something gone when looked at (a robot passing through): waited on, never a
+    -- stop "blocked solid" - learned into the map, it shut the interface's spot (2026-10-06)
+    local w2 = simbot.world({})
+    local b2 = simbot.robot(w2, {x = 5, y = 1, z = 5, facing = "n"})
+    local move = b2.hw.move
+    b2.hw.move = function() return false, "solid" end      -- it passed between move and look
+    local m2 = machine.new(b2.hw, {x = 5, y = 1, z = 5, facing = "n"})
+    m2.exec("p2", "$0 ^")
+    m2.step()
+    b2.hw.move = move
+    if m2.state ~= "wait" or m2.why ~= "robot" then
+        return ("a step refused by a passer: %s %s, not wait robot"):format(m2.state,
+                                                                           tostring(m2.why))
+    end
+    return nil
+end
+
 local function run_test()
     package.loaded["machine"] = nil
-    for _, f in ipairs({parse_cases, walk_cases, dig_put_cases, items_energy_cases}) do
+    for _, f in ipairs({parse_cases, walk_cases, dig_put_cases, items_energy_cases,
+                        lines_cases, afterimage_cases}) do
         local why = f()
         if why then return why end
     end

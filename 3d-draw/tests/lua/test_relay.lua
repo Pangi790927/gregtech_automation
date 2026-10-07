@@ -77,6 +77,19 @@ local function run_test()
             or not o:find(relay.fnv64("-- code"), 1, true) then
         return "the open frame"
     end
+    -- the link closed inside a frame - its length come, its data not: the link closed, not an
+    -- error (ASIMO's life ended on "attempt to concatenate a nil value (local 'data')", the
+    -- watchdog closing a dead link every second after, never linked again - 2026-10-06)
+    for _, cut in ipairs({"d" .. string.pack(">I2", 9) .. "8 ok", "d\0", "P\0\0" ..
+                          string.pack(">I2", 4) .. "op"}) do
+        f.out = {cut}
+        c.closed, c.buf, c.text = false, "", ""
+        local okr, line, lwhy = pcall(c.read_line, c)
+        if not okr or line ~= nil or lwhy ~= "the link closed" then
+            return ("a frame cut short: %s %s %s"):format(tostring(okr), tostring(line),
+                                                          tostring(lwhy))
+        end
+    end
     return nil
 end
 

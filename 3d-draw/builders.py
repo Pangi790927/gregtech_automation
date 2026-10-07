@@ -42,7 +42,7 @@ def items_for(block):
     return [item_of(b[0], b[1]) for b in substitutes(block)]
 
 CREW = [  # prefix, name, park, crafts first
-    ("016db072", "G.U.N.T.E.R.", (0, 0, 0), True),     # the start block; crafts what is short
+    ("858fde4e", "G.U.N.T.E.R.", (0, 0, 0), True),     # the start block; crafts what is short
     ("f4470a27", "ASIMO", (2, 0, -2), False),          # east of the second charger
     ("a77c49f1", "Pintsize", (0, 0, -2), False),       # west of it
     ("a4c330bf", "Baymax", (1, -1, -2), False),        # under it, over water

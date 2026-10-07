@@ -48,7 +48,12 @@ local DATA = "data/"
 local PATHS = {chunks = DATA .. "chunks", anchor = DATA .. "anchor.txt", zone = DATA .. "zone.txt",
                built = DATA .. "built.txt", fixed = DATA .. "fixed.txt",
                scouted = DATA .. "scouted.txt", world = DATA .. "world.txt"}
-local PLANS = {DATA .. "harbour.txt", DATA .. "village.txt"}
+-- The plans proposed: shown with H and listed in the packets panel (P). Empty since the village
+-- was built (the user, 2026-10-07: "clear the proposal space, it should be clear now that the
+-- vilage was built, ready for a new one"); a new design's data/<name>.txt goes here and in
+-- reinit.packets below. Built plans stay on disk as the record: data/village.txt, house.txt,
+-- harbour.txt.
+local PLANS = {}
 
 local last_time = 0
 local note = ""
@@ -59,7 +64,7 @@ function test_init()
     camera.init(settings)
     view.init(PATHS)
     reinit.plan = function() plan.init(PLANS) end
-    reinit.packets = function() packets.init({DATA .. "village.txt", DATA .. "harbour.txt"}) end
+    reinit.packets = function() packets.init({}) end           -- as PLANS: none proposed now
     reinit.marks = function() marks.init(DATA .. "markers.txt") end
     reinit.labels = function() labels.init(DATA .. "labels.txt") end
     reinit.zmap = function() zmap.init(PATHS) end

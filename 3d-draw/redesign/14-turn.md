@@ -23,6 +23,11 @@ and `s`, the face. With no face, OC tries `s = f` first, then the others.
     robot's side (the ray leaves T after 0.39 of it).
   - `s = -f`: refused by OC (and it crashed the zone program, 2026-10-05).
   - The clicked block must be there and solid, or nothing is placed.
+  - **And the ray must meet its shape** on the face toward T (`orient.holds`): a bottom slab
+    beside T is missed from above - the ray crosses the slab's cell at 0.61, over the slab - but
+    met from the side, level at 0.5. Cortana proved both live (-9,7,33, 2026-10-06); the copies
+    and the proof had treated every solid neighbour as holding, and every such packet stopped
+    "nothing-placed". The proof now writes a stand and face that hold on every plain place too.
 
 ## The blocks' rules (minecraft-1.7.10, through Forge's deobfuscation data)
 
@@ -57,9 +62,14 @@ has few: from beside on the side it faces away from, or from below. So:
   packet that fills its stand, when that one comes first.
 - **Its click before it:** when a way's clicked block is still to be placed, its packet waits on
   that block's packet, or moves into it when it comes later.
-- **Left unproven** (the village, 2026-10-05: 171 of 202 packets proven, 31 not): stands that are
-  lavender (kept, the user's rule), a tree's leaves, a grass bank or a cell never scanned; and a
-  roof's ridge, two stairs each standing on the other's cell, the ceiling under them.
+- **Dig and put back** (the user, 2026-10-06: "dig and put back for the stairs"): when every
+  stand is taken and no support opens one, what fills a stand is dug from a stand of its own,
+  the turned block placed from the cell, and the block put back into it from outside, as it was
+  (grass as grass, from the ME). Only a block that comes back: known, no way of its own (no
+  stair, log, door), not leaves or a bush (they drop nothing), a plant only over soil, nothing
+  over it that would fall or pop. Ten village stairs had no other way (-2,0,24 ...).
+- **Left unproven:** a stair whose stands hold only what does not come back (wild leaves, a
+  bush: -28,6,35), a cell never scanned; a roof's ridge whose stands are both turned blocks.
 
 ## In the code
 
@@ -67,6 +77,9 @@ has few: from beside on the side it faces away from, or from below. So:
   place makes) and `orient.ways` (the `f, s` that make a wanted block).
 - **The proof** places a turned block only from a stand and face that make it, with the clicked
   block there at that moment; else later in its layer; else it says why. The step keeps `f, s`.
+- **Dig and put back** (`prove.lua`, dig_put_back): three steps - the dig, the place, the put
+  back (`putback`, with its own stand and face) - run as any others; `test_turn` (dig_back_case)
+  and the crew sim (`place 12 -1 25`) run them.
 - **The program** puts it from that stand: `p<f><slot>/<s>`, then `?<f><n>` - the block named
   with its meta, so a way that did not take stops the robot at once.
 - **The copies** (simbot) compute the meta of every place the same way, so the dry run shows it.

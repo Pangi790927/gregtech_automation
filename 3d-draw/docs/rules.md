@@ -22,6 +22,23 @@ leave and limits, in their words. Paths are from `3d-draw/`.
 - trees and dirt may go within reason; the korpBlock wall in the back never; lavender stays
   but under buildings;
 - materials: the user gives them; Gunter crafts what has a recipe (fences too, from spruce).
+- plants (the user, 2026-10-06): "plants need to stay on dirt, sand or farmland, note that this
+  needs to be checked in further planners" - every planner, now and later, checks it on what it
+  plans (a grass block counts as dirt): `design/village.py` (plants_on_ground, before it writes),
+  the proof (`orient.design_ground`); the game's own rule, stricter, is checked too (lavender:
+  grass, dirt, farmland, not sand). A bed's lavender at -19 8 51, over a real lavender the scouts
+  had named grass, was taken out of `data/village.txt` by the user's call ("remove it from the
+  design"); by the same rule, -18 8 51 (over lavender) and -19 8 52 (over BoP foliage) too - the
+  three the design had, checked against the map;
+- stairs with every stand taken (the user, 2026-10-06): "dig and put back for the stairs" - what
+  fills a stand is dug, the stair placed from there, the block put back as it was
+  (`redesign/14-turn.md`); a stand of wild leaves or a bush, no part of the plan, is dug and left
+  empty - nothing comes back from them (the user, "yes", for the stairs at -15,6,47 and -28,6,35);
+- chunks (the user, 2026-10-06): the station's chunk and those north, north-west and west of it
+  stay loaded, and the 3x3 walled square (chunks x 12..14, z 6..8); `data/chunkloaded.txt`, the
+  user's to draw ("maybe hold a chunkloaded map"). A builder with no chunkloader works only where
+  all its chunks stay loaded - or, the user, 2026-10-07, escorted: "until them you escort them,
+  even at base, I don't want to care about them" (`TODO.md`, Open 1).
 
 ## Where the robots may go, and what they may break
 

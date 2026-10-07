@@ -39,6 +39,10 @@ function crewfix.classify(last, id)
     if mine and last:find("stop blocked", 1, true) then return "look" end
     if mine and last:find("did not dry-run: wait robot", 1, true) then return "wait" end
     if mine and last:find("did not dry-run", 1, true) then return "replan" end
+    -- no program because its cells are built already: the plan is stale, made again - taken
+    -- as "no way, not now", the same built packet was tried every minute and no plan made (a
+    -- packet done in a trip begun before a reload, given again to ASIMO, 2026-10-06)
+    if mine and last:find("no program: no way to place", 1, true) then return "replan" end
     if mine and last:find("NOT started", 1, true) and last:find("no way", 1, true) then
         return "notnow"
     end

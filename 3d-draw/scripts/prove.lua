@@ -44,6 +44,9 @@ local CHAIN_LOOK = 60000                -- cells looked at for a chain
 local LOCAL = 20000                     -- cells looked at for a way inside a packet
 local AROUND6 = {{0, -1, 0}, {1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}, {0, 1, 0}}
 local STANDS = {{0, 1, 0}, {0, 0, -1}, {0, 0, 1}, {1, 0, 0}, {-1, 0, 0}}
+-- the direction of an offset, as orient's letters
+local DIR_OF = {["0,-1,0"] = "d", ["0,1,0"] = "u", ["0,0,-1"] = "n", ["0,0,1"] = "s",
+                ["1,0,0"] = "e", ["-1,0,0"] = "w"}
 
 local function key(x, y, z) return x .. "," .. y .. "," .. z end
 local function unkey(k)
@@ -109,21 +112,39 @@ function prove.run(result, want, have, opts)
         end
     end
 
-    -- does something hold a block put at x y z? `extra`: cells this packet placed already
-    -- Only a block the place's ray can click holds (orient.clickable): a plant, a crop or water
-    -- does not - a replaceable plant clicked even takes the block in its own cell (ItemBlock),
-    -- a fence beside a bush had gone into the bush (the scarecrow's -22,6,21, 2026-10-05).
-    local function held(x, y, z, p)
-        for _, d in ipairs(AROUND6) do
-            local nx, ny, nz = x + d[1], y + d[2], z + d[3]
-            local name = state(nx, ny, nz)
-            if name and name ~= "air" and name ~= ROBOT and orient.clickable(name) then
-                local nk = key(nx, ny, nz)
-                if not name:find("leaves") or placed_by_us[nk] then
-                    return true, owner[nk]
+    -- the ways to place at x y z now: a stand's direction f (STANDS' order, from above first)
+    -- and a face s whose ray meets a block that holds it (orient.holds: the block's own shape -
+    -- a bottom slab beside the target is missed from above, Cortana's -9,7,33, 2026-10-06). Only
+    -- a block the ray can click holds: a plant, a crop or water does not - a replaceable plant
+    -- clicked takes the block in its own cell (ItemBlock), a fence beside a bush had gone into
+    -- the bush (the scarecrow's -22,6,21, 2026-10-05); wild leaves neither.
+    local function holding_ways(x, y, z)
+        local out = {}
+        for _, d in ipairs(STANDS) do
+            local f = DIR_OF[(-d[1]) .. "," .. (-d[2]) .. "," .. (-d[3])]
+            for _, s in ipairs(orient.faceless(f)) do
+                local off = orient.click(f, s)
+                if off then
+                    local nx, ny, nz = x + off[1], y + off[2], z + off[3]
+                    local name, meta = state(nx, ny, nz)
+                    if name and name ~= "air" and name ~= ROBOT
+                            and orient.holds(f, s, name, meta) then
+                        local nk = key(nx, ny, nz)
+                        if not name:find("leaves") or placed_by_us[nk] then
+                            out[#out + 1] = {f = f, s = s, stand = d, from = owner[nk]}
+                            break                   -- this stand's first face that holds
+                        end
+                    end
                 end
             end
         end
+        return out
+    end
+
+    -- does something hold a block put at x y z, by any way? -> true and the packet that put it
+    local function held(x, y, z, p)
+        local ways = holding_ways(x, y, z)
+        if ways[1] then return true, ways[1].from end
         return false
     end
 
@@ -267,14 +288,22 @@ function prove.run(result, want, have, opts)
             end
             table.sort(ys)
             local prev, all = {}, {}                 -- supports of the layer below; every one
+            -- a support put as a plain block is: a stand and a face that hold it, both written on
+            -- the step - any stand had been taken, the program's face met nothing there, and the
+            -- copy's dry run refused it, "nothing to hold it" (place -1 1 5's -2,7,26, 2026-10-06)
             local function put_support(k)
                 local x, y, z = unkey(k)
-                local at = reach(x, y, z, here)
-                if not at then return false end
-                steps[#steps + 1] = {k = k, act = "place", block = SCAFFOLD, scaffold = true}
-                set(k, SCAFFOLD)
-                here = stand(at)
-                return true
+                for _, wy in ipairs(holding_ways(x, y, z)) do
+                    local at = reach(x, y, z, here, {wy.stand})
+                    if at then
+                        steps[#steps + 1] = {k = k, act = "place", block = SCAFFOLD,
+                                             scaffold = true, dir = wy.f, face = wy.s}
+                        set(k, SCAFFOLD)
+                        here = stand(at)
+                        return true
+                    end
+                end
+                return false
             end
             local function take_away(list)
                 table.sort(list, function(a, b)
@@ -359,7 +388,7 @@ function prove.run(result, want, have, opts)
                     local off = orient.click(wy.f, wy.s)
                     local cx, cy, cz = c.x + off[1], c.y + off[2], c.z + off[3]
                     local v = orient.V[wy.f]
-                    if orient.clickable(state(cx, cy, cz)) then
+                    if orient.holds(wy.f, wy.s, state(cx, cy, cz)) then
                         local at = reach(c.x, c.y, c.z, here, {{-v[1], -v[2], -v[3]}})
                         if at then return wy, at, owner[key(cx, cy, cz)] end
                         c.fails[#c.fails + 1] = ("%s/%s: stand %s not free or reached"):format(
@@ -367,6 +396,145 @@ function prove.run(result, want, have, opts)
                     else
                         c.fails[#c.fails + 1] = ("%s/%s: click %s is %s"):format(wy.f, wy.s,
                                 key(cx, cy, cz), tostring(state(cx, cy, cz)))
+                    end
+                end
+            end
+            -- Dig and put back (the user, 2026-10-06: "dig and put back for the stairs"): a turned
+            -- block whose every stand is taken - grass, a lavender, a block already built - is
+            -- placed from one of them all the same: what fills the stand dug from a stand of its
+            -- own, the turned block placed from the cell, the block put back into it from
+            -- outside, as it was. Ten stairs of the village had no other way (-2,0,24 ...).
+            -- Only a block that comes back: known (no guess), not a door (its two halves), not
+            -- leaves or a bush (they drop nothing), a plant only over soil; a stair or a log put
+            -- back by one of its own ways (a ridge's: its mirror stair, the log under it); and
+            -- nothing over the stand that would fall or pop off when it goes.
+            -- -> true, its steps written; else nil, the packet as it was.
+            local NO_BACK = {"leaves", "foliage", "tallgrass", "double_plant", "vine", "sapling",
+                             "torch", "water", "lava", "chest", "ladder", "lever", "button",
+                             "sign", "bed", "rail", "carpet", "snow_layer", "pressure_plate"}
+            local function comes_back(name, guessed, x, y, z)
+                if not name or name == "air" or name == ROBOT or guessed then return false end
+                if orient.door(name) then return false end
+                for _, t in ipairs(NO_BACK) do
+                    if name:find(t, 1, true) then return false end
+                end
+                if orient.plant(name) and not orient.soil(state(x, y - 1, z)) then return false end
+                local up = state(x, y + 1, z)
+                if up and up ~= "air" and (orient.plant(up) or up:find("sand", 1, true)
+                        or up:find("gravel", 1, true) or up:find("torch", 1, true)
+                        or orient.door(up)) then
+                    return false
+                end
+                return true
+            end
+            -- ... or dug and left empty: wild leaves or a bush, no part of the plan - nothing comes
+            -- back from them, and the user let them go (2026-10-06: "yes", the stairs at -15,6,47
+            -- and -28,6,35, whose every stand was one)
+            local NO_DROP = {"leaves", "foliage", "tallgrass", "double_plant", "vine"}
+            local function dig_only(name, guessed, k)
+                if not name or guessed or plan_want[k] or to_place[k] then return false end
+                for _, t in ipairs(NO_DROP) do
+                    if name:find(t, 1, true) then return true end
+                end
+                return false
+            end
+            local function dig_put_back(c)
+                local b = want[c.k]
+                for _, wy in ipairs(orient.ways(b[1], b[2])) do
+                    local v, off = orient.V[wy.f], orient.click(wy.f, wy.s)
+                    local sx, sy, sz = c.x - v[1], c.y - v[2], c.z - v[3]
+                    local sk = key(sx, sy, sz)
+                    local name, meta, guessed = state(sx, sy, sz)
+                    local cx, cy, cz = c.x + off[1], c.y + off[2], c.z + off[3]
+                    local only = dig_only(name, guessed, sk)
+                    if (only or comes_back(name, guessed, sx, sy, sz))
+                            and orient.holds(wy.f, wy.s, state(cx, cy, cz)) then
+                        -- tried on the packet's own record, rolled back when a step has no way
+                        local mark, nsteps, nstood, here0 = #undo, #steps, #stood_here, here
+                        local w = {owner[sk], owner[key(cx, cy, cz)]}
+                        local dat = reach(sx, sy, sz, here)
+                        local at = dat and (function()
+                            steps[#steps + 1] = {k = sk, act = "dig", block = {name, meta},
+                                                 putback = not only or nil}
+                            set(sk, nil)
+                            here = stand(dat)
+                            return reach(c.x, c.y, c.z, here, {{-v[1], -v[2], -v[3]}})
+                        end)()
+                        if at then
+                            steps[#steps + 1] = {k = c.k, act = "place", block = b, dir = wy.f,
+                                                 face = wy.s}
+                            set(c.k, b)
+                            here = stand(at)
+                        end
+                        -- left empty, the robot must get out of the cell it was dug from: a
+                        -- stair placed from a pocket in the floor shut it in - the proof's reach
+                        -- (from anywhere the station reaches) let it, and only the program, a
+                        -- trip later, said "no way" (place -3 0 10's -14,5,50, 2026-10-06)
+                        if at and only and route.find(at, "n", entry) == "" then at = nil end
+                        if at then
+                            if only then                          -- left empty: done here
+                                for _, q in ipairs({w[1], w[2]}) do waits_on(q) end
+                                for _, s in ipairs({dat, at}) do
+                                    waits_on(owner[key(s[1], s[2], s[3])])
+                                end
+                                return true
+                            end
+                            -- a block with a way of its own (a ridge's log, a stair) put
+                            -- back by one of its ways, its click there; any other as it holds
+                            local pws, tries = {}, {}
+                            if orient.has(name) then
+                                for _, bw in ipairs(orient.ways(name, meta)) do
+                                    local bo, bv = orient.click(bw.f, bw.s), orient.V[bw.f]
+                                    local bx, by, bz = sx + bo[1], sy + bo[2], sz + bo[3]
+                                    if orient.holds(bw.f, bw.s, state(bx, by, bz)) then
+                                        pws[#pws + 1] = {f = bw.f, s = bw.s,
+                                                         stand = {-bv[1], -bv[2], -bv[3]},
+                                                         from = owner[key(bx, by, bz)]}
+                                    end
+                                end
+                            else
+                                pws = holding_ways(sx, sy, sz)
+                            end
+                            -- from a stand with a way home first: the first that held had
+                            -- shut the robot in an attic its stair closed (-16,14,7, -4 1 1)
+                            for pass = 1, 2 do
+                                for _, pw in ipairs(pws) do tries[#tries + 1] = {pw, pass} end
+                            end
+                            -- (the way home looked for with the block back: through its own
+                            -- cell, every pocket beside it had one)
+                            local function home_from(at)
+                                vc.route_set(sx, sy, sz, 2)
+                                local ok = route.find(at, "n", entry) ~= ""
+                                vc.route_set(sx, sy, sz, 1)
+                                return ok
+                            end
+                            for _, t in ipairs(tries) do
+                                local pw = t[1]
+                                local pat = reach(sx, sy, sz, here, {pw.stand})
+                                if pat and (t[2] == 2 or home_from(pat)) then
+                                    steps[#steps + 1] = {k = sk, act = "place",
+                                                         block = {name, meta}, dir = pw.f,
+                                                         face = pw.s, putback = true}
+                                    set(sk, {name, meta})
+                                    here = stand(pat)
+                                    for _, q in ipairs({w[1], w[2], pw.from}) do waits_on(q) end
+                                    for _, s in ipairs({dat, at, pat}) do
+                                        waits_on(owner[key(s[1], s[2], s[3])])
+                                    end
+                                    return true
+                                end
+                            end
+                        end
+                        for i = #undo, mark + 1, -1 do
+                            local u = undo[i]
+                            local x, y, z = unkey(u[1])
+                            changed[u[1]], owner[u[1]], placed_by_us[u[1]] = u[2], u[3], u[5]
+                            vc.route_set(x, y, z, u[4])
+                            undo[i] = nil
+                        end
+                        for i = #steps, nsteps + 1, -1 do steps[i] = nil end
+                        for i = #stood_here, nstood + 1, -1 do stood_here[i] = nil end
+                        here = here0
                     end
                 end
             end
@@ -433,7 +601,8 @@ function prove.run(result, want, have, opts)
                             did = true
                             break
                         end
-                        if there and there ~= "air" then
+                        -- (water is replaced by the place: no hold-up - the planner digs none)
+                        if there and there ~= "air" and not there:find("water", 1, true) then
                             why = ("%s still holds %s"):format(c.k, there)
                             break
                         end
@@ -476,13 +645,35 @@ function prove.run(result, want, have, opts)
                             end
                             goto next_cell
                         end
-                        local ok, from = held(c.x, c.y, c.z, p)
-                        if ok then
-                            local at = reach(c.x, c.y, c.z, here)
+                        -- a plant stands only on soil (orient.plant/soil): none under it is the
+                        -- design against the ground - the packet unproven, said, not tried (the
+                        -- lavender planned over real lavender at -19,8,51, 2026-10-06)
+                        -- ... and first, the design's own rule: dirt, sand or farmland under every
+                        -- plant (the user, 2026-10-06; orient.design_ground)
+                        if orient.plant(want[c.k][1]) then
+                            local under = state(c.x, c.y - 1, c.z)
+                            if not orient.design_ground(under) then
+                                why = ("%s %s needs soil under it - dirt, sand or farmland, the"
+                                       .. " design's rule; %s is there"):format(c.k,
+                                       want[c.k][1], tostring(under))
+                                break
+                            end
+                            if not orient.soil(under) then
+                                why = ("%s %s needs soil under it; %s is there"):format(c.k,
+                                        want[c.k][1], tostring(under))
+                                break
+                            end
+                        end
+                        -- a stand and a face that hold it, the stand reached: both written on
+                        -- the step, so the program places from there with that face - a stand
+                        -- of its own choosing had placed with a face whose ray met nothing
+                        for _, wy in ipairs(holding_ways(c.x, c.y, c.z)) do
+                            local at = reach(c.x, c.y, c.z, here, {wy.stand})
                             if at then
-                                waits_on(from)
+                                waits_on(wy.from)
                                 waits_on(owner[key(at[1], at[2], at[3])])
-                                steps[#steps + 1] = {k = c.k, act = "place", block = want[c.k]}
+                                steps[#steps + 1] = {k = c.k, act = "place", block = want[c.k],
+                                                     dir = wy.f, face = wy.s}
                                 set(c.k, want[c.k])
                                 here = stand(at)
                                 table.remove(left, i)
@@ -490,6 +681,7 @@ function prove.run(result, want, have, opts)
                                 break
                             end
                         end
+                        if did then break end
                         ::next_cell::
                     end
                     if why then break end
@@ -553,6 +745,11 @@ function prove.run(result, want, have, opts)
                                     if all_put then done_one = true break end
                                 end
                             end
+                        end
+                        -- no support either: what fills a stand dug and put back
+                        if not done_one and dig_put_back(c) then
+                            table.remove(left, 1)
+                            goto next_round
                         end
                         if not done_one then
                             why = ("no stand and face to place %s %s:%d its way (%d ways, none"
